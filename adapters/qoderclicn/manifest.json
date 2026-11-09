@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "format": 1,
+  "protocol": 1,
+  "min_bridge": "0.2.0",
+  "platform": "linux/amd64",
+  "kind": "executable",
+  "entry": "adapter",
+  "config_style": "hooks",
+  "id": "qoderclicn",
+  "command": "qoderclicn",
+  "agent_min": "1.1.85",
+  "agent_max": "1.1.85",
+  "hooks": {
+    "SessionStart": "",
+    "UserPromptSubmit": "",
+    "Stop": "",
+    "StopFailure": "",
+    "SessionEnd": "",
+    "PermissionRequest": "",
+    "PreToolUse": "AskUserQuestion|ask_user_question",
+    "PostToolUse": "",
+    "Notification": "elicitation_dialog"
+  }
+}

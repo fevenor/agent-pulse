@@ -1,0 +1,17 @@
+# 安装到 ~/.config/systemd/user/agent-pulse-bridge.service。
+[Unit]
+Description=AgentPulse 本机会话桥接
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/agent-pulse-bridge serve --config %h/.config/agent-pulse/bridge.yaml
+WorkingDirectory=%h
+Restart=on-failure
+RestartSec=3
+EnvironmentFile=-%h/.config/agent-pulse/environment
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

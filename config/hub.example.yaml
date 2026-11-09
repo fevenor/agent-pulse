@@ -1,0 +1,21 @@
+# 在可信内网供其他主机连接时，将地址改为指定内网 IP。
+listen: "127.0.0.1:18700"
+database: "./data/hub.db"
+reminder_ttl_seconds: 86400
+push: []
+# web_directory: "./web/hub/dist"
+# adapter_directory: "./dist/repository"
+# relay_url: "https://relay.example.invalid"
+# relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
+# token: "${env:AGENT_PULSE_TOKEN}"
+# push:
+#   - name: "phone"
+#     method: "POST"
+#     url: "https://push.example.invalid/send"
+#     format: "json"
+#     headers:
+#       Authorization: "Bearer ${env:PUSH_TOKEN}"
+#     fields:
+#       title: "${title}"
+#       content: "${body}"
+#     timeout_seconds: 5

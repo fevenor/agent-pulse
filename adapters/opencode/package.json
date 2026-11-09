@@ -1,0 +1,32 @@
+{
+  "name": "@agent-pulse/opencode",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test --test-isolation=none test/*.test.ts",
+    "smoke": "node test/smoke.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js"
+  },
+  "engines": {
+    "node": ">=24.14.1"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "volta": {
+    "node": "24.14.1"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "2.0.20"
+  },
+  "devDependencies": {
+    "@opencode/client": "2.0.20",
+    "@opencode/plugin": "2.0.20",
+    "@types/node": "24.10.0",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
+}

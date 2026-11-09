@@ -1,0 +1,6 @@
+# 公网部署通过反向代理提供 HTTPS，容器端口仅绑定宿主回环。
+listen: "127.0.0.1:18701"
+database: "./data/relay.db"
+token: "${env:AGENT_PULSE_RELAY_TOKEN}"
+queue_events: 100000
+queue_bytes: 536870912

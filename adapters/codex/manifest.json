@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "format": 1,
+  "protocol": 1,
+  "min_bridge": "0.2.0",
+  "platform": "linux/amd64",
+  "kind": "executable",
+  "entry": "adapter",
+  "config_style": "hooks",
+  "id": "codex",
+  "command": "codex",
+  "agent_min": "0.167.0",
+  "agent_max": "0.167.0",
+  "hooks": {
+    "SessionStart": "",
+    "UserPromptSubmit": "",
+    "Stop": "",
+    "Interrupt": "",
+    "SessionEnd": ""
+  }
+}

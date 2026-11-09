@@ -1,0 +1,6 @@
+# 两个平台保持统一文本换行；Windows 命令脚本除外。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.ico binary

@@ -1,0 +1,13 @@
+# 使用 GitHub Actions 已发布的镜像，不需要在部署主机构建。
+services:
+  relay:
+    image: ${AGENT_PULSE_RELAY_IMAGE:?请设置 Relay 镜像完整名称和版本}
+    restart: unless-stopped
+    environment:
+      AGENT_PULSE_RELAY_TOKEN: ${AGENT_PULSE_RELAY_TOKEN:?请设置中继共享令牌}
+    ports: ["127.0.0.1:18701:18701"]
+    volumes:
+      - relay-data:/data
+      - ./relay.runtime.yaml:/etc/agent-pulse/relay.yaml:ro
+volumes:
+  relay-data:

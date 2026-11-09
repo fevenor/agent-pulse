@@ -1,0 +1,15 @@
+.git
+**/node_modules
+bin
+data
+dist
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.key
+**/*.local.yaml
+**/.env
+**/.env.*
+**/*.pem
+**/*.log
+**/__pycache__

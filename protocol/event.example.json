@@ -1,0 +1,12 @@
+{
+  "event_id": "example-linux-opencode-input-1",
+  "source_id": "my-linux",
+  "agent": "opencode",
+  "session_id": "example-main-session",
+  "kind": "input.required",
+  "occurred_at": "2026-11-09T10:00:00Z",
+  "title": "等待选择下一步",
+  "body": "请选择执行方案",
+  "project": "agent-pulse",
+  "scope": "main"
+}

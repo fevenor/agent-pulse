@@ -1,0 +1,190 @@
+// Package event 实现独立 hook 适配程序的转换，Bridge 不链接此包。
+package event
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"agent-pulse/protocol"
+)
+
+type Hook struct {
+	SessionID      string   `json:"session_id"`
+	Event          string   `json:"hook_event_name"`
+	CWD            string   `json:"cwd"`
+	AgentID        string   `json:"agent_id"`
+	AgentType      string   `json:"agent_type"`
+	TurnID         string   `json:"turn_id"`
+	ToolID         string   `json:"tool_use_id"`
+	Tool           string   `json:"tool_name"`
+	Transcript     string   `json:"transcript_path"`
+	Source         string   `json:"source"`
+	Notification   string   `json:"notification_type"`
+	ConversationID string   `json:"conversationId"`
+	Workspaces     []string `json:"workspacePaths"`
+	Termination    string   `json:"terminationReason"`
+	FullyIdle      *bool    `json:"fullyIdle"`
+	Execution      *int64   `json:"executionNum"`
+	Step           *int64   `json:"stepIdx"`
+	ToolCall       struct {
+		Name string `json:"name"`
+	} `json:"toolCall"`
+	ParentID string `json:"parentConversationId"`
+}
+
+// 主会话绑定由用户显式启动的 agy 包装器创建。缺少绑定时忽略，不能把字段缺失当主代理。
+func antigravityMain(h Hook, hook string, binding string) bool {
+	if binding == "" || h.ConversationID == "" || h.ParentID != "" {
+		return false
+	}
+	if hook == "SessionStart" {
+		f, err := os.OpenFile(binding, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			_, err = f.WriteString(h.ConversationID)
+			_ = f.Close()
+			return err == nil
+		}
+	}
+	raw, err := os.ReadFile(binding)
+	return err == nil && string(raw) == h.ConversationID
+}
+
+func Convert(agent, source, hook string, raw []byte, now time.Time, binding string) (*protocol.Event, error) {
+	var h Hook
+	if len(raw) > protocol.MaxEventBytes || json.Unmarshal(raw, &h) != nil {
+		return nil, errors.New("hook JSON 无效")
+	}
+	if h.Event != "" && h.Event != hook {
+		return nil, errors.New("hook 事件名不匹配")
+	}
+	if h.AgentID != "" || h.AgentType != "" || strings.HasPrefix(hook, "Subagent") {
+		return nil, nil
+	}
+	kind := ""
+	switch agent {
+	case "codex", "qoderclicn":
+		if h.SessionID == "" {
+			return nil, errors.New("缺少会话标识")
+		}
+		switch hook {
+		case "SessionStart":
+			kind = "session.started"
+			if h.Source == "resume" {
+				kind = "session.resumed"
+			}
+		case "UserPromptSubmit":
+			kind = "session.resumed"
+		case "SessionEnd":
+			kind = "session.closed"
+		case "Stop":
+			kind = "turn.completed"
+		case "Interrupt":
+			if agent == "codex" {
+				kind = "run.interrupted"
+			}
+		case "StopFailure":
+			if agent == "qoderclicn" {
+				kind = "run.failed"
+			}
+		case "PermissionRequest":
+			// Codex 工具 hook 可能沿用父会话 ID，公开契约没有稳定的主线程归属字段。
+			if agent == "qoderclicn" {
+				kind = "approval.required"
+			}
+		case "PreToolUse":
+			if agent == "qoderclicn" && (h.Tool == "AskUserQuestion" || h.Tool == "ask_user_question") {
+				kind = "input.required"
+			}
+		case "PostToolUse":
+			if agent == "qoderclicn" {
+				kind = "activity.observed"
+			}
+		case "Notification":
+			if agent == "qoderclicn" && h.Notification == "elicitation_dialog" {
+				kind = "input.required"
+			}
+		}
+	case "antigravity":
+		if !antigravityMain(h, hook, binding) {
+			return nil, nil
+		}
+		h.SessionID = h.ConversationID
+		if len(h.Workspaces) > 0 {
+			h.CWD = h.Workspaces[0]
+		}
+		switch hook {
+		case "SessionStart":
+			kind = "session.started"
+		case "PreInvocation":
+			kind = "activity.observed"
+		case "PreToolUse":
+			switch h.ToolCall.Name {
+			case "ask_question":
+				kind = "input.required"
+			case "ask_permission":
+				kind = "approval.required"
+			}
+		case "PostToolUse":
+			kind = "activity.observed"
+		case "Stop":
+			switch h.Termination {
+			case "model_stop":
+				kind = "turn.completed"
+			case "NO_TOOL_CALL":
+				// agy 1.5.3 ACP 的真实终止值；仅完全空闲时确认完成。
+				kind = "observation.lost"
+				if h.FullyIdle != nil && *h.FullyIdle {
+					kind = "turn.completed"
+				}
+			case "error", "max_steps_exceeded":
+				kind = "run.failed"
+			case "user_cancelled", "interrupted":
+				kind = "run.interrupted"
+			default:
+				kind = "observation.lost"
+			}
+			if kind == "turn.completed" && h.FullyIdle != nil && !*h.FullyIdle {
+				kind = "activity.observed"
+			}
+		}
+	default:
+		return nil, errors.New("不支持的来源")
+	}
+	if kind == "" {
+		return nil, nil
+	}
+	// 每次原生调用分配 ID，Bridge 的网络重试保留同一 ID、时间和载荷。
+	id := protocol.NewID()
+	e := &protocol.Event{EventID: id, SourceID: source, Agent: agent, SessionID: h.SessionID, Kind: kind, OccurredAt: now.UTC(), Scope: "main", Title: agent + " · " + title(kind), Body: "", Project: filepath.Base(h.CWD)}
+	if e.Project == "." || h.CWD == "" {
+		e.Project = ""
+	}
+	if err := e.Validate(); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+func title(kind string) string {
+	switch kind {
+	case "turn.completed":
+		return "本轮完成"
+	case "run.failed":
+		return "任务失败"
+	case "run.interrupted":
+		return "任务中断"
+	case "input.required":
+		return "等待输入"
+	case "approval.required":
+		return "等待批准"
+	case "session.closed":
+		return "会话已关闭"
+	case "observation.lost":
+		return "运行状态待确认"
+	default:
+		return "正在运行"
+	}
+}

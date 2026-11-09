@@ -1,0 +1,3 @@
+listen: "0.0.0.0:18701"
+database: "/data/relay.db"
+token: "${env:AGENT_PULSE_RELAY_TOKEN}"

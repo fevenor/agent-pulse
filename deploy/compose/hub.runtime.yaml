@@ -1,0 +1,6 @@
+listen: "0.0.0.0:18700"
+database: "/data/hub.db"
+web_directory: "/web"
+adapter_directory: "/repository"
+push: []
+# 按需添加 relay_url/relay_token，并在 Compose environment 传入对应变量。

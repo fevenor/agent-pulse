@@ -1,0 +1,15 @@
+# Hub 只绑定用户指定的可信内网地址，不能暴露到公网。
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: hub
+    restart: unless-stopped
+    ports: ["${HUB_BIND_IP:-127.0.0.1}:18700:18700"]
+    volumes:
+      - hub-data:/data
+      - ./hub.runtime.yaml:/etc/agent-pulse/hub.yaml:ro
+      - ../../dist/repository:/repository:ro
+volumes:
+  hub-data:

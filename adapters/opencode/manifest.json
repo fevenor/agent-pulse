@@ -1,0 +1,13 @@
+{
+  "id": "opencode",
+  "version": "0.2.0",
+  "format": 1,
+  "protocol": 1,
+  "min_bridge": "0.2.0",
+  "platform": "any",
+  "kind": "opencode-plugin",
+  "entry": "index.js",
+  "command": "opencode",
+  "agent_min": "2.0.20",
+  "agent_max": "2.0.20"
+}

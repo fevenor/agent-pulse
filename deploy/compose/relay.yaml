@@ -1,0 +1,16 @@
+# 仅 Relay 部署在公网主机，TLS 由同机代理处理。
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: relay
+    restart: unless-stopped
+    environment:
+      AGENT_PULSE_RELAY_TOKEN: ${AGENT_PULSE_RELAY_TOKEN:?请设置中继共享令牌}
+    ports: ["127.0.0.1:18701:18701"]
+    volumes:
+      - relay-data:/data
+      - ./relay.runtime.yaml:/etc/agent-pulse/relay.yaml:ro
+volumes:
+  relay-data:

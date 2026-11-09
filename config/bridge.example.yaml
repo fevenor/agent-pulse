@@ -1,0 +1,21 @@
+listen: "127.0.0.1:18702"
+# 每个观察环境固定一个不同标识；同机 Windows 和 WSL 使用不同值。
+source_id: "my-linux"
+hub_url: "http://127.0.0.1:18700"
+queue_events: 10000
+queue_bytes: 67108864
+# token: "${env:AGENT_PULSE_TOKEN}"
+# relay_url: "https://relay.example.invalid"
+# relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
+# adapters:
+#   directory: "/home/your-user/.local/share/agent-pulse/adapters"
+#   public_key: "粘贴发布者公钥的 Base64 内容"
+#   poll_seconds: 300
+#   pins: {}
+#   exclude: []
+#   # 仅下列显式列出的文件属于自动安装授权范围，保留其中其他条目。
+#   managed:
+#     codex: "/home/your-user/.codex/hooks.json"
+#     antigravity: "/home/your-user/.gemini/config/hooks.json"
+#     qoderclicn: "/home/your-user/.qoder-cn/settings.json"
+#     opencode: "/home/your-user/.config/opencode/opencode.json"

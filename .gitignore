@@ -1,0 +1,37 @@
+# Go 构建产物
+bin/
+dist/
+coverage.out
+*.test
+
+# 本地数据与敏感配置
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+config/*.local.yaml
+*.local.yaml
+*.key
+*.pem
+data/
+__pycache__/
+/hub.yaml
+/bridge.yaml
+
+# 前端与桌面构建产物
+node_modules/
+web/hub/dist/
+tray/bin/
+tray/obj/
+tray/target/
+.cache/
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
