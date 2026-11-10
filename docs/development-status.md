@@ -261,3 +261,12 @@ Windows 普通 Go 测试与静态检查、Debian 官方 Go 容器的竞态检查
 原生 CI 不包含真实桌面交互、实际登录自启动或真实 Windows Agent 配置验收；这些范围继续按计划保留。原始远端日志及产物下载存放在忽略目录，仅将验证摘要写入本页。
 
 下载 Windows 产物后的 SHA-256 与 GitHub 公布值一致，内部便携 ZIP 为 9,575,341 字节，摘要及四文件清单与 runner 检查一致。随后实际合并时发现 Windows/Linux 重复构建的 OpenCode 0.3.0 文件只在 pnpm 来源路径注释上不同，合并器按同版本内容冲突拒绝。交付流程据此调整为 Windows 仅提供三个命令包，Linux 提供命令包和唯一通用插件；不放宽包内容检查，新的远端产物验证另记。
+
+最终交付修复提交 `7b67efebb51053cc43204acffc352adbf381a070` 的 [Windows Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42805826110) 与 [Linux 镜像 Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42805826392) 全部通过，镜像提交标签为 `sha-7b67efebb51053cc43204acffc352adbf381a070`。
+
+- [Windows 便携包与原生适配包](https://github.com/fevenor/agent-pulse/actions/runs/42805826110/artifacts/13757989747)：工作流已校验三个命令包的标识和 `windows/amd64` 平台，包含便携 ZIP；产物大小 12,958,065 字节。
+- [Linux 与通用适配包](https://github.com/fevenor/agent-pulse/actions/runs/42805826392/artifacts/13758900613)：包含三个 Linux 命令包和唯一通用 OpenCode 插件；产物大小 3,427,522 字节，已下载并核对 GitHub SHA-256。
+
+两份最终远端产物均已下载，整体 SHA-256 与 GitHub 公布值一致。便携 ZIP 为 9,575,339 字节，SHA-256 为 `d4226a70076be582d409b4f7d1ae29f01e3d03a74bbe1e7413861b315abeea3b`，内部校验及四文件清单通过。将两份实际构建仓库直接合并得到 7 项索引（Linux/Windows 各三个命令包、一个通用插件），摘要检查及临时密钥签名通过；没有使用正式发布私钥，也未部署到生产分发目录。
+
+本节最终结果作为纯文档提交记录，使用 `[skip ci]` 避免重复构建；程序、脚本和 Workflow 的已验证基线仍为 `7b67efe`。
