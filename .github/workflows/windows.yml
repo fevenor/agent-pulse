@@ -1,0 +1,94 @@
+name: 检查与构建 Windows 客户端
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      VOLTA_FEATURE_PNPM: '1'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: volta-cli/action@v4
+        with:
+          node-version: '24.14.1'
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: 安装锁定工具链
+        shell: pwsh
+        run: |
+          volta install pnpm@10.33.2
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm 安装失败' }
+          Push-Location tray
+          try {
+            rustup show active-toolchain
+            if ($LASTEXITCODE -ne 0) { throw 'Rust 工具链安装失败' }
+          } finally { Pop-Location }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tray/target
+          key: windows-rust-${{ hashFiles('tray/rust-toolchain.toml', 'tray/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            windows-rust-${{ hashFiles('tray/rust-toolchain.toml', 'tray/Cargo.lock') }}-
+      - name: 构建客户端和联调服务
+        shell: pwsh
+        run: ./scripts/build.ps1 -DevelopmentTools
+      - name: 检查与本地服务回归
+        shell: pwsh
+        run: |
+          ./scripts/check.ps1 -Tray -Integration
+          uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+          if ($LASTEXITCODE -ne 0) { throw '适配包合并检查失败' }
+      - name: 构建演示并检查开发配置
+        shell: pwsh
+        run: |
+          ./scripts/build.ps1 -Demo
+          . ./scripts/windows-tools.ps1
+          Initialize-CppTools
+          Push-Location tray
+          try {
+            cargo clippy --locked --profile preview --features dev-demo --all-targets -- -D warnings
+            if ($LASTEXITCODE -ne 0) { throw '演示配置 Clippy 检查失败' }
+          } finally { Pop-Location }
+      - name: 打包便携程序与适配包
+        shell: pwsh
+        run: |
+          ./scripts/package-adapters.ps1
+          ./scripts/package-windows.ps1
+          uv run --offline --no-project python -c "import runpy; runpy.run_path('tests/e2e/windows_desktop.py')['binary_boundary_check']()"
+          if ($LASTEXITCODE -ne 0) { throw '发布与演示隔离检查失败' }
+          uv run --offline --no-project python -c "import zipfile; z=zipfile.ZipFile('dist/windows-amd64.zip'); assert z.testzip() is None; assert sorted(z.namelist()) == sorted(['agent-pulse-tray.exe', 'bridge.example.yaml', 'tray.example.yaml', '使用说明.md'])"
+          if ($LASTEXITCODE -ne 0) { throw '便携包内容检查失败' }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-amd64
+          path: |
+            dist/windows-amd64.zip
+            dist/repository-windows/index-input.json
+            dist/repository-windows/packages/*.zip
+          if-no-files-found: error
+          retention-days: 14

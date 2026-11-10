@@ -1,7 +1,8 @@
-export interface Session { source_id: string; agent: string; session_id: string; title: string; state: string; project?: string; updated_at: string }
+export interface Session { source_id: string; agent: string; session_id: string; title: string; state: string; project?: string; updated_at: string; alias?: string; archived?: boolean; override_state?: string; override_at?: string }
 export interface Event { event_id: string; source_id: string; agent: string; session_id: string; kind: string; title: string; body: string; project?: string; occurred_at: string; position: number; valid: boolean; read: boolean }
 export interface Device { id: string; role: string; path: string; locked?: boolean; fullscreen?: boolean; last_seen: string }
-export interface Snapshot { run_id: string; version: number; sessions: Session[]; unread: Event[]; devices: Device[] }
+export interface SourceLabel { name: string; environment: string }
+export interface Snapshot { run_id: string; version: number; sessions: Session[]; unread: Event[]; devices: Device[]; sources?: Record<string, SourceLabel> }
 export interface Adapter { id: string; target: string; installed: string; running: string; agent_version: string; error?: string }
 export interface Host { source_id: string; items: Adapter[]; error?: string; updated_at: string }
 export interface Push { event_id: string; channel: string; status: string; attempts: number; next_at: string }

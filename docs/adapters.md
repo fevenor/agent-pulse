@@ -32,6 +32,17 @@ bash scripts/package-adapters.sh ./dist/repository 1
 
 每次发布递增 `sequence`。`packages` 是本次可用的版本集合，同一来源默认选择当前平台的最高兼容版本。集中回滚时，在新的更高序号索引里为该来源选择已有旧包，不复用旧序号。保留多个版本可供单机 `pins` 固定使用。相同版本不得更改内容，修改必须发布新版本。
 
+同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
+
+```sh
+uv run --offline --no-project python scripts/merge_adapter_repositories.py \
+  ./dist/repository ./dist/repository-windows --output ./dist/repository-combined --sequence 2
+./bin/agent-pulse-adapters publish --repository ./dist/repository-combined \
+  --private /安全目录/publisher.key --index ./dist/repository-combined/index-input.json
+```
+
+示例序号需替换为大于已发布序号的值。合并器校验包摘要与大小，保留每个平台的包；通用 OpenCode 包清单和文件内容一致时，忽略 ZIP 时间/权限差异，保留第一个输入仓库的既有 ZIP。内容或兼容清单不同的同版本包会报错，不自动挑选或覆盖；失败时不替换既有索引。合并只生成 `index-input.json` 和不可变包，不读取私钥，也不自动部署。
+
 将发布目录放到 Hub 的 `adapter_directory`。发布能力只有本地命令，Web 不提供可执行包上传或目标修改接口。
 
 ## 主机：首次接入与自动更新
@@ -74,12 +85,21 @@ Codex 和 qoderclicn 的宿主信任提示由用户在宿主中确认，安装�
 ./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- --print '你的任务'
 ```
 
-也可直接使用 `bin/agent-pulse-adapter-antigravity run -- ...` 做开发验证。临时绑定只保存会话 ID，不保存事件或文本；进程退出后删除。恢复旧会话、CLI 不触发 SessionStart 的入口、IDE 和远程守护进程需要另行取得主会话证据；当前不把它们当成已支持。
+也可直接使用 `bin/agent-pulse-adapter-antigravity run -- ...` 做开发验证。临时绑定只保存会话 ID，不保存事件或文本；进程退出后删除。IDE 和远程守护进程需要另行取得主会话证据，当前不把它们当成已支持。
 
 ACP（Agent Client Protocol，编辑器通过标准输入输出调用 Agent 的协议）使用同一包装器：
 
 ```sh
 ./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- acp --stdio --process-per-session
 ```
+
+ACP 在新进程中 `session/load` 原会话时，可能没有新的 SessionStart。适配包 0.2.2 起，由调用者在启动时明确指定之前取得的主会话 ID：
+
+```sh
+./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- \
+  --pulse-main-session 原主会话ID acp --stdio --process-per-session
+```
+
+`--pulse-main-session` 必须位于宿主参数之前，由包装器消费，不传给 agy。之后 ACP 客户端对同一 ID 调用 `session/load`。绑定后的其他会话仍被过滤；不能用任意子会话 ID 冒充主会话，也不会自动把新出现的 ID 替换为主会话。此能力随独立适配包更新，不要求为此重新部署 Bridge。
 
 保持 agy 默认登录目录，由宿主自行使用已登录凭据。一个包装进程只绑定一个主会话，不用于同进程多主会话复用。agy 1.5.3 的正常 ACP Stop 实测为 `NO_TOOL_CALL`，仅在 `fullyIdle=true` 时转换为完成；旧版 `model_stop` 仍支持，显式未空闲时只记活动。未知原因保留为状态未知。ACP 的 `stopReason=end_turn` 属于协议响应，本适配器仍以原生 hook 为事件来源。

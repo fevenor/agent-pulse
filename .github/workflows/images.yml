@@ -44,6 +44,8 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
+      - name: 跨平台适配包合并检查
+        run: uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
       - uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64

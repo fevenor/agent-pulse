@@ -12,6 +12,10 @@ import { OpenCode } from "@opencode/client";
 
 const adapter = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(adapter, "../..");
+const manifest = JSON.parse(await readFile(join(adapter, "manifest.json"), "utf8"));
+const packageInfo = JSON.parse(await readFile(join(adapter, "package.json"), "utf8"));
+assert.equal(manifest.version, packageInfo.version, "插件与适配包版本必须一致");
+const expectedVersion: string = manifest.version;
 const temp = await mkdtemp(join(tmpdir(), "agent-pulse-smoke-"));
 const project = join(temp, "project");
 await mkdir(project);
@@ -39,12 +43,14 @@ async function poll<T>(fn: () => Promise<T | undefined>, label: string): Promise
   }
   throw new Error(`${label}：等待超时，日志位于 ${temp}`);
 }
-type Snapshot = { run_id: string; sessions: { session_id: string; state: string }[]; unread: { event_id: string; session_id: string; kind: string; valid: boolean }[] };
+type Snapshot = { run_id: string; sessions: { session_id: string; state: string; title: string }[]; unread: { event_id: string; session_id: string; kind: string; valid: boolean }[] };
 try {
   const hubPort = await port(), bridgePort = await port(), agentPort = await port();
   const hubURL = `http://127.0.0.1:${hubPort}`, bridgeURL = `http://127.0.0.1:${bridgePort}`;
   if (packaged) {
     await cp(join(root,"dist/repository"),repository,{recursive:true});
+    const index = JSON.parse(await readFile(join(repository, "index-input.json"), "utf8"));
+    assert.ok(index.packages.some((entry: { id: string; version: string }) => entry.id === manifest.id && entry.version === expectedVersion), "独立包已过期，请先运行 scripts/package-adapters.sh");
     execFileSync(join(root,"bin/agent-pulse-adapters"),["keygen","--private",join(temp,"publisher.key"),"--public",join(temp,"publisher.pub")]);
     execFileSync(join(root,"bin/agent-pulse-adapters"),["publish","--private",join(temp,"publisher.key"),"--repository",repository,"--index",join(repository,"index-input.json")]);
   }
@@ -63,7 +69,7 @@ try {
   await poll(async () => (await fetch(`${bridgeURL}/healthz`)).ok ? true : undefined, "Bridge 启动");
   if (packaged) await poll(async()=>{
     const state=JSON.parse(await readFile(join(temp,"adapters/state.json"),"utf8"));
-    return state.installed.opencode?.package?.version === "0.2.0" ? true : undefined;
+    return state.installed.opencode?.package?.version === expectedVersion ? true : undefined;
   },"独立适配包安装");
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
@@ -84,7 +90,8 @@ try {
   }, "插件激活");
   const main = await client.session.create({ title: "AgentPulse 真实接入验证", location: { directory: project } });
   const snapshot = async () => await (await fetch(`${hubURL}/api/v1/snapshot`)).json() as Snapshot;
-  await poll(async () => (await snapshot()).sessions.find(s => s.session_id === main.id), "真实会话创建事件");
+  const session = await poll(async () => (await snapshot()).sessions.find(s => s.session_id === main.id), "真实会话创建事件");
+  assert.equal(session.title, "AgentPulse 真实接入验证", "Hub 应保留宿主会话标题");
   // 宿主实际创建输入表单，触发原生 form.created；不需要模型请求。
   await client.session.form.create({ sessionID: main.id, title: "请选择验证方案", fields: [{ key: "choice", type: "string", title: "方案" }] });
   const waiting = await poll(async () => (await snapshot()).unread.find(e => e.session_id === main.id && e.kind === "input.required"), "真实输入等待事件");
@@ -101,9 +108,10 @@ try {
   const after = await poll(async () => { const s = await snapshot(); return s.run_id !== before.run_id ? s : undefined; }, "Hub 崩溃恢复");
   assert.equal(after.unread.length, 0);
   assert.ok(after.sessions.some(s => s.session_id === main.id && s.state === "waiting"));
+  assert.equal(after.sessions.find(s => s.session_id === main.id)?.title, session.title, "表单事件和重启不应替换会话标题");
   await writeFile(join(temp, "snapshot-after.json"), JSON.stringify(after, null, 2));
-  if (packaged) { const runtime=JSON.parse(await readFile(join(temp,"adapters/runtime/opencode.json"),"utf8"));assert.equal(runtime.version,"0.2.0"); }
-  const evidence = { packaged, result: "通过", opencode: "2.0.20", project, session_id: main.id, event_id: waiting.event_id, evidence: temp, checks: ["真实插件激活", "真实会话事件", "真实表单等待", "Bridge 转发", "Hub 入库", "明确已读", "Hub 强制终止后恢复"] };
+  if (packaged) { const runtime=JSON.parse(await readFile(join(temp,"adapters/runtime/opencode.json"),"utf8"));assert.equal(runtime.version,expectedVersion); }
+  const evidence = { packaged, result: "通过", adapter: expectedVersion, opencode: "2.0.20", project, session_id: main.id, event_id: waiting.event_id, evidence: temp, checks: ["真实插件激活", "真实会话事件与标题", "真实表单等待", "Bridge 转发", "Hub 入库", "明确已读", "Hub 强制终止后恢复"] };
   await writeFile(join(temp, "result.json"), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence, null, 2));
 } finally {

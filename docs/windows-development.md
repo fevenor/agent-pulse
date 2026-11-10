@@ -51,6 +51,10 @@ try { cargo clippy --release --locked --all-targets -- -D warnings } finally { P
 
 Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 Windows 竞态检测要求兼容的 mingw-w64 C 编译器，MSVC 不能直接替代；当前继续由 Linux 执行竞态检查。官方要求见 [Go 竞态检测](https://go.dev/doc/articles/race_detector#Requirements)。
 
+## 自动构建
+
+`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和未签名 Windows 适配包仓库，保留 14 天；不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
+
 ## Debian 与容器
 
 需要 WSL 时显式使用 `wsl -d Debian`。Windows UI、原生构建和 UI 测试留在 Windows；Linux 编译、容器与服务测试放在 Debian 文件系统的独立目录。两侧只交换源码和构建需要的文件，不复用 `node_modules`、Rust target 或 Go 二进制。

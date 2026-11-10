@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"agent-pulse/internal/event"
@@ -63,8 +64,19 @@ func launch() error {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
+	binding := filepath.Join(dir, "main-session")
+	// ACP 加载旧会话时可能不再触发 SessionStart，由调用者明确提供原主会话。
+	if len(args) > 0 && args[0] == "--pulse-main-session" {
+		if len(args) < 3 || args[1] == "" || len(args[1]) > 256 || strings.ContainsAny(args[1], "\x00\r\n\t ") || strings.HasPrefix(args[1], "-") {
+			return fmt.Errorf("--pulse-main-session 需要原主会话 ID 及宿主参数")
+		}
+		if err := os.WriteFile(binding, []byte(args[1]), 0600); err != nil {
+			return err
+		}
+		args = args[2:]
+	}
 	cmd := exec.CommandContext(context.Background(), "agy", args...)
-	cmd.Env = append(os.Environ(), "AGENT_PULSE_ANTIGRAVITY_SESSION="+filepath.Join(dir, "main-session"))
+	cmd.Env = append(os.Environ(), "AGENT_PULSE_ANTIGRAVITY_SESSION="+binding)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

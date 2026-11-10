@@ -37,7 +37,18 @@ AGENT_PULSE_QODER_WORKSPACE=/专用测试工作区 uv run --offline --no-project
 AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke
 ```
 
-需要 OpenCode 2.0.20。使用临时配置和插件仓库，验证独立包 loader、原生会话和表单、已读及 Hub 强制重启恢复，不调用模型。具体脚本位于 `adapters/opencode/test/smoke.ts`。
+需要 OpenCode 2.0.20，并先构建当前独立包。使用临时配置和插件仓库，验证独立包 loader、原生会话标题和表单、已读及 Hub 强制重启恢复；版本从当前清单读取，旧产物会提示重新打包。默认不调用模型；需要另做真实模型测试时使用 build 角色及 OpenCode 提供的免费模型。具体脚本位于 `adapters/opencode/test/smoke.ts`。
+
+## 管理网页与跨平台包
+
+```sh
+pnpm --dir web/hub build
+bash scripts/build.sh
+uv run --offline --no-project python tests/e2e/hub_web.py
+uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+```
+
+网页测试需要已安装的 agent-browser 和 Chromium，启动独立浏览器会话与真实 Hub，验证别名与来源状态、归档/生效状态计数及筛选、友好名称搜索、恢复自动跟随、未读保留和明确已读、移动布局。使用临时数据，截图留在临时诊断目录，结束后关闭自建进程。包合并测试只使用本地合成 ZIP，覆盖跨平台合并、通用插件内容去重、冲突与损坏拒绝，并已纳入 Linux/Windows Workflow。
 
 ## 常规可靠性测试
 
@@ -53,9 +64,11 @@ Windows 与 Debian 的双来源联调使用 `uv run --offline --no-project pytho
 
 ```sh
 uv run --offline --no-project python tests/e2e/antigravity_acp.py
+# 两条真实请求：创建会话后结束 ACP 进程，再加载原会话继续。
+uv run --offline --no-project python tests/e2e/antigravity_acp.py --resume
 ```
 
-需要已登录的 agy 1.5.3；会产生一条真实模型请求。脚本使用默认登录目录，不读取认证文件、不自动批准工具。专用临时项目通过签名包安装 hooks，经主会话包装器调用 ACP，核对开始、活动、完成、未读及实际运行版本；不保存模型回复正文。真实子代理和会话续接另行验收。
+需要已登录的 agy 1.5.3；默认一条真实模型请求，`--resume` 共两条。脚本使用默认登录目录，不读取认证文件、不自动批准工具。专用临时项目通过签名包安装 hooks，经主会话包装器调用 ACP，核对开始、活动、完成、未读及实际运行版本；不保存模型回复正文。续接测试使用 `--pulse-main-session` 指定原主会话，检查跨进程恢复后仍只有同一主会话且仅最新完成提醒有效。真实子代理和非正常退出另行验收。
 
 ## 真实手机渠道
 
