@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"agent-pulse/internal/config"
 )
-
-func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
 // 只修改明确归本安装器所有的命令。未能解析用户配置时拒绝写入。
 func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]byte, error) {
@@ -78,7 +75,7 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 				if !ok {
 					return nil, errors.New("hook 条目必须为对象")
 				}
-				if command, ok := group["command"].(string); ok && strings.HasPrefix(command, prefix) {
+				if command, ok := group["command"].(string); ok && ownsHookCommand(command, prefix) {
 					continue
 				}
 				if list, ok := group["hooks"].([]any); ok {
@@ -89,7 +86,7 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 							return nil, errors.New("hook 命令条目无效")
 						}
 						command, _ := h["command"].(string)
-						if !strings.HasPrefix(command, prefix) {
+						if !ownsHookCommand(command, prefix) {
 							rest = append(rest, item)
 						}
 					}
@@ -107,7 +104,7 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 			direct[event] = true
 		}
 		for event, matcher := range p.Hooks {
-			handler := map[string]any{"type": "command", "command": prefix + quote(event), "timeout": 1}
+			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 1}
 			var entry any = map[string]any{"matcher": matcher, "hooks": []any{handler}}
 			if direct[event] {
 				entry = handler

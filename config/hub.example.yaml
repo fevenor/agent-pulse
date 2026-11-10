@@ -19,3 +19,12 @@ push: []
 #       title: "${title}"
 #       content: "${body}"
 #     timeout_seconds: 5
+
+# 可选：统一显示来源友好名称；键与 Bridge 的 source_id 一致。
+# sources:
+#   desktop:
+#     name: 开发机
+#     environment: Windows
+#   debian:
+#     name: 开发机
+#     environment: Debian

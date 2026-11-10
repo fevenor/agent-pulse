@@ -1,4 +1,7 @@
 .git
+.cache
+tmp
+tray/target
 **/node_modules
 bin
 data

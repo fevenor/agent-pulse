@@ -4,7 +4,7 @@
 
 ## 事件与顺序
 
-事件示例见 [`event.example.json`](event.example.json)。网络事件必须提供稳定的 `event_id`、`source_id`、`agent`、`session_id`、`kind`、RFC3339 `occurred_at`、非空 `title` 和 `scope: main`；`body` 允许为空，`project` 可选。标识最长 256 字节、标题和项目最长 1024 字节、正文最长 32 KiB，请求体最长 64 KiB。
+事件示例见 [`event.example.json`](event.example.json)。网络事件必须提供稳定的 `event_id`、`source_id`、`agent`、`session_id`、`kind`、RFC3339 `occurred_at`、非空 `title` 和 `scope: main`；`body` 允许为空，`project`、`session_title` 可选；后者是宿主提供的稳定会话标题，最长 1024 字节，不等于本次事件标题。会话首次缺少原生标题时用项目或会话标识，之后仅由非空原生标题更新。标识最长 256 字节、标题和项目最长 1024 字节、正文最长 32 KiB，请求体最长 64 KiB。
 
 会话由 `(source_id, agent, session_id)` 唯一确定。子代理和未知 scope 返回 400。Bridge 可为缺省 `source_id` 填充本地配置值；来源不一致返回 400。`emit` 命令还可补随机事件 ID 和当前时间，显式提供稳定 ID 才能安全地跨多次命令调用重试。
 
@@ -18,8 +18,9 @@
 | --- | --- |
 | `POST /api/v1/events` | 统一事件。Hub 返回 200，`{event_id, accepted:"durable", duplicate}` 表示事务提交；Relay 返回 202、`accepted:"durable"` 表示中继落盘；Bridge 返回 202、`accepted:"memory"` 仅表示内存接收 |
 | `POST /api/v1/read` | `{"event_ids":["..."]}`，一次 1 至 256 个 ID；Hub 200 后已读持久化，允许早于事件到达。Relay 200 表示 Hub 已确认，202 表示只在中继暂存 |
-| `GET /api/v1/snapshot` | `{run_id,version,sessions,unread,devices}`，完整会话、强提醒未读和当前连接设备 |
+| `GET /api/v1/snapshot` | `{run_id,version,sessions,unread,devices,sources}`，完整会话、强提醒未读和当前连接设备 |
 | `GET /api/v1/events?before=0&limit=50` | 历史倒序数组；下一页 `before` 使用上一页最后一条 `position`；limit 1 至 200 |
+| `POST /api/v1/sessions/manage` | 会话键、最近事件 ID 和管理版本，加要变更的归档/别名/人工状态；Hub 200 才表示已保存，Relay 离线返回 503，不排队 |
 | `GET /api/v1/connect` | WebSocket 变化订阅和设备状态 |
 | `GET /api/v1/relay` | Hub 主动连接 Relay 的 WebSocket 通道，不是普通客户端入口 |
 | `GET /api/v1/push-jobs` | 最近 200 条推送记录，包括事件、渠道、状态、尝试次数和下次尝试时间 |
@@ -34,6 +35,22 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 错误体为 `{"error":"中文说明","retryable":true|false}`。401/403、400/409/413 等必须检查具体原因；503 可重试。Bridge 对已被 Hub 明确拒绝的无效事件记录计数和 ID 后移出队列，避免阻塞后续数据；网络错误、鉴权失败、意外响应仍保留内存重试。日志不含事件正文或令牌。
 
 可选令牌用 `Authorization: Bearer ...`。内网默认不要求，Relay 始终要求。浏览器 WebSocket 在 `agent-pulse` 子协议之外提供 `pulse-token.<Base64URL(令牌)>`，服务端仅协商 `agent-pulse`，令牌不放入 URL。HTTP JSON 变更接口和 WebSocket 检查同源 Origin，不提供跨站 CORS。Bridge 还要求回环 IP Host。代理终止 HTTPS 时须正确覆盖 `X-Forwarded-Proto`。
+
+## 会话详情与管理
+
+历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。`sources` 是 Hub 配置中的来源标识到 `{name, environment}` 的映射。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、`archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
+
+管理请求示例：
+
+```json
+{"source_id":"desktop-demo","agent":"opencode","session_id":"session-demo","last_event_id":"event-demo","management_version":0,"override_state":"interrupted"}
+```
+
+可修改字段为 `alias`（最多 256 字节，空串清除）、`archived`（布尔值）、`override_state`（空串恢复自动，或 idle/closed/interrupted/unknown），至少提供一项。会话不存在返回 404；最近事件 ID 或管理版本不符返回 409；合法变更在同一事务提交并触发原有快照通知。来源状态不被改写，归档不删除事件或已读事实。
+
+新有效来源活动清除人工状态并递增管理版本，归档和别名保留。旧原生序号或 `historical: true` 不解除覆盖；无序号实时事件仍按到达顺序，不用客户端时钟推断先后。修正为结束/中断使之前等待提醒失效，不生成虚假 Agent 事件或手机通知。恢复自动不会重新激活已失效的旧提醒。
+
+Relay 仅转发管理请求，Hub 不可达时返回 503，绝不以 202 伪装保存成功。请求结果未知时客户端先刷新确认，不自动换通路重复提交人工修改。Hub 使用数据库版本 3，启动自动迁移旧库；升级前备份，回退旧程序需恢复旧库。
 
 ## WebSocket
 

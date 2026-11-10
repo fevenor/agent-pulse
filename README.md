@@ -2,7 +2,7 @@
 
 AgentPulse 是供个人使用的多主机 Agent 会话通知工具。Hub（会话中心）保存会话与已读状态，Relay（公网中继）提供备用通路，Bridge（本地接入进程）采集事件，Tray（桌面小组件）显示提醒。
 
-Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。接入 OpenCode、Codex、Antigravity CLI 与 qoderclicn；各来源的覆盖边界和真实验证结果见开发记录。Windows Tray 留待桌面环境实施。
+Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、提醒卡片和离线已读恢复，使用 Rust + GPUI。接入 OpenCode、Codex、Antigravity CLI 与 qoderclicn；各来源及桌面行为的验证边界见开发记录。
 
 - [需求文档](docs/agent-pulse-requirements.md)：范围与验收。
 - [实现设计](docs/agent-pulse-design.md)：简化后的结构、可靠性、Tray 选型及扩展边界。
@@ -10,7 +10,8 @@ Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客�
 - [Linux 运行说明](docs/linux-quickstart.md)：构建、启动、接入 OpenCode、配置 HTTP 推送和排查。
 - [来源接入和更新](docs/adapters.md)：四种来源、签名发布、自动安装与兼容限制。
 - [镜像构建与部署](docs/images.md)：GitHub 自动构建、双架构容器验证和 Relay 镜像部署。
-- [Windows 开发接续](docs/windows-development.md)：原生目录、工具链、GPUI 原型和后续实施边界。
+- [Windows 开发](docs/windows-development.md)：原生工具链、检查命令、Debian 联调和剩余验收。
+- [Windows 客户端](docs/windows-client.md)：运行、离线恢复、Bridge 管理和原生打包。
 - [变更记录](CHANGELOG.md)：需求、设计和工程变更历史。
 
 ## 工作目录
@@ -23,7 +24,7 @@ go/protocol/                  Go 协议类型
 protocol/                     跨语言 JSON 示例和说明
 web/hub/                      Vue 3 + TypeScript + Vite 管理界面
 adapters/                     来源清单、说明及 OpenCode 插件源码
-tray/                         桌面小组件，框架验证后初始化
+tray/                         Rust + GPUI 原生桌面客户端
 deploy/                       Docker、Compose、代理与 systemd 示例
 scripts/                      按需添加的开发/安装脚本
 tests/                        契约、集成和端到端验证
@@ -63,7 +64,7 @@ pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
 bash scripts/check.sh
 ```
 
-Linux 服务端开发先准备 Go；Web/TypeScript 使用 Volta + pnpm。Tray 首选 Rust + GPUI，先做小型原型；GPUI 验证不可行时采用 Go + Walk，不采用浏览器或 WebView 页面方案。Windows 原生交互必须在真实桌面验证。
+Linux 服务端开发先准备 Go；Web/TypeScript 使用 Volta + pnpm。Tray 沿用已确认的 Rust + GPUI；出现无法合理解决的关键桌面障碍时才评估 Go + Walk，不采用浏览器或 WebView 页面方案。Windows 原生交互必须在真实桌面验证。
 
 Bridge 首版继续使用 Go；若后续等价功能实测表明 Rust 有实际资源收益，再评估迁移，保持事件协议与 Adapter 独立更新能力。
 

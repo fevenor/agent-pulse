@@ -1,0 +1,33 @@
+[package]
+name = "agent-pulse-tray"
+version = "0.4.0"
+edition = "2024"
+description = "AgentPulse Windows 原生会话提醒客户端"
+publish = false
+
+[features]
+dev-demo = []
+
+[dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["windows-manifest"] }
+tray-icon = { version = "=0.26.1", default-features = false }
+async-channel = "=2.5.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "=0.9.34"
+ureq = { version = "=3.5.1", features = ["json"] }
+tungstenite = { version = "=0.30.0", features = ["rustls-tls-native-roots", "url"] }
+url = "=2.5.8"
+uuid = { version = "=1.29.2", features = ["v4"] }
+raw-window-handle = "=0.6.2"
+unicode-segmentation = "1"
+windows = { version = "=0.61.3", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Com", "Win32_UI_Shell", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_RemoteDesktop"] }
+
+[profile.release]
+debug = false
+strip = "debuginfo"
+
+# 开发演示复用优化依赖，保持控制台与调试断言；发布禁止启用演示。
+[profile.preview]
+inherits = "release"
+debug-assertions = true

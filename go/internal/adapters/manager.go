@@ -111,7 +111,7 @@ func Detect(ctx context.Context, m Manifest) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd := hostCommand(ctx, path, "--version")
 	var out limitedBuffer
 	out.limit = 4096
 	cmd.Stdout = &out
@@ -427,7 +427,7 @@ func Dispatch(ctx context.Context, c config.Bridge, id, hook string, input []byt
 	entry := filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry))
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, entry, "--hook", hook, "--source", c.SourceID)
+	cmd := hostCommand(ctx, entry, "--hook", hook, "--source", c.SourceID)
 	cmd.Stdin = bytes.NewReader(input)
 	var output limitedBuffer
 	output.limit = 65536
@@ -454,7 +454,7 @@ func Launch(ctx context.Context, c config.Bridge, id string, args []string) erro
 		return errors.New("没有可启动的适配包")
 	}
 	p := installed.Package
-	cmd := exec.CommandContext(ctx, filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry)), append([]string{"run"}, args...)...)
+	cmd := hostCommand(ctx, filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry)), append([]string{"run"}, args...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

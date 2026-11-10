@@ -13,6 +13,8 @@ test("稳定 ID、来源隔离和完成语义", () => {
   const one = convert(completed, session, "linux")!;
   assert.equal(one.kind, "turn.completed");
   assert.equal(one.sequence, 12);
+  assert.equal(one.session_title, "检查任务");
+  assert.notEqual(one.title, one.session_title);
   assert.deepEqual(one, convert(completed, session, "linux"));
   assert.notEqual(one.event_id, convert(completed, session, "windows")!.event_id);
 });

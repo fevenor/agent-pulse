@@ -19,6 +19,7 @@ data/
 __pycache__/
 /hub.yaml
 /bridge.yaml
+tray.yaml
 
 # 前端与桌面构建产物
 node_modules/
@@ -27,6 +28,9 @@ tray/bin/
 tray/obj/
 tray/target/
 .cache/
+
+# 实施过程的截图、日志、审计和临时验证产物
+/tmp/
 
 # 编辑器与系统文件
 .idea/

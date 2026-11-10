@@ -16,16 +16,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type SourceLabel struct {
+	Name        string `json:"name"`
+	Environment string `json:"environment"`
+}
+
 type Hub struct {
-	Listen             string    `json:"listen"`
-	Database           string    `json:"database"`
-	Token              string    `json:"token"`
-	ReminderTTLSeconds int       `json:"reminder_ttl_seconds"`
-	Push               []Channel `json:"push"`
-	RelayURL           string    `json:"relay_url"`
-	RelayToken         string    `json:"relay_token"`
-	WebDirectory       string    `json:"web_directory"`
-	AdapterDirectory   string    `json:"adapter_directory"`
+	Sources            map[string]SourceLabel `json:"sources"`
+	Listen             string                 `json:"listen"`
+	Database           string                 `json:"database"`
+	Token              string                 `json:"token"`
+	ReminderTTLSeconds int                    `json:"reminder_ttl_seconds"`
+	Push               []Channel              `json:"push"`
+	RelayURL           string                 `json:"relay_url"`
+	RelayToken         string                 `json:"relay_token"`
+	WebDirectory       string                 `json:"web_directory"`
+	AdapterDirectory   string                 `json:"adapter_directory"`
 }
 
 type Relay struct {

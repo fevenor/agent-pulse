@@ -1,6 +1,6 @@
-# Linux 端到端测试
+# 端到端测试
 
-测试使用临时数据库和回环监听，不修改 Git。默认测试不向手机发送；真实手机脚本须明确传入 `--send`。宿主测试保留临时诊断目录，容器和手机测试清理自身资源。构建前提：
+测试使用临时数据库和回环监听，不修改 Git。默认测试不向手机发送；真实手机脚本须明确传入 `--send`。宿主测试保留临时诊断目录，容器和手机测试清理自身资源。原始输出如需保存，重定向或复制到 Git 忽略的 `tmp/verification/`；提交的开发记录只保留脱敏后的命令、结果与边界，不提交原始日志、截图或机器路径。构建前提：
 
 ```sh
 pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
@@ -43,6 +43,12 @@ AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke
 
 `bash scripts/check.sh` 包括 Go 竞态检测、本地网络集成、TypeScript 类型检查、映射样例和 Web 构建。Relay 离线队列、双向连接和适配包经中继下载在 Go 集成测试中验证；同机隔离状态目录模拟多个主机，不能替代物理多机部署验收。
 
+Windows 联调先用 `scripts/build.ps1 -DevelopmentTools` 生成 `bin/dev/` 测试服务 和 `scripts/check.ps1 -Tray -Integration`。Rust 中的真实服务测试默认忽略，`-Integration` 显式启用并验证 Windows Hub/Relay、客户端离线已读和重启恢复。Windows 安装器测试在普通 Go 检查中运行。
+
+默认 `scripts/build.ps1` 只提供用户 Tray，`scripts/build.ps1 -Demo` 提供前台演示。关闭其他 Tray 实例后执行 `uv run --offline --no-project python tests/e2e/windows_desktop.py`，验证发布参数拒绝、中文空格便携目录和不同启动工作目录、跨安装路径且不同配置的单实例拦截、内置 Bridge 启动和父进程结束后的清理；测试不操作桌面界面。加入 `--with-demo` 时，检查发布/演示二进制的 GUI/控制台子系统和演示专属文案隔离，另在测试专属隐藏控制台验证默认不打开设置、前台日志、真实 Ctrl+C 正常退出、不读取指定生产配置且不产生生产状态。须先构建 `-Demo`。Rust 单元测试在临时目录创建真实 `.lnk` 验证自启动维护，不向系统启动文件夹写入，不写注册表；禁用状态解析单独验证。原生菜单、悬浮拖拽、窗口滚动缩放和真实登录启动仍需单独验收。
+
+Windows 与 Debian 的双来源联调使用 `uv run --offline --no-project python tests/e2e/windows_wsl.py`；前提是已构建 Windows 程序、测试标签的 Docker 镜像和 Linux Bridge，准备命令见 [Windows 开发](../../docs/windows-development.md#debian-与容器)。脚本清理自己创建的临时容器、文件与进程，不使用真实 Agent 或手机配置。
+
 ## Antigravity ACP
 
 ```sh
@@ -57,7 +63,7 @@ uv run --offline --no-project python tests/e2e/antigravity_acp.py
 uv run --offline --no-project python tests/e2e/phone_channel.py --send
 ```
 
-读取 `~/.local/bin/codex-notify.sh` 中既有 `CODEX_NOTIFY_API_URL` 默认值，或使用当前同名环境变量。只解析已知字面量，不执行脚本；密钥和完整 URL 不写入文件、命令参数或证据。Hub 向临时本地转发器发送，转发器最多调用真实渠道一次，并仅保留 HTTP 状态、数值/布尔业务码及是否出现成功提示。该转发器用于核对真实响应，不作为正式部署组件；正式 Hub 直接调用渠道并解析业务状态。收到成功响应后仍需在手机上核对实收。
+先在本次进程环境中提供 `CODEX_NOTIFY_API_URL`；脚本不会默认读取任何开发机的私人通知脚本。兼容已有通知脚本时可显式传入 `--script <脚本路径>`，仅在环境变量缺失时解析其中已知的渠道字面量，不执行脚本。密钥和完整 URL 不写入文件、命令参数或证据。Hub 向临时本地转发器发送，转发器最多调用真实渠道一次，并仅保留 HTTP 状态、数值/布尔业务码及是否出现成功提示。该转发器用于核对真实响应，不作为正式部署组件；正式 Hub 直接调用渠道并解析业务状态。收到成功响应后仍需在手机上核对实收。
 
 ## 镜像部署与恢复
 

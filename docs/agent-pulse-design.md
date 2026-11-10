@@ -68,7 +68,7 @@ Tray 自己提供桌面交互，不采用浏览器、WebView 页面或打开 Hub
 
 ### 3.1 实现与依赖边界
 
-- Rust + GPUI：在 `tray/` 独立 Cargo 工程中固定 Rust 工具链、依赖版本或提交及锁文件。[GPUI 官方说明](https://github.com/zed-industries/zed/tree/main/crates/gpui)用于核对目标平台和版本兼容性；托盘集成可考察 [gpui-tray](https://docs.rs/crate/gpui-tray/latest)，其与所选 GPUI 版本的事件循环兼容性需实际验证。
+- Rust + GPUI：在 `tray/` 独立 Cargo 工程中固定 Rust 工具链、依赖版本及锁文件；当前使用 GPUI 0.2.2 与 tray-icon 0.26.1，通过事件通道接入同一 UI 线程。少量 Win32 函数处理禁止激活卡片、隐藏窗口初始布局和子进程生命周期，不维护 GPUI 分叉。[GPUI 官方说明](https://github.com/zed-industries/zed/tree/main/crates/gpui)用于核对后续版本兼容性。
 - Go + Walk：仅在触发后备条件时开发，使用 [Walk 的原生窗口与托盘能力](https://github.com/lxn/walk/tree/master/examples/notifyicon)，补充少量必要的 Windows 系统调用。Windows 原生界面与连接/未读逻辑分开，为未来其他桌面平台保留替换边界，不假定 Walk 本身跨平台。
 - Tray 内只分连接/未读状态、UI、平台函数。协议和缓存与渲染实现无关；锁屏/全屏、窗口显示、自启动与 Bridge 子进程管理集中在平台代码中。
 

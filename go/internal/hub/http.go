@@ -116,7 +116,17 @@ func (h *Hub) Handler(token string) http.Handler {
 				return
 			}
 		}
-		items, err := h.History(r.Context(), before, limit)
+		key := protocol.SessionKey{SourceID: r.URL.Query().Get("source_id"), Agent: r.URL.Query().Get("agent"), SessionID: r.URL.Query().Get("session_id")}
+		var items []protocol.EventView
+		if key != (protocol.SessionKey{}) {
+			if key.SourceID == "" || key.Agent == "" || key.SessionID == "" {
+				transport.Error(w, 400, "会话筛选必须包含来源、Agent 和会话标识")
+				return
+			}
+			items, err = h.SessionHistory(r.Context(), key, before, limit)
+		} else {
+			items, err = h.History(r.Context(), before, limit)
+		}
 		if err != nil {
 			transport.Error(w, 503, "历史读取失败")
 			return
@@ -124,6 +134,7 @@ func (h *Hub) Handler(token string) http.Handler {
 		transport.JSON(w, 200, items)
 	})
 	mux.HandleFunc("GET /api/v1/connect", h.connect)
+	h.sessionRoutes(mux)
 	h.adapterRoutes(mux)
 	return transport.Guard(token, false, mux)
 }

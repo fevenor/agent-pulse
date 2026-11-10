@@ -25,8 +25,8 @@ func write(t *testing.T, path, body string) {
 	}
 }
 func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux 安装器")
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("安装器当前支持 Linux 和 Windows")
 	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
@@ -38,6 +38,21 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	pub, _ := os.ReadFile(pubPath)
 	commandDir := filepath.Join(root, "bin")
 	write(t, filepath.Join(commandDir, "test-agent"), "#!/bin/sh\necho 'test-agent 1.2.3'\n")
+	var testExecutable []byte
+	entry := "adapter"
+	if runtime.GOOS == "windows" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		testExecutable, err = os.ReadFile(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(commandDir, "test-agent.exe"), string(testExecutable))
+		t.Setenv("AGENT_PULSE_INSTALL_TEST_HELPER", "adapter")
+		entry = "adapter.exe"
+	}
 	t.Setenv("PATH", commandDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/adapters/index", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(repo, "index.json")) })
@@ -48,8 +63,11 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	defer srv.Close()
 	build := func(v, body string) Package {
 		dir := filepath.Join(root, "source", v)
-		write(t, filepath.Join(dir, "adapter"), body)
-		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: "linux/amd64", Kind: "executable", Entry: "adapter", Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}})
+		if runtime.GOOS == "windows" && !strings.Contains(body, "missing-interpreter") {
+			body = string(testExecutable)
+		}
+		write(t, filepath.Join(dir, entry), body)
+		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: entry, Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}})
 		if err != nil {
 			t.Fatal(err)
 		}

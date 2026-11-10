@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/sqlitepath"
 	"agent-pulse/protocol"
 	_ "modernc.org/sqlite"
 )
@@ -54,8 +54,7 @@ func Open(c config.Hub) (*Hub, error) {
 		return nil, err
 	}
 	_ = f.Close()
-	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", sqlitepath.URI(path))
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +88,7 @@ func (h *Hub) migrate() error {
 	if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return fmt.Errorf("数据库版本较新，当前程序不能读取")
 	}
 	if version == 0 {
@@ -125,6 +124,11 @@ PRAGMA user_version=1;`)
 	}
 	if version < 2 {
 		if _, err := h.db.Exec(`BEGIN; CREATE TABLE IF NOT EXISTS adapter_hosts(source_id TEXT PRIMARY KEY,report BLOB NOT NULL); PRAGMA user_version=2; COMMIT;`); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err := h.db.Exec(`BEGIN; CREATE TABLE session_management(source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL, alias TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0, override_state TEXT NOT NULL DEFAULT '', override_at TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(source_id,agent,session_id)); PRAGMA user_version=3; COMMIT;`); err != nil {
 			return err
 		}
 	}
@@ -187,6 +191,14 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		apply = false
 	}
 	now := timestamp(time.Now())
+	title := e.SessionTitle
+	if title == "" {
+		title = e.Project
+	}
+	if title == "" {
+		title = e.Agent + " · " + e.SessionID
+	}
+
 	if apply {
 		// 无序号的实时事件按到达顺序处理，但不能抹掉已知原生序号。
 		if e.Sequence > seq {
@@ -196,8 +208,12 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		if _, err = tx.ExecContext(ctx, `UPDATE events SET valid=0 WHERE source_id=? AND agent=? AND session_id=? AND valid=1 AND (? <> 'session.closed' OR json_extract(payload,'$.kind') IN ('input.required','approval.required'))`, e.SourceID, e.Agent, e.SessionID, e.Kind); err != nil {
 			return false, err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,agent,session_id) DO UPDATE SET state=excluded.state,title=excluded.title,project=excluded.project,last_event_id=excluded.last_event_id,last_sequence=excluded.last_sequence,updated_at=excluded.updated_at`, e.SourceID, e.Agent, e.SessionID, e.State(), e.Title, e.Project, e.EventID, seq, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,agent,session_id) DO UPDATE SET state=excluded.state,title=CASE WHEN ? <> '' THEN excluded.title ELSE sessions.title END,project=excluded.project,last_event_id=excluded.last_event_id,last_sequence=excluded.last_sequence,updated_at=excluded.updated_at`, e.SourceID, e.Agent, e.SessionID, e.State(), title, e.Project, e.EventID, seq, now, e.SessionTitle)
 		if err != nil {
+			return false, err
+		}
+
+		if _, err = tx.ExecContext(ctx, `UPDATE session_management SET override_state='',override_at='',revision=revision+1 WHERE source_id=? AND agent=? AND session_id=? AND override_state<>''`, e.SourceID, e.Agent, e.SessionID); err != nil {
 			return false, err
 		}
 	}
@@ -253,14 +269,18 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := protocol.Snapshot{Version: h.versionLocked(), Sessions: []protocol.Session{}, Unread: []protocol.EventView{}, Devices: []protocol.Device{}}
-	rows, err := h.db.QueryContext(ctx, `SELECT source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at FROM sessions ORDER BY source_id,agent,session_id`)
+	s.Sources = map[string]protocol.SourceLabel{}
+	for id, label := range h.config.Sources {
+		s.Sources[id] = protocol.SourceLabel{Name: label.Name, Environment: label.Environment}
+	}
+	rows, err := h.db.QueryContext(ctx, `SELECT source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at,COALESCE((SELECT json_extract(payload,'$.kind') FROM events WHERE event_id=sessions.last_event_id),'') FROM sessions ORDER BY source_id,agent,session_id`)
 	if err != nil {
 		return s, err
 	}
 	for rows.Next() {
 		var v protocol.Session
 		var at string
-		if err = rows.Scan(&v.SourceID, &v.Agent, &v.SessionID, &v.State, &v.Title, &v.Project, &v.LastEventID, &v.LastSequence, &at); err != nil {
+		if err = rows.Scan(&v.SourceID, &v.Agent, &v.SessionID, &v.State, &v.Title, &v.Project, &v.LastEventID, &v.LastSequence, &at, &v.LastKind); err != nil {
 			break
 		}
 		v.UpdatedAt, err = time.Parse(time.RFC3339Nano, at)
@@ -276,6 +296,13 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	}
 	if rowErr != nil {
 		return s, rowErr
+	}
+	for i := range s.Sessions {
+		v := &s.Sessions[i]
+		err := h.db.QueryRowContext(ctx, `SELECT alias,archived,override_state,override_at,revision FROM session_management WHERE source_id=? AND agent=? AND session_id=?`, v.SourceID, v.Agent, v.SessionID).Scan(&v.Alias, &v.Archived, &v.OverrideState, &v.OverrideAt, &v.ManagementVersion)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return s, err
+		}
 	}
 	s.Unread, err = h.eventsLocked(ctx, `WHERE e.notify=1 AND r.event_id IS NULL ORDER BY e.position`, nil)
 	if err != nil {

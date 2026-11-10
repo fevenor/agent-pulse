@@ -14,6 +14,7 @@ export type PulseEvent = {
   kind: string;
   occurred_at: string;
   title: string;
+  session_title?: string;
   body: string;
   project: string;
   sequence?: number;
@@ -63,6 +64,7 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
     kind: mapping[0],
     occurred_at: new Date(event.created).toISOString(),
     title: `${mapping[1]}：${session.title || "OpenCode"}`.slice(0, 240),
+    session_title: (session.title || "").slice(0, 240),
     body: body.slice(0, 4000),
     project: session.location.directory ?? "",
     ...("durable" in event ? { sequence: event.durable.seq } : {}),

@@ -18,18 +18,19 @@ type AdapterResult struct {
 }
 
 type Event struct {
-	EventID    string    `json:"event_id"`
-	SourceID   string    `json:"source_id"`
-	Agent      string    `json:"agent"`
-	SessionID  string    `json:"session_id"`
-	Kind       string    `json:"kind"`
-	OccurredAt time.Time `json:"occurred_at"`
-	Title      string    `json:"title"`
-	Body       string    `json:"body"`
-	Project    string    `json:"project,omitempty"`
-	Scope      string    `json:"scope"`
-	Sequence   int64     `json:"sequence,omitempty"`
-	Historical bool      `json:"historical,omitempty"`
+	EventID      string    `json:"event_id"`
+	SourceID     string    `json:"source_id"`
+	Agent        string    `json:"agent"`
+	SessionID    string    `json:"session_id"`
+	Kind         string    `json:"kind"`
+	OccurredAt   time.Time `json:"occurred_at"`
+	Title        string    `json:"title"`
+	Body         string    `json:"body"`
+	Project      string    `json:"project,omitempty"`
+	Scope        string    `json:"scope"`
+	Sequence     int64     `json:"sequence,omitempty"`
+	Historical   bool      `json:"historical,omitempty"`
+	SessionTitle string    `json:"session_title,omitempty"`
 }
 
 func NewID() string {
@@ -57,6 +58,9 @@ func (e Event) Validate() error {
 	if e.Sequence < 0 {
 		return fmt.Errorf("sequence 不能为负数")
 	}
+	if len(e.SessionTitle) > 1024 {
+		return fmt.Errorf("session_title 最长 1024 字节")
+	}
 	if strings.TrimSpace(e.Title) == "" || len(e.Title) > 1024 || len(e.Body) > 32<<10 || len(e.Project) > 1024 {
 		return fmt.Errorf("title 必填且最长 1024 字节，body 最长 32768 字节，project 最长 1024 字节")
 	}
@@ -82,6 +86,12 @@ func (e Event) Notifies() bool {
 }
 
 type Session struct {
+	Alias             string `json:"alias,omitempty"`
+	Archived          bool   `json:"archived"`
+	OverrideState     string `json:"override_state,omitempty"`
+	OverrideAt        string `json:"override_at,omitempty"`
+	ManagementVersion int64  `json:"management_version"`
+
 	SourceID     string    `json:"source_id"`
 	Agent        string    `json:"agent"`
 	SessionID    string    `json:"session_id"`
@@ -89,6 +99,7 @@ type Session struct {
 	Title        string    `json:"title"`
 	Project      string    `json:"project,omitempty"`
 	LastEventID  string    `json:"last_event_id"`
+	LastKind     string    `json:"last_kind,omitempty"`
 	LastSequence int64     `json:"last_sequence,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -115,7 +126,12 @@ type Device struct {
 	LastSeen   time.Time `json:"last_seen"`
 }
 
+type SourceLabel struct {
+	Name        string `json:"name"`
+	Environment string `json:"environment"`
+}
 type Snapshot struct {
+	Sources map[string]SourceLabel `json:"sources,omitempty"`
 	Version
 	Sessions []Session   `json:"sessions"`
 	Unread   []EventView `json:"unread"`
@@ -140,4 +156,19 @@ type Message struct {
 	Type      string `json:"type"`
 	RequestID string `json:"request_id,omitempty"`
 	Payload   any    `json:"payload,omitempty"`
+}
+
+// 会话键包含来源，避免不同主机使用相同宿主会话 ID 时串线。
+type SessionKey struct {
+	SourceID  string `json:"source_id"`
+	Agent     string `json:"agent"`
+	SessionID string `json:"session_id"`
+}
+type SessionChange struct {
+	SessionKey
+	LastEventID       string  `json:"last_event_id"`
+	ManagementVersion int64   `json:"management_version"`
+	Archived          *bool   `json:"archived,omitempty"`
+	Alias             *string `json:"alias,omitempty"`
+	OverrideState     *string `json:"override_state,omitempty"`
 }

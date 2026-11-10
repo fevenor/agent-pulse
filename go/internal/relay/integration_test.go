@@ -31,6 +31,60 @@ func until(t *testing.T, check func() bool) {
 	t.Fatal("等待条件超时")
 }
 
+func TestSessionManagementThroughRelayRequiresHubCommit(t *testing.T) {
+	root := t.TempDir()
+	r, err := relay.Open(config.Relay{Database: filepath.Join(root, "relay.db"), Token: "test", QueueEvents: 100, QueueBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+	cfg := config.Hub{Database: filepath.Join(root, "hub.db"), RelayURL: srv.URL, RelayToken: "test"}
+	h, err := hub.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	event := protocol.Event{EventID: "wait", SourceID: "source", Agent: "test", SessionID: "main", Kind: "approval.required", OccurredAt: time.Now().UTC(), Title: "审批", Scope: "main"}
+	if _, err = h.Accept(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	closed := "closed"
+	change := protocol.SessionChange{SessionKey: protocol.SessionKey{SourceID: "source", Agent: "test", SessionID: "main"}, LastEventID: "wait", OverrideState: &closed}
+	client := transport.Client(time.Second)
+	if status, _ := transport.Request(ctx, client, srv.URL, "test", "POST", "/api/v1/sessions/manage", change, nil); status != 503 {
+		t.Fatal("离线管理不可入中继队列", status)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); h.RunRelay(ctx, cfg) }()
+	until(t, func() bool {
+		status, _ := transport.Request(ctx, client, srv.URL, "test", "GET", "/api/v1/snapshot", nil, nil)
+		return status == 200
+	})
+	if status, err := transport.Request(ctx, client, srv.URL, "test", "POST", "/api/v1/sessions/manage", change, nil); err != nil || status != 200 {
+		t.Fatal(status, err)
+	}
+	if status, _ := transport.Request(ctx, client, srv.URL, "test", "POST", "/api/v1/sessions/manage", change, nil); status != 409 {
+		t.Fatal("旧修正请求应被拒绝", status)
+	}
+	cancel()
+	<-done
+	if err = h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h, err = hub.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	snapshot, err := h.Snapshot(context.Background())
+	if err != nil || snapshot.Sessions[0].OverrideState != "closed" || snapshot.Sessions[0].State != "waiting" || snapshot.Unread[0].Read {
+		t.Fatal("重启后应保留人工覆盖、来源事实与未读", snapshot, err)
+	}
+}
+
 func TestAdapterUpdateThroughRelay(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("安装器仅验证 Linux")

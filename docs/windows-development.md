@@ -1,47 +1,99 @@
-# Windows 原生开发接续
+# Windows 原生开发
 
-Windows 阶段先验证 Rust + GPUI 的桌面小组件原型，再实现 Tray 和原生 Bridge 管理。Hub/Relay 已有 Linux 镜像，原型可连接现有 Linux Hub，不必先在 Windows 重建全部后端环境。当前 `tray/` 尚无 Cargo 工程；已有 Windows Go 交叉编译产物不代表桌面和安装功能已经完成。
+Windows 主工作副本使用本地 NTFS 目录、原生 PowerShell 和 Windows 版工具链。Rust + GPUI 桌面客户端、Go 服务和 Windows 安装器已具备开发入口；当前运行方法见 [Windows 客户端](windows-client.md)，验证证据及待验收项见 [开发记录](development-status.md)。不把任一开发机的路径、安装状态或私人设置当成项目要求。
 
-## 工作副本位置
+## 工具链
 
-主要工作副本放在 Windows 本地 NTFS 目录中，在 Windows 原生编辑器、PowerShell 或 Visual Studio 开发者终端中打开，使用 Windows Rust、Go、Node 和 Git。
+| 用途 | 准备要求 |
+| --- | --- |
+| Go 服务与 Bridge | Go 1.25 或更新兼容版本；最低版本以 `go/go.mod` 为准；脚本使用 `GOTOOLCHAIN=local` |
+| 原生桌面 | Rustup，`tray/rust-toolchain.toml` 指定的工具链、MSVC 目标和组件；依赖以 `Cargo.lock` 为准 |
+| C++ 链接 | Visual Studio Build Tools 的 C++ 桌面开发、MSVC x64/x86、Windows SDK；PowerShell 脚本通过 vswhere 定位安装目录 |
+| Web / OpenCode | Volta 管理 Node.js 24.14.1、pnpm 10.33.2，版本由各 `package.json` 声明；只用 pnpm |
+| Python 测试 | uv；用 `uv run` 执行，按需 `uv venv` / `uv pip` 管理环境 |
+| Linux 联调 | Debian WSL2 内的 Docker Engine、Compose 与 Buildx；无需另装 Docker Desktop |
 
-```powershell
-git clone git@github.com:fevenor/agent-pulse.git agent-pulse
-Set-Location agent-pulse
-```
+GPUI 固定为 0.2.2，托盘库固定为 tray-icon 0.26.1。使用仓库锁定依赖，不照搬完整 Zed 的全部构建依赖。CMake/Spectre 库只在实际构建要求时补充；当前具体验证条件写在开发记录，不能据此断言其他工具链组合一定可用。
 
-若需要 Linux 服务端或 WSL Bridge 联调，在 WSL2 的 Linux 文件系统中另建副本，通过提交和推送同步。两个系统各自安装依赖，分别维护 node_modules、Cargo target、二进制和运行配置。主构建使用所属系统的原生文件系统，不共用跨系统的依赖缓存。
+Windows SDK 安装器为 Desktop C++ amd64 自动勾选的依赖保留即可；性能分析器、调试器、应用认证、ARM64 等按实际需要安装，不要求全选。SDK 提供头文件与库，不能替代 MSVC 编译器。安装工具后重新打开终端，核对 `go version`、`rustc -Vv`、`cargo -V`，避免 PATH 或 GOROOT 沿用旧环境。
 
-文件位置跟随实际执行工具的系统；这是 [微软 WSL 文件系统建议](https://learn.microsoft.com/en-us/windows/wsl/filesystems)。仓库用 `.gitattributes` 固定文本 LF，Windows `.bat/.cmd` 使用 CRLF，不需要为迁移修改全局 Git 换行配置。
-
-## 最小环境准备
-
-- Git for Windows 与可访问本仓库的 SSH 配置。
-- Rustup、Cargo 和 Windows MSVC 目标 `x86_64-pc-windows-msvc`。GPUI 原型建立时固定具体工具链和依赖版本。
-- Visual Studio Build Tools 的“使用 C++ 的桌面开发”、MSVC x64/x86、Windows SDK；按锁定 GPUI 版本补充 CMake/Spectre 库等实际依赖。使用开发者终端启动构建。
-- Go 1.25 或兼容版本，用于 Windows Bridge 和命令行客户端。
-- 修改 Web/OpenCode 时才准备 Windows 版 Volta、Node.js 24.14.1、pnpm 10.33.2；执行 Python 测试时使用 uv。
-
-不需要安装 C#/.NET/WPF 工具链。Docker Desktop/WSL2 只在本地跑 Linux 服务或联调时需要，GPUI 原型可以直接连接已有 Hub。GPUI 环境参考 [Zed 官方 Windows 构建说明](https://zed.dev/docs/development/windows)，该文面向完整 Zed，独立小组件只安装实际依赖，不照搬完整应用的所有组件。
-
-仓库当前 `scripts/*.sh` 和 `tests/e2e/*.py` 主要面向 Linux；不要把它们全部通过 WSL 执行并据此认定 Windows 原生通过。在 PowerShell 可先构建已有 Go 入口：
+Volta 可按项目版本下载工具，不需改全局默认：
 
 ```powershell
-New-Item -ItemType Directory -Force bin | Out-Null
-Push-Location go
-go build -trimpath -buildvcs=false -o ../bin/ ./cmd/agent-pulse-bridge ./cmd/agent-pulse-client
-Pop-Location
+$env:VOLTA_FEATURE_PNPM = '1'
+volta fetch node@24.14.1 pnpm@10.33.2
 ```
 
-## 接续实施顺序
+下载镜像失败时先确认具体请求，可对本次命令指定官方 registry；不要为了项目改变全局代理/镜像。根目录没有 `package.json`，根目录的 Node/pnpm 版本不能证明子项目已对齐。统一检查入口会读取各子项目版本并通过 `volta run` 选择。
 
-1. 读取 [开发记录](development-status.md)、[Tray 设计与原型条件](agent-pulse-design.md#3-tray-技术路线与验证) 和 [协议](../protocol/README.md)。沿用已确认选型，不重新搭建多套客户端。
-2. 建立最小 GPUI 原型：托盘驻留、中文提醒卡片、简单列表、隐藏和退出；实测不抢焦点、锁屏/解锁、全屏、多显示器/DPI及远程桌面表现。
-3. 记录发布构建的内存、CPU/GPU、冷启动和依赖准备成本。满足设计条件后再完成 Hub/Relay 连接、离线已读与缓存、通知规则和 Bridge 子进程管理。
-4. 实现 Windows 适配包安装：当前非 Linux 安装锁明确拒绝使用；需要补充 Windows 文件锁、原子替换、路径/命令引用、可执行入口及宿主配置测试。不能把已有 Windows Bridge 编译通过当作自动安装器可用。
-5. 完成 Windows 原生 Agent 与 WSL2 独立 Bridge 联调，配置不同 `source_id`，核对通知去重、已读及锁屏行为。
+## 开发准备与验收基线
 
-GPUI 遇到已记录且无法合理解决的关键阻碍时，按既定方案转 Go + Walk；Bridge 仍保持 Go。zcode 挂起，Codex 高级事件、手机多渠道优先级和物理多机长期更新后置。
+从仓库根目录执行：
 
-迁移只需源代码和必要私有运行配置；不要复制 Linux bin/dist/node_modules 作为 Windows 依赖。手机密钥、中继令牌和发布私钥仍存仓库外。代理的用户级规则需在新环境单独配置，不随项目克隆迁移。Git 后续写操作继续按用户授权范围执行。
+```powershell
+./scripts/build.ps1 -DevelopmentTools
+./scripts/check.ps1 -Tray -Integration
+./scripts/build.ps1 -Demo
+./bin/dev/agent-pulse-tray-demo.exe --demo
+uv run --offline --no-project python tests/e2e/windows_desktop.py
+```
+
+`build.ps1` 默认只将发布 Tray 放入 `bin/`，内置 Bridge 在构建缓存中生成。`-DevelopmentTools` 显式将 Go 测试服务和发布工具放入 `bin/dev/`；`-Demo` 生成前台开发演示 `bin/dev/agent-pulse-tray-demo.exe`。`-Tray` 保留为兼容参数。`check.ps1` 执行 Go 测试和静态检查、锁定版本的 Web/OpenCode 安装与检查；`-Tray` 增加 Rust 检查，`-Integration` 增加真实本地 Hub/Relay 联调。只检查 Go 可用 `-GoOnly`。脚本逐项检查原生命令退出码；不能把 PowerShell 最后一个命令成功当作前面都通过。
+
+Rust 补充静态检查：
+
+```powershell
+. ./scripts/windows-tools.ps1
+Initialize-CppTools
+Push-Location tray
+try { cargo clippy --release --locked --all-targets -- -D warnings } finally { Pop-Location }
+```
+
+Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 Windows 竞态检测要求兼容的 mingw-w64 C 编译器，MSVC 不能直接替代；当前继续由 Linux 执行竞态检查。官方要求见 [Go 竞态检测](https://go.dev/doc/articles/race_detector#Requirements)。
+
+## Debian 与容器
+
+需要 WSL 时显式使用 `wsl -d Debian`。Windows UI、原生构建和 UI 测试留在 Windows；Linux 编译、容器与服务测试放在 Debian 文件系统的独立目录。两侧只交换源码和构建需要的文件，不复用 `node_modules`、Rust target 或 Go 二进制。
+
+在 Debian 的工作副本中，Web 构建后执行：
+
+```sh
+cd go
+GOTOOLCHAIN=local go test -race ./...
+GOTOOLCHAIN=local go vet ./...
+cd ..
+docker build --target hub -t agent-pulse-hub:windows-dev -f deploy/docker/Dockerfile .
+docker build --target relay -t agent-pulse-relay:windows-dev -f deploy/docker/Dockerfile .
+uv run --no-project python tests/e2e/relay_containers.py --arch amd64 --hub-image agent-pulse-hub:windows-dev --relay-image agent-pulse-relay:windows-dev
+```
+
+也可以将 Go 检查放入官方 Go 容器；测试副本须同时包含 `go/` 和 `protocol/`，否则契约测试找不到样例。临时 Shell 脚本必须使用 LF。Docker 上下文排除 `.cache` 和 `tray/target`，避免传输本机缓存。
+
+跨 Windows / Debian Bridge 检查先构建 Windows 程序和上述镜像，再在 PowerShell 中准备 Linux Bridge：
+
+```powershell
+$previousOS = $env:GOOS
+$previousArch = $env:GOARCH
+try {
+    $env:GOOS = 'linux'
+    $env:GOARCH = 'amd64'
+    New-Item -ItemType Directory -Force .cache/windows-check | Out-Null
+    Push-Location go
+    try { go build -trimpath -buildvcs=false -o ../.cache/windows-check/bridge-linux ./cmd/agent-pulse-bridge } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) { throw 'Linux Bridge 构建失败' }
+} finally {
+    $env:GOOS = $previousOS
+    $env:GOARCH = $previousArch
+}
+uv run --offline --no-project python tests/e2e/windows_wsl.py
+```
+
+该测试只使用隔离来源、临时配置和回环端口，测试结束清理所创建的容器与进程；需要 Windows 可访问 WSL 本地转发。两来源使用不同 `source_id`，防止同名会话合并。
+
+## 后续验收
+
+继续沿用 Rust + GPUI，不因一次构建或网络故障切换框架。只有出现无法合理解决的关键桌面行为或维护障碍时，按已确认方案评估 Go + Walk。Bridge 保持 Go，不提前重写其他组件。
+
+桌面实测仍需覆盖：锁屏/解锁、睡眠唤醒、真实全屏、卡片外观、托盘点击/菜单、多显示器/DPI、远程桌面和长期运行。当前状态轮询的延迟、失联期间卡片行为需与实际使用体验一起验收。宿主方面逐个验证 Windows 原生 Agent 版本、加载与 hook 信任；不自动改写日常配置或调用真实模型、手机渠道。
+
+发布构建使用 `scripts/package-windows.ps1`；包只用于可解压运行，不隐式注册自启动或部署公网服务。自动化测试与原生验收分别记录。Git 读操作设置 `GIT_OPTIONAL_LOCKS=0`；暂存、提交、推送和其他 Git 写操作继续按用户单独授权范围执行。

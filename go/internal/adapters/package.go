@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-const BridgeVersion = "0.2.0"
+const BridgeVersion = "0.4.0"
 const MaxPackageBytes = 32 << 20
 
 var identifier = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

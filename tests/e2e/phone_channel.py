@@ -1,4 +1,4 @@
-"""经 Hub 向 codex-notify.sh 已配置渠道发送一次测试；密钥只驻留内存。"""
+"""经 Hub 向显式配置的渠道发送一次测试；密钥只驻留内存。"""
 import argparse
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,15 +18,17 @@ import urllib.request
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--send", action="store_true", help="明确执行一次真实手机推送")
-    parser.add_argument("--script", type=Path, default=Path.home() / ".local/bin/codex-notify.sh")
+    parser.add_argument("--script", type=Path, help="可选：从指定通知脚本读取已有渠道字面量")
     args = parser.parse_args()
     if not args.send:
         parser.error("真实发送需要 --send；常规 CI 不执行此脚本")
     # 只识别已知字面量，不 source 或执行外部脚本，也不输出包含密钥的 URL。
-    match = re.search(r'API_URL="\$\{CODEX_NOTIFY_API_URL:-([^}\s]+)\}"', args.script.read_text())
-    url = os.environ.get("CODEX_NOTIFY_API_URL") or (match.group(1) if match else None)
+    url = os.environ.get("CODEX_NOTIFY_API_URL")
+    if not url and args.script is not None:
+        match = re.search(r'API_URL="\$\{CODEX_NOTIFY_API_URL:-([^}\s]+)\}"', args.script.read_text())
+        url = match.group(1) if match else None
     if not url or not url.startswith("https://"):
-        raise RuntimeError("未找到可识别的 HTTPS 推送渠道配置")
+        parser.error("请通过 CODEX_NOTIFY_API_URL 或显式 --script 提供 HTTPS 推送渠道")
     evidence = {"external_requests": 0, "transport_status": None, "business_fields": {}}
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):

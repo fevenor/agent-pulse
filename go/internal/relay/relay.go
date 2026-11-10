@@ -11,7 +11,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/sqlitepath"
 	"agent-pulse/internal/transport"
 	"agent-pulse/protocol"
 	"github.com/gorilla/websocket"
@@ -52,8 +52,7 @@ func Open(c config.Relay) (*Relay, error) {
 		return nil, err
 	}
 	_ = f.Close()
-	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", sqlitepath.URI(path))
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +95,18 @@ func (r *Relay) Handler() http.Handler {
 	m.HandleFunc("GET /api/v1/relay", r.connectHub)
 	m.HandleFunc("GET /api/v1/connect", r.connectClient)
 	m.HandleFunc("POST /api/v1/adapters/status", r.ForwardStatus)
+	m.HandleFunc("POST /api/v1/sessions/manage", func(w http.ResponseWriter, req *http.Request) {
+		var change protocol.SessionChange
+		if !transport.Decode(w, req, &change) {
+			return
+		}
+		reply, err := r.forward(req.Context(), transport.Frame{Method: "POST", Path: "/api/v1/sessions/manage", Body: transport.Encode(change)})
+		if err != nil {
+			transport.Error(w, 503, "Hub 离线，会话管理未提交")
+			return
+		}
+		writeReply(w, reply)
+	})
 	m.HandleFunc("POST /api/v1/events", func(w http.ResponseWriter, req *http.Request) {
 		var e protocol.Event
 		if !transport.Decode(w, req, &e) {
@@ -159,7 +170,7 @@ func (r *Relay) Handler() http.Handler {
 
 func Allowed(method, path string) bool {
 	if method == "POST" {
-		return path == "/api/v1/events" || path == "/api/v1/read" || path == "/api/v1/adapters/status"
+		return path == "/api/v1/sessions/manage" || path == "/api/v1/events" || path == "/api/v1/read" || path == "/api/v1/adapters/status"
 	}
 	return method == "GET" && (path == "/api/v1/snapshot" || path == "/api/v1/events" || path == "/api/v1/push-jobs" || (path == "/api/v1/adapters/index" || path == "/api/v1/adapters/status") || strings.HasPrefix(path, "/api/v1/adapters/packages/"))
 }

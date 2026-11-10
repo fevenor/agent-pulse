@@ -28,7 +28,7 @@ bash scripts/package-adapters.sh ./dist/repository 1
 ./bin/agent-pulse-adapters publish --repository ./dist/repository --private /安全目录/publisher.key --index ./dist/repository/index-input.json
 ```
 
-`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
+`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 命令包，要求 Bridge 0.3.0 或更新兼容版本。OpenCode 0.3.0 包增加可选原生会话标题，最低 Bridge 0.4.0；先更新 Hub/Relay，再更新 Bridge 与插件，避免旧服务严格校验拒绝新字段。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
 
 每次发布递增 `sequence`。`packages` 是本次可用的版本集合，同一来源默认选择当前平台的最高兼容版本。集中回滚时，在新的更高序号索引里为该来源选择已有旧包，不复用旧序号。保留多个版本可供单机 `pins` 固定使用。相同版本不得更改内容，修改必须发布新版本。
 
@@ -60,9 +60,9 @@ adapters:
 ./bin/agent-pulse-bridge sync-adapters --config config/bridge.local.yaml
 ```
 
-签名、包摘要、大小、解压路径、平台及 Bridge/Agent 版本校验通过后才切换。安装锁由 Linux 内核管理；进程退出会自动释放。中断的安装根据 `pending.json` 恢复原配置和原版本；若用户在此期间修改了文件，停止自动恢复并报告，避免覆盖用户新配置。保留包目录，不删除正在运行的版本。
+签名、包摘要、大小、解压路径、平台及 Bridge/Agent 版本校验通过后才切换。Linux 与 Windows 均使用系统文件锁，进程退出会自动释放。中断的安装根据 `pending.json` 恢复原配置和原版本；若用户在此期间修改了文件，停止自动恢复并报告，避免覆盖用户新配置。保留包目录，不删除正在运行的版本。
 
-Hub 不可达时通过已配置 Relay 分块下载；两条通路使用同一受信发布公钥。失败保留旧包。明确的入口不可启动触发回滚并隔离坏包；普通不合法输入或超时不把整个包判坏。更高序号的新发布可解除隔离。Linux 之外的自动安装尚未验证，当前会明确拒绝，不因 Windows 交叉编译成功就宣称可用。
+Hub 不可达时通过已配置 Relay 分块下载；两条通路使用同一受信发布公钥。失败保留旧包。明确的入口不可启动触发回滚并隔离坏包；普通不合法输入或超时不把整个包判坏。更高序号的新发布可解除隔离。Windows 安装器使用隔离宿主验证，真实 Agent 的 hook 加载和信任仍需逐项验收；实现与命令引用规则见 [Windows 客户端](windows-client.md#windows-适配包)。其他平台继续拒绝自动安装。
 
 Codex 和 qoderclicn 的宿主信任提示由用户在宿主中确认，安装器不持久关闭信任检查。OpenCode 已运行实例不会被强制重启；“已安装”与“最近运行”不同，管理页会提示未确认或等待重新加载。
 
