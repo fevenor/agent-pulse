@@ -1,5 +1,5 @@
 # 生成 Windows 原生适配包与未签名索引；发布签名另行执行。
-param([string]$Repository = 'dist/repository-windows', [uint64]$Sequence = 1)
+param([string]$Repository = 'dist/repository-windows', [uint64]$Sequence = 1, [switch]$NativeOnly)
 $ErrorActionPreference = 'Stop'
 if ($Sequence -lt 1) { throw '发布序号必须大于零' }
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -22,17 +22,20 @@ foreach ($adapter in @('codex', 'antigravity', 'qoderclicn')) {
     if ($LASTEXITCODE -ne 0) { throw "适配包 $adapter 构建失败" }
     $packages += Get-Content -Raw $packagePath | ConvertFrom-Json
 }
-$pluginDir = Join-Path $projectRoot 'adapters/opencode'
-$package = Get-Content -Raw (Join-Path $pluginDir 'package.json') | ConvertFrom-Json
-$previousPnpm = $env:VOLTA_FEATURE_PNPM
-try {
-    $env:VOLTA_FEATURE_PNPM = '1'
-    & volta run --node $package.volta.node --pnpm ($package.packageManager -replace '^pnpm@', '') pnpm --dir $pluginDir build
-    if ($LASTEXITCODE -ne 0) { throw 'OpenCode 插件构建失败' }
-} finally { $env:VOLTA_FEATURE_PNPM = $previousPnpm }
-$packagePath = Join-Path $repositoryPath 'opencode.json'
-& (Join-Path $projectRoot 'bin/dev/agent-pulse-adapters.exe') pack --source (Join-Path $pluginDir 'dist') --manifest (Join-Path $pluginDir 'manifest.json') --repository $repositoryPath --out $packagePath
-if ($LASTEXITCODE -ne 0) { throw 'OpenCode 打包失败' }
-$packages += Get-Content -Raw $packagePath | ConvertFrom-Json
+# 合并跨平台仓库时只构建 Windows 命令包，通用插件统一使用 Linux 发布产物。
+if (-not $NativeOnly) {
+    $pluginDir = Join-Path $projectRoot 'adapters/opencode'
+    $package = Get-Content -Raw (Join-Path $pluginDir 'package.json') | ConvertFrom-Json
+    $previousPnpm = $env:VOLTA_FEATURE_PNPM
+    try {
+        $env:VOLTA_FEATURE_PNPM = '1'
+        & volta run --node $package.volta.node --pnpm ($package.packageManager -replace '^pnpm@', '') pnpm --dir $pluginDir build
+        if ($LASTEXITCODE -ne 0) { throw 'OpenCode 插件构建失败' }
+    } finally { $env:VOLTA_FEATURE_PNPM = $previousPnpm }
+    $packagePath = Join-Path $repositoryPath 'opencode.json'
+    & (Join-Path $projectRoot 'bin/dev/agent-pulse-adapters.exe') pack --source (Join-Path $pluginDir 'dist') --manifest (Join-Path $pluginDir 'manifest.json') --repository $repositoryPath --out $packagePath
+    if ($LASTEXITCODE -ne 0) { throw 'OpenCode 打包失败' }
+    $packages += Get-Content -Raw $packagePath | ConvertFrom-Json
+}
 [IO.File]::WriteAllText((Join-Path $repositoryPath 'index-input.json'), (@{sequence=$Sequence;packages=$packages} | ConvertTo-Json -Depth 20))
 Write-Output 'Windows 适配包和未签名索引已生成；宿主原生 hook 仍需按版本验收。'

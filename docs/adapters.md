@@ -34,6 +34,8 @@ bash scripts/package-adapters.sh ./dist/repository 1
 
 同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
 
+Windows 侧先执行 `./scripts/package-adapters.ps1 -NativeOnly`，只生成三个 Windows 命令包；通用 OpenCode 包统一采用 Linux 仓库中的一次构建。Windows Workflow 默认如此打包，Linux 镜像 Workflow 同时提供 `linux-adapters` 产物。普通 Windows 本机构建不加该参数时，仍可生成完整的单平台仓库。
+
 ```sh
 uv run --offline --no-project python scripts/merge_adapter_repositories.py \
   ./dist/repository ./dist/repository-windows --output ./dist/repository-combined --sequence 2
@@ -42,6 +44,8 @@ uv run --offline --no-project python scripts/merge_adapter_repositories.py \
 ```
 
 示例序号需替换为大于已发布序号的值。合并器校验包摘要与大小，保留每个平台的包；通用 OpenCode 包清单和文件内容一致时，忽略 ZIP 时间/权限差异，保留第一个输入仓库的既有 ZIP。内容或兼容清单不同的同版本包会报错，不自动挑选或覆盖；失败时不替换既有索引。合并只生成 `index-input.json` 和不可变包，不读取私钥，也不自动部署。
+
+同一插件在不同平台重复打包时，pnpm 路径长度处理可能使 bundle 的来源注释不同；合并器不会忽略这些内容差异。公用索引应使用上述单次通用构建方式，不通过放宽摘要检查或覆盖同版本包规避冲突。
 
 将发布目录放到 Hub 的 `adapter_directory`。发布能力只有本地命令，Web 不提供可执行包上传或目标修改接口。
 

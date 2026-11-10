@@ -46,6 +46,16 @@ jobs:
           enable-cache: false
       - name: 跨平台适配包合并检查
         run: uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+      - name: 构建 Linux 与通用适配包
+        run: bash scripts/package-adapters.sh ./dist/repository 1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-adapters
+          path: |
+            dist/repository/index-input.json
+            dist/repository/packages/*.zip
+          if-no-files-found: error
+          retention-days: 14
       - uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64

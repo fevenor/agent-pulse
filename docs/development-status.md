@@ -249,3 +249,15 @@ Windows 普通 Go 测试与静态检查、Debian 官方 Go 容器的竞态检查
 - [Linux 镜像 Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42795975198) 全部通过：Go/TypeScript/Web 检查、包合并回归、amd64/arm64 容器运行与 GHCR 发布。下载的两份容器结果均为通过，覆盖访问控制、Relay 离线去重及崩溃恢复、Hub 重连和已读持久化。
 - 已读取 Hub、Relay 的 `sha-1d8ac98e6ade0a03f56c59fe51a943586ce8674b` 镜像清单，均包含 `linux/amd64` 和 `linux/arm64`。arm64 容器运行使用 amd64 runner 上的模拟环境，仍不代表真机验收。
 - [首次 Windows Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42795975512) 的原生构建、Go/TypeScript/Web 和严格 Clippy 检查通过，Rust 自启动快捷方式回归失败：刚登记的目标被判为其他位置。目标比较改用规范文件路径，并补短路径/规范路径用例，继续保留移位和配置丢失等原有检查；修复后的原生结果另记。Workflow 同时前移格式检查，并在失败后保存 Rust 编译缓存，避免每次从头编译。
+
+修复提交 `206838b23efba39e6607138a44a474b215f95618` 推送后，两项 Workflow 均通过：
+
+| 检查 | 结果 |
+| --- | --- |
+| [Windows 原生检查与交付](https://github.com/fevenor/agent-pulse/actions/runs/42799739810) | Windows Server 2022 原生构建、Go/TypeScript/Web 检查、发布/演示严格 Clippy、8 项 Rust 单元测试、真实 Hub/Relay 联调、演示发布编译拒绝、二进制文案隔离及便携 ZIP 清单全部通过；快捷方式短路径/规范路径回归通过 |
+| [Linux 双架构镜像](https://github.com/fevenor/agent-pulse/actions/runs/42799739795) | 当前修复提交的后端、页面、包合并、amd64/arm64 容器恢复及 GHCR 发布通过，Hub/Relay 的提交标签为 `sha-206838b23efba39e6607138a44a474b215f95618` |
+| [Windows 构建产物](https://github.com/fevenor/agent-pulse/actions/runs/42799739810/artifacts/13757123479) | 包含便携 ZIP 与未签名适配包仓库，产物大小 13,114,555 字节；便携 ZIP 的 SHA-256 为 `a5574abf9d4fead97457b5bbb90101d8d6643065b8c69c4f4c1af1f5d4d44f1c`，保留 14 天 |
+
+原生 CI 不包含真实桌面交互、实际登录自启动或真实 Windows Agent 配置验收；这些范围继续按计划保留。原始远端日志及产物下载存放在忽略目录，仅将验证摘要写入本页。
+
+下载 Windows 产物后的 SHA-256 与 GitHub 公布值一致，内部便携 ZIP 为 9,575,341 字节，摘要及四文件清单与 runner 检查一致。随后实际合并时发现 Windows/Linux 重复构建的 OpenCode 0.3.0 文件只在 pnpm 来源路径注释上不同，合并器按同版本内容冲突拒绝。交付流程据此调整为 Windows 仅提供三个命令包，Linux 提供命令包和唯一通用插件；不放宽包内容检查，新的远端产物验证另记。
