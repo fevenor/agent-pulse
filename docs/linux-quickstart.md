@@ -1,6 +1,6 @@
 # Linux 运行说明
 
-提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由后续 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
+提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
 
 ## 准备和构建
 
@@ -19,6 +19,8 @@ bash scripts/build.sh
 ## 启动与接入
 
 将 `config/hub.example.yaml`、`config/bridge.example.yaml` 分别复制成 `config/hub.local.yaml`、`config/bridge.local.yaml`。每个 Bridge 配置固定且不同的 `source_id`。示例监听回环地址；多主机使用时，Hub 绑定指定可信内网 IP，并相应调整 Bridge 的 `hub_url`。
+
+Hub 只服务个人可信内网时，`token` 可省略；若另行开放到公网，必须配置访问控制。Relay 的公网 token 独立配置，Hub 通过主动建立的连接使用 Relay，不要求给 Hub 开放公网入站。
 
 数据库相对路径相对于启动时工作目录，固定工作目录或改用绝对路径。不要在多个进程中同时打开同一个 Hub 数据库。分别在两个终端运行：
 
@@ -70,13 +72,24 @@ push:
     timeout_seconds: 5
 ```
 
-实际 URL 和参数名按已有渠道修改。通用渠道以 HTTP 2xx 为接收成功；当前实际使用的渠道另检查业务状态，配置见下方。新增需要业务码或特殊签名的渠道应局部适配，不能仅凭 HTTP 200 宣称手机收到。
+实际 URL 和参数名按已有渠道修改。通用渠道以 HTTP 2xx 为接收成功；部分渠道需另检查业务状态。新增需要业务码或特殊签名的渠道应局部适配，不能仅凭 HTTP 200 宣称手机收到。
+
+每个渠道可独立设置 `max_title_chars`、`max_body_chars`，解决同一事件在不同渠道可接受长度不同的问题。0 或省略表示不限制，负数拒绝启动。上限按 Unicode 码点计数：普通中英文、换行和单码点 emoji 各计 1；组合 emoji 可能占多个码点，不按 UTF-8 字节数计算。超过上限时保留前面的字符，并以 `…` 结尾，省略号计入上限；上限为 1 时结果只有省略号。
+
+限制在 `${title}`、`${body}` 替换及 HTTP 编码之前执行，适用于 GET 查询、POST JSON 和表单。模板中额外写入的固定前后缀不计入该上限，需要自行留出空间。仅裁剪该渠道的发送文本，Hub 历史、Tray 正文及其他渠道保留各自内容，不修改原始事件。例如在渠道配置中设置：
+
+```yaml
+max_title_chars: 40
+max_body_chars: 1000
+```
+
+上述数值仅为示例。应分别验证渠道接口接受、App 内收件和系统通知展示，再确定适合实际设备的值；Hub 的字段上限不代表第三方渠道能接收或显示同样长度。旧版本 Hub 会拒绝未知配置字段，启用前先升级到包含该功能的版本。
 
 Hub 重启后等待 35 秒接受设备状态和已读再处理积压。至少一台在线未锁屏 Tray 时跳过手机；没有 Tray 或全部锁屏时发送。发送前检查已读、状态失效和默认 24 小时有效期，失效只停止提醒，不删除历史。HTTP 429/5xx 最多三次尝试、间隔 10 秒；网络异常或响应结果未知记为 `unknown`，不会盲目重发；开始发送后崩溃同样记未知。Web 的“推送记录”展示最近 200 条结果；`unknown` 表示不能确认送达，不自动或人工盲目补发。会话关闭解除输入/批准等待，但保留刚发生的完成、失败和中断提醒。
 
 ## 本地手机推送测试
 
-已有渠道可直接配置为下述形式；完整地址含密钥，只通过环境变量提供：
+以下为 POST JSON 渠道配置示例，字段名按实际接口调整；完整地址可能含密钥，通过环境变量提供：
 
 ```yaml
 push:
@@ -86,13 +99,15 @@ push:
     format: json
     fields:
       title: "${title}"
-      msg: "${body}"
+      body: "${body}"
     timeout_seconds: 15
 ```
 
-该模板对应当前 `codex-notify.sh` 使用的接口。`api.chuckfang.com` 在 HTTP 2xx 后还须返回数值 `status=200` 才记 sent；其他业务码记 failed，无法解析记 unknown。完整 URL 不写入仓库文件；Compose/systemd 从仓库外权限为 600 的环境文件传给 Hub，Compose 还需在 Hub 的 environment 中明确转发 `AGENT_PULSE_PHONE_URL`。`.gitignore` 和 `.dockerignore` 排除本地配置、环境文件和私钥，不能据此认为已追踪文件会自动脱离版本控制。
+按所选渠道的官方文档填写字段，并通过实际设备验证长度和显示效果；接口返回成功不等于手机出现系统通知。私密配置保存在版本控制之外。Compose/systemd 可从权限为 600 的环境文件传给 Hub，Compose 还需在 Hub 的 environment 中明确转发 `AGENT_PULSE_PHONE_URL`。`.gitignore` 和 `.dockerignore` 排除本地配置、环境文件和私钥，不能据此认为已追踪文件会自动脱离版本控制。
 
 `push` 可以配置多个渠道，目前每个渠道分别发送，不支持优先级与自动故障切换；该能力留待后续迭代。真实发送测试见 [测试说明](../tests/e2e/README.md)。
+
+### 本地接收器
 
 启动轻量接收器：
 

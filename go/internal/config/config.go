@@ -51,6 +51,8 @@ type Channel struct {
 	Query          map[string]string `json:"query"`
 	Fields         map[string]string `json:"fields"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
+	MaxTitleChars  int               `json:"max_title_chars"`
+	MaxBodyChars   int               `json:"max_body_chars"`
 }
 
 type Bridge struct {
@@ -147,6 +149,9 @@ func LoadHub(path string) (Hub, error) {
 		}
 		if p.TimeoutSeconds < 1 || p.TimeoutSeconds > 60 {
 			return c, fmt.Errorf("push[%d].timeout_seconds 范围为 1 至 60", i)
+		}
+		if p.MaxTitleChars < 0 || p.MaxBodyChars < 0 {
+			return c, fmt.Errorf("push[%d].max_title_chars 和 max_body_chars 不能为负数", i)
 		}
 	}
 	return c, nil

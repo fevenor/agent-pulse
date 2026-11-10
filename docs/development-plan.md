@@ -2,6 +2,14 @@
 
 沿用已确认的 Go 服务、Rust + GPUI 桌面客户端、Vue 管理页面和独立适配包，继续跨平台收尾与部署验收。已完成事项与验证证据见 [开发记录](development-status.md)，本页只维护剩余工作和完成条件。
 
+## 下一阶段：Windows Tray 优化
+
+以 Windows 原生环境中的 Tray 交互优化为下一阶段主线，具体调整先确定使用问题及预期行为，再进行局部修改。沿用 Rust + GPUI、便携单入口和内置 Bridge，不扩大为完整桌面客户端。准备和检查入口见 [Windows 开发](windows-development.md)。
+
+桌面改动后执行 `scripts/check.ps1 -Tray -Integration`，并对受影响的原生交互进行人工验收。重点保留窗口激活、可见内容自动已读、列表与详情、悬浮入口、Bridge 生命周期和离线重连的既有行为。源码检查通过不替代实际 Windows 桌面验证。
+
+手机渠道字符上限由 Hub 发送阶段处理，无需改写 Tray 正文；桌面继续读取完整事件。联调新配置前应确认测试 Hub 版本支持对应字段，使用隔离配置和测试数据，避免将私人部署状态写入项目文档。
+
 ## 1. 验收 Windows 交付与适配包发布
 
 Windows 和 Linux 镜像 Workflow 已通过，按已有产物继续完成交付验收。对应提交、构建范围和下载入口见 [开发记录](development-status.md)。

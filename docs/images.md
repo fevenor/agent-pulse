@@ -1,5 +1,7 @@
 # 镜像构建与部署
 
+首次部署按 [部署指南](deployment.md) 执行。Hub 使用 [`hub.image.yaml`](../deploy/compose/hub.image.yaml)，Relay 使用 [`relay.image.yaml`](../deploy/compose/relay.image.yaml)；本页说明发布规则及镜像验证。
+
 [GitHub Workflow](../.github/workflows/images.yml) 负责 Hub 和 Relay 的检查、构建与发布。PR、main/master 推送、`v*` 标签和手动触发均执行检查；仅推送事件在全部检查通过后发布至 GitHub Container Registry（GHCR，GitHub 提供的容器镜像仓库）。手动触发只验证，不发布。
 
 ## 构建与标签

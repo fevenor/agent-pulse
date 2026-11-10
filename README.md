@@ -4,6 +4,22 @@ AgentPulse 是供个人使用的多主机 Agent 会话通知工具。Hub（会�
 
 Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、提醒卡片和离线已读恢复，使用 Rust + GPUI。接入 OpenCode、Codex、Antigravity CLI 与 qoderclicn；各来源及桌面行为的验证边界见开发记录。
 
+## 从这里开始
+
+**首次部署先读 [部署指南](docs/deployment.md)**：从已发布镜像启动 Hub，发布适配包，在各 Agent 主机安装 Bridge，再按需接入 Relay 和 Windows Tray；包含配置、启动命令、成功判据和常见故障。部署容器无需准备完整开发工具链。
+
+| 你的任务 | 入口 |
+| --- | --- |
+| 在内网服务器部署 Hub | [Hub 镜像部署](docs/deployment.md#1-部署-hub) |
+| 让本机 Agent 上报会话 | [适配包发布](docs/deployment.md#2-发布适配包) → [Bridge 安装](docs/deployment.md#3-在-linux-主机安装-bridge) |
+| 增加公网备用通路 | [Relay 部署](docs/deployment.md#4-可选部署公网-relay) |
+| 使用 Windows 桌面提醒 | [Windows 客户端](docs/windows-client.md) |
+| 修改源码或接续开发 | [Agent 工作指引](AGENTS.md)、[开发计划](docs/development-plan.md) |
+
+手机渠道、token 和实际主机地址由使用者自行配置，示例中的占位值不可直接用于部署。Bridge 运行不代表宿主 hook 已加载，完成后应按 [部署验收](docs/deployment.md#5-验收手机推送与升级) 核对真实事件。
+
+## 参考文档
+
 - [需求文档](docs/agent-pulse-requirements.md)：范围与验收。
 - [实现设计](docs/agent-pulse-design.md)：简化后的结构、可靠性、Tray 选型及扩展边界。
 - [开发记录](docs/development-status.md)：环境、已完成事项和后续工作。

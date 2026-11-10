@@ -1,11 +1,36 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPushCharacterLimits(t *testing.T) {
+	for _, tc := range []struct {
+		title, body int
+		valid       bool
+	}{
+		{0, 0, true}, {1, 1, true}, {40, 2000, true}, {-1, 0, false}, {0, -1, false},
+	} {
+		t.Run(fmt.Sprintf("%d/%d", tc.title, tc.body), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hub.yaml")
+			body := fmt.Sprintf("push:\n  - name: phone\n    method: GET\n    url: https://example.invalid/push\n    max_title_chars: %d\n    max_body_chars: %d\n", tc.title, tc.body)
+			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadHub(path)
+			if (err == nil) != tc.valid {
+				t.Fatalf("配置校验结果不符: %v", err)
+			}
+			if tc.valid && (cfg.Push[0].MaxTitleChars != tc.title || cfg.Push[0].MaxBodyChars != tc.body) {
+				t.Fatal("未保留渠道字符上限")
+			}
+		})
+	}
+}
 
 func TestStrictYAML(t *testing.T) {
 	t.Setenv("PULSE_TEST_TOKEN", "secret: value\nnot_a_field: true")

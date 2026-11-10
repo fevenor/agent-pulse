@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agent-pulse/internal/config"
 	"agent-pulse/protocol"
@@ -17,7 +18,7 @@ import (
 
 // Send 返回 sent、retry、failed 或 unknown，不返回含凭据的网络错误。
 func Send(ctx context.Context, ch config.Channel, e protocol.Event) string {
-	replace := strings.NewReplacer("${title}", e.Title, "${body}", e.Body)
+	replace := strings.NewReplacer("${title}", limitChars(e.Title, ch.MaxTitleChars), "${body}", limitChars(e.Body, ch.MaxBodyChars))
 	u, err := url.Parse(ch.URL)
 	if err != nil {
 		return "failed"
@@ -77,6 +78,15 @@ func Send(ctx context.Context, ch config.Channel, e protocol.Event) string {
 		return "retry"
 	}
 	return "failed"
+}
+
+// 按 Unicode 码点计数，省略号也占一个字符；不改写 Hub 保存的原始事件。
+func limitChars(text string, maximum int) string {
+	if maximum <= 0 || utf8.RuneCountInString(text) <= maximum {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:maximum-1]) + "…"
 }
 
 // 当前实际渠道在 HTTP 200 中另返回业务 status；只做该接口需要的局部判断。

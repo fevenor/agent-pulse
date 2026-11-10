@@ -112,3 +112,56 @@ func TestAmbiguousResponseAndRedirect(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelCharacterLimits(t *testing.T) {
+	event := protocol.Event{Title: "标题🙂追加", Body: "第一行\n第二行🙂更多"}
+	for _, tc := range []struct {
+		name                string
+		titleMax, bodyMax   int
+		wantTitle, wantBody string
+	}{
+		{"默认不限", 0, 0, event.Title, event.Body},
+		{"中文与emoji", 4, 9, "标题🙂…", "第一行\n第二行🙂…"},
+		{"恰好上限", 5, 10, event.Title, event.Body},
+		{"只限制正文", 0, 1, event.Title, "…"},
+	} {
+		for _, format := range []string{"get", "json", "form"} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Query().Get("title") != tc.wantTitle || r.URL.Query().Get("body") != tc.wantBody {
+						t.Error("查询参数没有遵守渠道字符上限")
+					}
+					fields := map[string]string{}
+					if format == "json" {
+						if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+							t.Error(err)
+						}
+					} else if format == "form" {
+						if err := r.ParseForm(); err != nil {
+							t.Error(err)
+						}
+						fields["title"], fields["body"] = r.PostForm.Get("title"), r.PostForm.Get("body")
+					}
+					if format != "get" && (fields["title"] != tc.wantTitle || fields["body"] != tc.wantBody) {
+						t.Error("请求正文没有遵守渠道字符上限")
+					}
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				defer s.Close()
+				ch := config.Channel{Method: "GET", URL: s.URL, TimeoutSeconds: 1,
+					MaxTitleChars: tc.titleMax, MaxBodyChars: tc.bodyMax,
+					Query: map[string]string{"title": "${title}", "body": "${body}"}}
+				if format != "get" {
+					ch.Method, ch.Format = "POST", format
+					ch.Fields = map[string]string{"title": "${title}", "body": "${body}"}
+				}
+				if got := Send(context.Background(), ch, event); got != "sent" {
+					t.Fatal(got)
+				}
+				if event.Title != "标题🙂追加" || event.Body != "第一行\n第二行🙂更多" {
+					t.Fatal("原始事件被修改")
+				}
+			})
+		}
+	}
+}

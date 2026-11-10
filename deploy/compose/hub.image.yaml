@@ -1,0 +1,16 @@
+# 使用已发布镜像；复制本文件与 hub.runtime.yaml 到独立部署目录。
+services:
+  hub:
+    image: ${AGENT_PULSE_HUB_IMAGE:?请设置 Hub 镜像完整名称和版本}
+    restart: unless-stopped
+    ports: ["${HUB_BIND_IP:-127.0.0.1}:18700:18700"]
+    environment:
+      AGENT_PULSE_TOKEN: ${AGENT_PULSE_TOKEN:-}
+      AGENT_PULSE_RELAY_TOKEN: ${AGENT_PULSE_RELAY_TOKEN:-}
+      AGENT_PULSE_PHONE_URL: ${AGENT_PULSE_PHONE_URL:-}
+    volumes:
+      - hub-data:/data
+      - ./hub.runtime.yaml:/etc/agent-pulse/hub.yaml:ro
+      - ./repository:/repository:ro
+volumes:
+  hub-data:
