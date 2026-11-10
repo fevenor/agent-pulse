@@ -2,7 +2,7 @@
 
 Linux 服务端、管理页面、中继和适配包独立更新已实现。OpenCode、Qoder、agy ACP 原生链路及已有手机渠道请求已通过，双架构容器恢复验证通过；各来源的验证程度及剩余工作列在下方。Windows 原生客户端、便携交付和适配包安装器已实现本轮功能，用户已确认长文本滚动、手工缩放及最大化/还原通过。自启动、多屏与休眠恢复按用户意见后置，可提交阶段代码并回到 Linux 继续开发；特殊桌面场景与真实 Windows 宿主接入仍未完整验收，不等同于整个项目已交付。
 
-当前接续基线与远端检查见本页末尾的「2026-11-10 Linux 接续复核」。后续工作以 [开发计划](development-plan.md) 为准。
+接续基线、本地回归和对应提交的远端检查分别记录在本页末尾。后续工作以 [开发计划](development-plan.md) 为准。
 
 ## 实施状态
 
@@ -241,3 +241,11 @@ Windows 普通 Go 测试与静态检查、Debian 官方 Go 容器的竞态检查
 | 最终 Linux 检查 | `scripts/check.sh` 通过，覆盖 Go 竞态测试/vet、新增升级与包装器测试、OpenCode 类型/映射及 Web 构建；包合并测试通过。Linux/Windows Workflow 均通过静态检查，当前修改的远端镜像构建仍待提交后验证 |
 
 本轮没有向手机发送，没有改写日常 Agent 配置，没有 Git 暂存、提交或推送；测试日志与截图保留在临时目录或忽略的 `tmp/verification/`，本页只记录脱敏结论。Qoder 重新加载/异常退出、Antigravity 真实子代理、目标环境部署及 Windows 人工专项仍按 [后续计划](development-plan.md) 推进。
+
+## 2026-11-10 远端构建验证
+
+用户授权后，将上述实现提交并推送到 `main`，提交为 `1d8ac98e6ade0a03f56c59fe51a943586ce8674b`。该提交触发 Linux 镜像与 Windows 客户端两项独立 Workflow。
+
+- [Linux 镜像 Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42795975198) 全部通过：Go/TypeScript/Web 检查、包合并回归、amd64/arm64 容器运行与 GHCR 发布。下载的两份容器结果均为通过，覆盖访问控制、Relay 离线去重及崩溃恢复、Hub 重连和已读持久化。
+- 已读取 Hub、Relay 的 `sha-1d8ac98e6ade0a03f56c59fe51a943586ce8674b` 镜像清单，均包含 `linux/amd64` 和 `linux/arm64`。arm64 容器运行使用 amd64 runner 上的模拟环境，仍不代表真机验收。
+- [首次 Windows Workflow](https://github.com/fevenor/agent-pulse/actions/runs/42795975512) 的原生构建、Go/TypeScript/Web 和严格 Clippy 检查通过，Rust 自启动快捷方式回归失败：刚登记的目标被判为其他位置。目标比较改用规范文件路径，并补短路径/规范路径用例，继续保留移位和配置丢失等原有检查；修复后的原生结果另记。Workflow 同时前移格式检查，并在失败后保存 Rust 编译缓存，避免每次从头编译。

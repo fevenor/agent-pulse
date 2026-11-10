@@ -4,7 +4,7 @@
 
 ## 1. 验证当前改动的远端构建与交付
 
-Windows Workflow 和跨平台包合并入口已具备本地可审阅实现；远端运行需要先获得本轮 Git 提交、推送授权。
+Windows Workflow 和跨平台包合并入口已提交，按当前提交的远端结果继续完成交付验证。
 
 - 执行当前提交的 Linux 检查、amd64/arm64 镜像运行与发布，以及 Windows 原生构建、Go/Rust 检查和 Hub/Relay 联调。修正真实 runner 暴露的问题，不以本地静态校验替代运行结果。
 - 从 Windows 构建产物取得便携 ZIP 和原生适配包，用现有合并工具与 Linux 仓库组成公用索引，完成签名及不同平台版本选择检查。Linux 交叉编译的 Windows 包不能替代 Windows 原生宿主验收。

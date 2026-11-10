@@ -79,10 +79,13 @@ impl Registration {
                 .and_then(|_| link.GetArguments(&mut arguments))
         }
         .map_err(|_| "无法读取快捷方式目标")?;
-        if !wide_text(&target)?
-            .eq_ignore_ascii_case(self.executable.to_str().ok_or("程序路径编码无效")?)
-            || !wide_text(&arguments)?.eq_ignore_ascii_case(&self.arguments()?)
-        {
+        // Shell 可能展开 8.3 短路径；按真实文件的规范路径比较，不要求原始字符串相同。
+        let target = PathBuf::from(wide_text(&target)?);
+        let same_target = match (fs::canonicalize(target), fs::canonicalize(&self.executable)) {
+            (Ok(target), Ok(expected)) => target == expected,
+            _ => false,
+        };
+        if !same_target || !wide_text(&arguments)?.eq_ignore_ascii_case(&self.arguments()?) {
             return Ok(Status::OtherLocation);
         }
         approval_status(read_approval()?.as_deref())
@@ -258,6 +261,22 @@ mod tests {
         let expected =
             approval_status(read_approval().unwrap().as_deref()).unwrap_or_else(Status::Unknown);
         assert_eq!(registration.status(), expected);
+        // 同一目标的短路径及规范路径都应识别为已登记；不改变快捷方式参数。
+        let original = registration.executable.clone();
+        let _com = Com::initialize().unwrap();
+        let link: IShellLinkW =
+            unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.unwrap();
+        let mut short = vec![0u16; 32768];
+        unsafe {
+            link.SetPath(&path_string(&original).unwrap()).unwrap();
+            link.GetPath(&mut short, std::ptr::null_mut(), SLGP_SHORTPATH.0 as u32)
+                .unwrap();
+        }
+        registration.executable = PathBuf::from(wide_text(&short).unwrap());
+        assert_eq!(registration.status(), expected);
+        registration.executable = fs::canonicalize(&original).unwrap();
+        assert_eq!(registration.status(), expected);
+        registration.executable = original;
         fs::remove_file(config).unwrap();
         assert_eq!(registration.status(), expected);
         registration.executable = root.0.join("moved.exe");

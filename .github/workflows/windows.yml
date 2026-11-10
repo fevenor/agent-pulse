@@ -44,8 +44,11 @@ jobs:
           try {
             rustup show active-toolchain
             if ($LASTEXITCODE -ne 0) { throw 'Rust 工具链安装失败' }
+            cargo fmt --check
+            if ($LASTEXITCODE -ne 0) { throw 'Rust 格式检查失败' }
           } finally { Pop-Location }
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: rust-cache
         with:
           path: |
             ~/.cargo/registry
@@ -92,3 +95,12 @@ jobs:
             dist/repository-windows/packages/*.zip
           if-no-files-found: error
           retention-days: 14
+      - name: 保存编译缓存
+        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-primary-key != '' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tray/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
