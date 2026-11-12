@@ -26,9 +26,9 @@ config = {
 (temp / "hub.yaml").write_text(json.dumps(config), encoding="utf-8")
 
 
-def api(path, data=None):
+def api(path, data=None, method=None):
     request = Request(base + "/api/v1/" + path, data=None if data is None else json.dumps(data).encode(),
-                      headers={"Content-Type": "application/json"})
+                      headers={"Content-Type": "application/json"}, method=method)
     with urlopen(request, timeout=5) as response:
         return json.load(response)
 
@@ -132,6 +132,26 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         browser("click", "nav button:first-child")
         event("unlabelled-test", "fallback", "session.started", 1, "未命名来源会话")
         wait_for(f"{row('未命名来源会话')}?.textContent.includes('unlabelled-test')")
+        # 中央改名应更新普通会话展示；主机归档仅对桌面历史隐藏，管理页面仍可追溯。
+        api("hosts/linux-test", {"display_name": "统一维护的主机名"}, "PATCH")
+        wait_for(f"{row('便于识别的别名')}?.textContent.includes('统一维护的主机名')")
+        api("hosts/linux-test", {"archived": True}, "PATCH")
+        counts(1, 0)
+        assert all(e["source_id"] != "linux-test" for e in api("events"))
+        assert any(e["source_id"] == "linux-test" for e in api("events?include_archived=true"))
+        browser("click", "nav button:nth-child(4)")
+        wait_for(f"{row('统一维护的主机名')}?.textContent.includes('已归档')")
+        browser("click", "nav button:nth-child(7)")
+        wait_for("document.querySelector('tbody')?.textContent.includes('统一维护的主机名')")
+        api("hosts/linux-test", {"archived": False}, "PATCH")
+        counts(2, 0)
+        # 删除仅限本测试生成的数据，验证页面和历史不会重新出现旧主机。
+        api("hosts/windows-test", method="DELETE")
+        browser("click", "nav button:nth-child(4)")
+        wait_for("!document.querySelector('tbody')?.textContent.includes('windows-test')")
+        assert all(s["source_id"] != "windows-test" for s in api("snapshot")["sessions"])
+        assert all(e["source_id"] != "windows-test" for e in api("events?include_archived=true"))
+        browser("click", "nav button:first-child")
         browser("set", "viewport", "390", "844")
         wait_for("document.documentElement.scrollWidth<=window.innerWidth")
         browser("screenshot", str(temp / "mobile.png"))
@@ -141,7 +161,7 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         if errors and errors != "✓ No errors":
             raise RuntimeError(f"浏览器存在错误：{temp}")
         result = {"result": "通过", "checks": ["别名与来源事实", "人工状态与计数", "归档筛选", "主机与环境搜索",
-                  "恢复自动与新活动", "归档未读保留", "明确已读", "未命名来源回退", "移动布局", "无页面错误"]}
+                  "恢复自动与新活动", "归档未读保留", "明确已读", "未命名来源回退", "主机集中改名", "主机归档与管理页历史", "永久删除清理", "移动布局", "无页面错误"]}
         (temp / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False))
         print(f"诊断目录：{temp}")

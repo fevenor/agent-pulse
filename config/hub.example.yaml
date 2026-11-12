@@ -5,6 +5,8 @@ reminder_ttl_seconds: 86400
 push: []
 # web_directory: "./web/hub/dist"
 # adapter_directory: "./dist/repository"
+# 适配包签名公钥；发布者在 Hub 部署时配置一次，Bridge 首次直连 Hub 获取并固定信任。
+# adapter_public_key: "publisher.pub 的完整一行 Base64 内容"
 # relay_url: "https://relay.example.invalid"
 # relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
 # token: "${env:AGENT_PULSE_TOKEN}"

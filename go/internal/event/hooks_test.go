@@ -1,7 +1,9 @@
 package event
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,6 +18,15 @@ func TestNativeHookSemantics(t *testing.T) {
 		{"qoderclicn", "PermissionRequest", `{"session_id":"s","agent_id":"child"}`, ""},
 		{"qoderclicn", "PermissionRequest", `{"session_id":"s","tool_name":"Bash"}`, "approval.required"},
 		{"qoderclicn", "Notification", `{"session_id":"s","notification_type":"idle_prompt"}`, ""},
+		{"zcode", "SessionStart", `{"session_id":"s","source":"startup","hook_event_name":"SessionStart"}`, "session.started"},
+		{"zcode", "SessionStart", `{"session_id":"s","source":"resume"}`, "session.resumed"},
+		{"zcode", "UserPromptSubmit", `{"session_id":"s","prompt":"私有提示词"}`, "session.resumed"},
+		{"zcode", "Stop", `{"session_id":"s","last_assistant_message":"私有回答","stop_hook_active":false}`, "turn.completed"},
+		{"zcode", "Stop", `{"session_id":"child","agent_type":"zcode-explore"}`, ""},
+		{"zcode", "Stop", `{"session_id":"child","agentName":"zcode-explore"}`, ""},
+		{"zcode", "Stop", `{"session_id":"child","parentSessionId":"main"}`, ""},
+		{"zcode", "PermissionRequest", `{"session_id":"child","tool_name":"Bash"}`, ""},
+		{"zcode", "PostToolUseFailure", `{"session_id":"s","error":"工具报错"}`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent+tt.hook, func(t *testing.T) {
@@ -33,6 +44,18 @@ func TestNativeHookSemantics(t *testing.T) {
 				t.Fatal(e)
 			}
 		})
+	}
+}
+
+func TestLongNativeReplyIsDiscardedBeforeSending(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"session_id": "s", "hook_event_name": "Stop", "responseText": strings.Repeat("私有回复", 20000)})
+	e, err := Convert("zcode", "host", "Stop", raw, time.Now(), "")
+	if err != nil || e == nil || e.Kind != "turn.completed" || e.Body != "" {
+		t.Fatal("长回复导致完成事件丢失", err)
+	}
+	result, _ := json.Marshal(e)
+	if len(result) > 1024 || strings.Contains(string(result), "私有回复") {
+		t.Fatal("上传了原始回复")
 	}
 }
 func TestAntigravityBindingAndUnknownStop(t *testing.T) {

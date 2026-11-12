@@ -17,6 +17,39 @@ pub fn handle(window: &Window) -> HWND {
     }
 }
 
+// MAKEINTRESOURCEW(1) 是资源编号，不是供 Rust 解引用的内存指针。
+#[allow(clippy::manual_dangling_ptr)]
+pub fn set_window_icon(window: &Window) {
+    use windows::{
+        Win32::{
+            Foundation::{LPARAM, WPARAM},
+            System::LibraryLoader::GetModuleHandleW,
+        },
+        core::PCWSTR,
+    };
+    unsafe {
+        if let Ok(module) = GetModuleHandleW(None) {
+            for (kind, size) in [(ICON_SMALL, 16), (ICON_BIG, 32)] {
+                if let Ok(icon) = LoadImageW(
+                    Some(module.into()),
+                    PCWSTR(1usize as *const u16),
+                    IMAGE_ICON,
+                    size,
+                    size,
+                    LR_SHARED,
+                ) {
+                    SendMessageW(
+                        handle(window),
+                        WM_SETICON,
+                        Some(WPARAM(kind as usize)),
+                        Some(LPARAM(icon.0 as isize)),
+                    );
+                }
+            }
+        }
+    }
+}
+
 // 原生尺寸消息会同步回调 GPUI，更新窗口期间回调无法再次借用窗口。
 // 显示后排队重发实际客户区尺寸，使首帧无需获得焦点也能完成布局。
 pub fn queue_layout(hwnd: HWND) {
@@ -177,6 +210,66 @@ impl Bridge {
         }
         Ok(Some(Self { child, job }))
     }
+    pub fn run_setup(settings: &agent_pulse_tray::settings::Settings) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        let executable = std::env::current_exe().map_err(|_| "无法定位客户端程序")?;
+        let status = std::process::Command::new(executable)
+            .arg("--bridge-setup-console")
+            .arg(&settings.config_path)
+            .creation_flags(0x00000010) // CREATE_NEW_CONSOLE：独立窗口保留最终报告，等待用户确认。
+            .status()
+            .map_err(|_| "无法打开本机 Agent 配置向导")?;
+        if !status.success() {
+            return Err(format!("配置向导退出，状态码 {:?}", status.code()));
+        }
+        if !settings.bridge_enabled {
+            agent_pulse_tray::settings::Settings::set_bridge_enabled(&settings.config_path, true)?;
+        }
+        Ok(())
+    }
+
+    /// 独立控制台宿主；不取得单实例锁，也不启动桌面窗口和后台接入服务。
+    pub fn setup_console(config_path: &std::path::Path) -> bool {
+        unsafe {
+            // 发布版是 GUI 子系统，需要主动创建控制台；调试版已由父进程创建。
+            let _ = windows::Win32::System::Console::AllocConsole();
+        }
+        let result = (|| -> Result<(), String> {
+            let settings = agent_pulse_tray::settings::Settings::load(Some(config_path))?;
+            let executable = extract_bridge(&settings.data_dir)?;
+            let config = settings.bridge_config_path();
+            if settings.bridge_config.as_os_str().is_empty() {
+                agent_pulse_tray::settings::Settings::ensure_bridge_config(
+                    &config,
+                    &settings.hub_url,
+                    &settings.token,
+                )?;
+            } else if !config.is_file() {
+                return Err("指定的本地接入配置不存在".into());
+            }
+            let status = std::process::Command::new(executable)
+                .arg("setup")
+                .arg("--config")
+                .arg(config)
+                .status()
+                .map_err(|_| "无法运行本机 Agent 配置向导")?;
+            if !status.success() {
+                return Err(format!("配置向导退出，状态码 {:?}", status.code()));
+            }
+            println!(
+                "\n配置完成后，请重启 Tray。已运行的 Agent 可能还需重启或重新加载配置；Codex 等宿主可能要求信任确认。"
+            );
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            eprintln!("\n本机 Agent 配置未完成：{error}");
+        }
+        println!("\n请查看上方配置报告，按 Enter 关闭此窗口并返回 Tray。");
+        let mut confirmation = String::new();
+        let _ = std::io::stdin().read_line(&mut confirmation);
+        result.is_ok()
+    }
+
     pub fn stop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -271,6 +364,15 @@ fn extract_bridge(data_dir: &std::path::Path) -> Result<std::path::PathBuf, Stri
 pub fn visible(hwnd: HWND) -> bool {
     unsafe { IsWindowVisible(hwnd).as_bool() }
 }
+/// 只在可供用户阅读的前台详情窗口中累计时间，最小化和后台窗口均不计时。
+pub fn readable(hwnd: HWND) -> bool {
+    unsafe {
+        IsWindowVisible(hwnd).as_bool()
+            && !IsIconic(hwnd).as_bool()
+            && GetForegroundWindow() == hwnd
+    }
+}
+
 pub fn menu_open() -> bool {
     unsafe {
         let mut info = GUITHREADINFO {

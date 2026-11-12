@@ -85,7 +85,7 @@ func TestVersion2UpgradePreservesDataAndBackup(t *testing.T) {
 	checkData := func(t *testing.T, h *Hub, managed bool) {
 		t.Helper()
 		var version int
-		if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 3 {
+		if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 5 {
 			t.Fatal("迁移版本错误", version, err)
 		}
 		snapshot, err := h.Snapshot(ctx)

@@ -105,6 +105,39 @@ impl Event {
         }
     }
 }
+pub fn event_label(kind: &str) -> &'static str {
+    match kind {
+        "session.started" => "会话开始",
+        "session.resumed" => "继续执行",
+        "session.closed" => "会话结束",
+        "activity.observed" => "任务活动",
+        "turn.completed" => "执行完成",
+        "input.required" => "等待输入",
+        "approval.required" => "等待批准",
+        "run.failed" => "执行失败",
+        "run.interrupted" => "执行中断",
+        "observation.lost" => "状态待确认",
+        _ => "状态记录",
+    }
+}
+pub fn event_time(value: &str) -> String {
+    use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
+    let Ok(date) = OffsetDateTime::parse(value, &Rfc3339) else {
+        return value.into();
+    };
+    let offset = UtcOffset::local_offset_at(date);
+    let date = date.to_offset(offset.unwrap_or(UtcOffset::UTC));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}{}",
+        date.year(),
+        date.month() as u8,
+        date.day(),
+        date.hour(),
+        date.minute(),
+        date.second(),
+        if offset.is_err() { " UTC" } else { "" }
+    )
+}
 pub fn state_label(state: &str) -> &'static str {
     match state {
         "running" => "进行中",
@@ -121,12 +154,26 @@ pub struct Device {
     pub id: String,
     pub role: String,
     #[serde(default)]
+    pub host_name: String,
+    #[serde(default)]
     pub last_seen: String,
 }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SourceLabel {
     pub name: String,
     pub environment: String,
+    #[serde(default)]
+    pub archived: bool,
+}
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HostLabel {
+    #[serde(default)]
+    #[serde(alias = "name")]
+    pub display_name: String,
+    #[serde(default)]
+    pub default_name: String,
+    #[serde(default)]
+    pub archived: bool,
 }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Snapshot {
@@ -160,7 +207,11 @@ impl State {
         self.snapshot
             .unread
             .iter()
-            .filter(|e| !e.read && !self.pending_reads.contains(&e.event_id))
+            .filter(|e| {
+                !e.read
+                    && !self.pending_reads.contains(&e.event_id)
+                    && !self.snapshot.source_archived(&e.source_id)
+            })
             .cloned()
             .collect()
     }
@@ -174,6 +225,12 @@ impl State {
             .filter(|e| {
                 sessions.insert((e.source_id.clone(), e.agent.clone(), e.session_id.clone()))
             })
+            .collect()
+    }
+    pub fn notifications_for(&self, muted: &BTreeSet<String>) -> Vec<Event> {
+        self.notifications()
+            .into_iter()
+            .filter(|e| !muted.contains(&e.source_id))
             .collect()
     }
 }
@@ -241,17 +298,15 @@ impl Store {
 }
 
 impl Snapshot {
+    pub fn source_archived(&self, id: &str) -> bool {
+        self.sources.get(id).is_some_and(|source| source.archived)
+    }
+
     pub fn source_label(&self, id: &str) -> String {
         self.sources
             .get(id)
-            .map(|s| {
-                if s.environment.is_empty() {
-                    s.name.clone()
-                } else {
-                    format!("{} / {}", s.name, s.environment)
-                }
-            })
-            .filter(|s| !s.is_empty())
+            .map(|source| source.name.clone())
+            .filter(|name| !name.is_empty())
             .unwrap_or_else(|| id.into())
     }
 }
@@ -313,6 +368,29 @@ mod tests {
         assert_eq!(s.unread().len(), 1);
         assert!(s.notifications().is_empty());
     }
+    #[test]
+    fn central_host_name_and_archive_flag_apply_to_events() {
+        let mut state = State::default();
+        state.snapshot.sources.insert(
+            "host-b".into(),
+            SourceLabel {
+                name: "旧主机名".into(),
+                environment: String::new(),
+                archived: false,
+            },
+        );
+        assert!(!state.snapshot.source_archived("host-b"));
+        assert_eq!(state.snapshot.source_label("host-b"), "旧主机名");
+        state.snapshot.sources.get_mut("host-b").unwrap().archived = true;
+        state.snapshot.unread.push(Event {
+            source_id: "host-b".into(),
+            valid: true,
+            ..event("host-event")
+        });
+        assert!(state.unread().is_empty());
+        assert!(state.notifications().is_empty());
+    }
+
     #[test]
     fn failed_save_keeps_memory_and_existing_file() {
         let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());

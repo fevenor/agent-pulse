@@ -91,12 +91,18 @@ func TestAdapterUpdateThroughRelay(t *testing.T) {
 	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "repository")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
 	priv := filepath.Join(root, "key")
 	pubFile := filepath.Join(root, "pub")
 	if err := adapters.GenerateKey(priv, pubFile); err != nil {
 		t.Fatal(err)
 	}
 	pub, _ := os.ReadFile(pubFile)
+	if err := os.WriteFile(filepath.Join(repo, "publisher.pub"), pub, 0600); err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(root, "bin")
 	_ = os.MkdirAll(bin, 0700)
 	if err := os.WriteFile(filepath.Join(bin, "test-agent"), []byte("#!/bin/sh\necho 1.0.0\n"), 0700); err != nil {

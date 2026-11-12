@@ -46,6 +46,11 @@ jobs:
           enable-cache: false
       - name: 跨平台适配包合并检查
         run: uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+      - name: 构建发布工具并验证 Hub 镜像准备流程
+        run: |
+          mkdir -p bin
+          (cd go && go build -trimpath -buildvcs=false -o ../bin/agent-pulse-adapters ./cmd/agent-pulse-adapters)
+          uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters
       - name: 构建 Linux 与通用适配包
         run: bash scripts/package-adapters.sh ./dist/repository 1
       - uses: actions/upload-artifact@v7
@@ -73,6 +78,9 @@ jobs:
               --relay-image "agent-pulse-relay:test-$arch" \
               > "dist/verification/containers-$arch.json"
           done
+          uv run --offline --no-project python scripts/test_prepare_hub_release.py \
+            ./bin/agent-pulse-adapters --docker-base agent-pulse-hub:test-amd64 \
+            --docker-tag agent-pulse-hub:release-overlay-test --docker-smoke
       - uses: actions/upload-artifact@v7
         with:
           name: 容器验证结果
@@ -94,6 +102,7 @@ jobs:
           image_repository="${IMAGE_REPOSITORY,,}"
           for component in hub relay; do
             image="$image_repository/$component"
+            if [[ "$component" == hub ]]; then image="$image-base"; fi
             tags=(--tag "$image:sha-$GITHUB_SHA")
             if [[ "$GITHUB_REF_TYPE" == tag ]]; then
               tags+=(--tag "$image:$GITHUB_REF_NAME")

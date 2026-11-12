@@ -35,7 +35,7 @@ func run() error {
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, protocol.MaxEventBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, protocol.MaxHookBytes+1))
 	if err != nil {
 		return err
 	}

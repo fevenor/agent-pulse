@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -8,7 +8,12 @@ use std::{
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    #[serde(skip)]
+    pub preferences: std::sync::Arc<std::sync::RwLock<crate::preferences::Preferences>>,
+    #[serde(skip)]
+    pub discovered_relay: std::sync::Arc<std::sync::RwLock<crate::discovery::Relay>>,
     pub hub_url: String,
+    pub host_name: String,
     pub token: String,
     pub relay_url: String,
     pub relay_token: String,
@@ -46,6 +51,13 @@ impl Settings {
         let mut settings: Self =
             serde_yaml::from_slice(&fs::read(&config).map_err(|_| "无法读取客户端配置")?)
                 .map_err(|_| "客户端配置格式无效或包含未知配置项")?;
+        settings.host_name = settings.host_name.trim().to_owned();
+        if settings.host_name.is_empty() {
+            settings.host_name = Self::default_host_name();
+        }
+        if settings.host_name.len() > 256 || settings.host_name.contains(['\0', '\r', '\n']) {
+            return Err("客户端显示名最长 256 字节，且不能包含换行或空字符".into());
+        }
         let base = config.parent().ok_or("无法定位配置目录")?;
         settings.data_dir = base.join("data");
         fs::create_dir_all(&settings.data_dir)
@@ -105,18 +117,146 @@ impl Settings {
         } else if settings.state_file.is_relative() {
             settings.state_file = base.join(&settings.state_file);
         }
-        if settings.bridge_enabled && settings.bridge_config.as_os_str().is_empty() {
-            return Err("启用本地接入需要 bridge_config 配置文件".into());
-        }
         {
             let value = &mut settings.bridge_config;
             if !value.as_os_str().is_empty() && value.is_relative() {
                 *value = base.join(&*value);
             }
+            if settings.bridge_enabled && value.as_os_str().is_empty() {
+                *value = settings.data_dir.join("bridge.yaml");
+                Self::ensure_bridge_config(&*value, &settings.hub_url, &settings.token)?;
+            } else if settings.bridge_enabled && !value.exists() {
+                return Err("本地接入配置不存在，请检查 bridge_config 配置文件".into());
+            }
         }
         settings.config_path = config;
+        *settings.preferences.write().unwrap() =
+            crate::preferences::Preferences::load(&settings.data_dir.join("hosts.json"))?;
+        *settings.discovered_relay.write().unwrap() = crate::discovery::cached(&settings);
         Ok(settings)
     }
+    fn default_host_name() -> String {
+        ["COMPUTERNAME", "HOSTNAME"]
+            .into_iter()
+            .filter_map(|key| std::env::var(key).ok())
+            .map(|value| value.trim().to_owned())
+            .find(|value| !value.is_empty())
+            .unwrap_or_else(|| "Windows主机".into())
+    }
+
+    pub fn bridge_config_path(&self) -> PathBuf {
+        if self.bridge_config.as_os_str().is_empty() {
+            self.data_dir.join("bridge.yaml")
+        } else {
+            self.bridge_config.clone()
+        }
+    }
+
+    /// 为内置 Bridge 创建便携配置；已有文件一律保留，不覆盖用户配置。
+    pub fn ensure_bridge_config(path: &Path, hub_url: &str, token: &str) -> Result<(), String> {
+        if path.exists() {
+            return Ok(());
+        }
+        if hub_url.is_empty() {
+            return Err("请先在 tray.yaml 中填写 Hub 地址，再配置本机 Agent 接入".into());
+        }
+        let parent = path.parent().ok_or("无法定位本地接入配置目录")?;
+        fs::create_dir_all(parent).map_err(|_| "无法创建本地接入配置目录")?;
+        let source_id = format!("windows-{}", uuid::Uuid::new_v4());
+        let host_name = Self::default_host_name();
+        let config = BridgeBootstrap {
+            listen: "127.0.0.1:18702",
+            source_id,
+            host_name: host_name.trim().to_string(),
+            hub_url,
+            token,
+        };
+        let raw = serde_yaml::to_string(&config).map_err(|_| "无法生成本地接入配置")?;
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+            Err(_) => return Err("无法创建本地接入配置，请检查便携目录权限".into()),
+        };
+        if file
+            .write_all(raw.as_bytes())
+            .and_then(|_| file.sync_all())
+            .is_err()
+        {
+            drop(file);
+            let _ = fs::remove_file(path);
+            return Err("无法保存本地接入配置，请检查便携目录权限".into());
+        }
+        Ok(())
+    }
+
+    /// 只修改 tray.yaml 中的 bridge_enabled，保留其余设置和行尾注释。
+    pub fn set_bridge_enabled(path: &Path, enabled: bool) -> Result<(), String> {
+        let raw = fs::read_to_string(path).map_err(|_| "无法读取便携配置")?;
+        let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+        let mut lines: Vec<String> = raw
+            .split_terminator('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+            .collect();
+        let mut found = None;
+        for (index, line) in lines.iter().enumerate() {
+            if line.starts_with("bridge_enabled:") && found.replace(index).is_some() {
+                return Err("tray.yaml 中 bridge_enabled 出现重复配置".into());
+            }
+        }
+        let value = if enabled { "true" } else { "false" };
+        if let Some(index) = found {
+            let line = &lines[index];
+            let comment = line.find('#').map(|at| line[at..].trim_start());
+            lines[index] = match comment {
+                Some(comment) if !comment.is_empty() => {
+                    format!("bridge_enabled: {value}  {comment}")
+                }
+                _ => format!("bridge_enabled: {value}"),
+            };
+        } else {
+            lines.push(format!("bridge_enabled: {value}"));
+        }
+        let mut updated = lines.join(newline);
+        if raw.ends_with('\n') || !raw.is_empty() {
+            updated.push_str(newline);
+        }
+        // 临时文件写完再替换，避免向导成功后写配置失败导致原配置被截断。
+        let temporary = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+        let result = (|| -> std::io::Result<()> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(updated.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err("无法保存便携配置，请检查程序目录权限".into());
+        }
+        Ok(())
+    }
+    pub fn relay(&self) -> crate::discovery::Relay {
+        if self.relay_url.is_empty() {
+            self.discovered_relay.read().unwrap().clone()
+        } else {
+            crate::discovery::Relay {
+                relay_url: self.relay_url.clone(),
+                relay_token: self.relay_token.clone(),
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct BridgeBootstrap<'a> {
+    listen: &'static str,
+    source_id: String,
+    host_name: String,
+    hub_url: &'a str,
+    token: &'a str,
 }
 
 #[cfg(test)]
@@ -130,6 +270,7 @@ mod tests {
         let initial = Settings::load_at(None, &exe).unwrap();
         assert_eq!(initial.state_file, root.join("data/state.json"));
         assert_eq!(initial.config_path, root.join("tray.yaml"));
+        assert_eq!(initial.host_name, Settings::default_host_name());
         fs::write(
             &initial.config_path,
             "hub_url: http://127.0.0.1:12345\nstate_file: data/custom.json\n",
@@ -144,5 +285,60 @@ mod tests {
         assert_eq!(loaded.state_file, moved.join("data/custom.json"));
         assert!(Settings::load_at(Some(&moved.join("missing.yaml")), &exe).is_err());
         fs::remove_dir_all(moved).unwrap();
+    }
+    #[test]
+    fn bridge_config_is_stable_and_existing_file_is_preserved() {
+        let root = std::env::temp_dir().join(format!("pulse-bridge-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("data/bridge.yaml");
+        Settings::ensure_bridge_config(&path, "http://hub.example", "secret").unwrap();
+        let first = fs::read_to_string(&path).unwrap();
+        Settings::ensure_bridge_config(&path, "http://other.example", "changed").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+        assert!(first.contains("source_id: windows-"));
+        assert!(first.contains("hub_url: http://hub.example"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn enabling_bridge_without_custom_config_creates_portable_config() {
+        let root = std::env::temp_dir().join(format!("pulse-enable-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let exe = root.join("tray.exe");
+        fs::write(
+            root.join("tray.yaml"),
+            "hub_url: http://127.0.0.1:18700\nhost_name: 客厅提醒端\nbridge_enabled: true\n",
+        )
+        .unwrap();
+        let settings = Settings::load_at(None, &exe).unwrap();
+        assert_eq!(settings.bridge_config, root.join("data/bridge.yaml"));
+        let config = fs::read_to_string(&settings.bridge_config).unwrap();
+        assert!(config.contains("source_id: windows-"));
+        assert!(config.contains("host_name:"));
+        assert_eq!(settings.host_name, "客厅提醒端");
+        let bridge: serde_yaml::Value = serde_yaml::from_str(&config).unwrap();
+        assert_eq!(
+            bridge["host_name"].as_str(),
+            Some(Settings::default_host_name().as_str())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bridge_enabled_edit_preserves_unrelated_settings_and_comment() {
+        let root = std::env::temp_dir().join(format!("pulse-setting-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("tray.yaml");
+        fs::write(
+            &path,
+            "hub_url: http://127.0.0.1:18700\ntoken: secret\nbridge_enabled: false # 本机接入\n",
+        )
+        .unwrap();
+        Settings::set_bridge_enabled(&path, true).unwrap();
+        let updated = fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("hub_url: http://127.0.0.1:18700"));
+        assert!(updated.contains("token: secret"));
+        assert!(updated.contains("bridge_enabled: true  # 本机接入"));
+        fs::remove_dir_all(root).unwrap();
     }
 }

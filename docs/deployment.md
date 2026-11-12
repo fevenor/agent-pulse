@@ -1,102 +1,63 @@
 # 部署指南
 
-本文面向首次部署的使用者和执行部署任务的 Agent。按顺序完成 Hub、适配包、Bridge；需要跨公网访问时再配置 Relay。所有地址、目录、主机标识、镜像标签和公钥示例都需要替换，不使用开发者的私人环境作为默认值。
+本文面向首次部署的使用者和执行部署任务的 Agent。按顺序完成 Hub 和 Bridge；需要跨公网访问时再配置 Relay。所有地址、目录、主机标识、镜像标签和公钥示例都需要替换，不使用开发者的私人环境作为默认值。
 
 ## 组件与准备
 
 | 组件 | 部署位置 | 所需环境 | 配置与持久数据 |
 | --- | --- | --- | --- |
-| Hub（会话中心） | 一台可信内网服务器 | Docker Engine 和 Compose 插件 | `hub.runtime.yaml`；独立数据卷保存 SQLite；`repository/` 分发适配包 |
+| Hub（会话中心） | 一台可信内网服务器 | Docker Engine 和 Compose 插件 | Hub 镜像自带默认配置与该 RC 的签名适配仓库；独立数据卷保存 SQLite |
 | Bridge（本机接入） | 每台运行 Agent 的 Linux 主机或 Windows 环境 | Linux 用户 systemd；Go 1.25 用于源码构建 | `bridge.yaml`；适配包与安装状态目录；事件队列只在内存 |
 | Relay（公网中继，可选） | 公网服务器 | Docker/Compose、域名及支持 WebSocket 的 HTTPS 代理 | `relay.runtime.yaml`；独立数据卷保存待转交事件 |
 | Tray（桌面通知） | Windows 桌面 | 已构建的 Windows 便携包 | 程序旁 `tray.yaml` 和 `data/`；可托管本机 Bridge |
 
-开始前确定：Hub 内网地址、各主机唯一 `source_id`、目标架构、运行的 Agent 及版本、是否需要 Relay、手机渠道请求格式。已有服务先检查并备份配置和数据，避免重复创建 Hub、重新生成签名私钥或覆盖 Agent 配置。获取源码、提交或推送等 Git 操作按使用者授权范围执行。
+开始前确定：Hub 内网地址、目标架构、运行的 Agent 及版本、是否需要 Relay、手机渠道请求格式。Bridge setup 会为每个接入环境生成稳定主机指纹，默认采用系统主机名显示；需要跨主机统一命名时在 Hub 管理页修改。已有服务先检查并备份配置和数据，避免重复创建 Hub、重新生成签名私钥或覆盖 Agent 配置。获取源码、提交或推送等 Git 操作按使用者授权范围执行。
 
 部署 Hub/Relay 已发布镜像不需要 Go、Node.js 或 Rust。构建 Linux Bridge 只需要 Go；构建适配包需要 Go 和 Volta 管理的 Node.js/pnpm。`scripts/package-adapters.sh` 当前产出 Linux amd64 适配包，不能直接用于 arm64；其他架构的构建边界见 [适配器文档](adapters.md)。
 
 ## 1. 部署 Hub
 
-在已有源码目录中执行以下命令，创建独立部署目录；不要覆盖已有目录中的配置：
+将镜像标签替换为发布页提供的完整 RC 版本。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
 
 ```sh
-export PULSE_HUB_DIR="$HOME/agent-pulse-hub"
-install -d -m 700 "$PULSE_HUB_DIR"
-install -d -m 755 "$PULSE_HUB_DIR/repository"
-cp deploy/compose/hub.image.yaml "$PULSE_HUB_DIR/compose.yaml"
-cp deploy/compose/hub.runtime.yaml "$PULSE_HUB_DIR/hub.runtime.yaml"
+docker volume create agent-pulse-hub-data
+docker run -d --name agent-pulse-hub --restart unless-stopped \
+  -p 127.0.0.1:18700:18700 \
+  -v agent-pulse-hub-data:/data \
+  ghcr.io/fevenor/agent-pulse/hub:替换为已发布RC版本
 ```
 
-在该目录创建权限为 600 的 `hub.env`：
+访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
 
-```dotenv
-AGENT_PULSE_HUB_IMAGE=ghcr.io/fevenor/agent-pulse/hub:sha-替换为已发布完整提交哈希
-HUB_BIND_IP=替换为服务器可信内网IP
-```
+如 Hub 需要鉴权，先创建权限为 600 的环境文件 `hub.env` 并在其中设置 `AGENT_PULSE_TOKEN`；重建容器时用 `docker run --env-file hub.env ...` 传入，在 Bridge/Tray 配置同一令牌。若需 Relay，也在该文件中设置 `AGENT_PULSE_RELAY_URL` 和 `AGENT_PULSE_RELAY_TOKEN`，Bridge/Tray 会从 Hub 自动获取。手机推送与自定义 Push 渠道属于额外的 Hub 高级配置。也可使用 [默认 Compose 文件](../deploy/compose/hub.image.yaml)，填写镜像版本和端口绑定即可。不要在命令参数中直接输入真实令牌或将其提交到版本控制。
+## 发布维护者：自定义适配包或准备 RC 镜像
 
-从 [镜像工作流](https://github.com/fevenor/agent-pulse/actions/workflows/images.yml) 选择已成功发布的提交，Hub/Relay 尽量使用同一提交标签；标签规则见 [镜像说明](images.md)。`latest` 可用于初次试用，长期部署宜固定版本。不要把文档示例中的占位标签当成可拉取版本。私有 GHCR 镜像需预先具备读取授权。
+普通使用者可跳过本节。Hub 正式 RC 镜像由发布者使用一套长期保管的私钥，随 RC 一并构建签名仓库；私钥不进入 Git、镜像或客户端。自建包与正式发布步骤见[适配包发布说明](adapters.md#发布者构建与签名)。
 
-`hub.runtime.yaml` 默认配置 `/data/hub.db`、内置网页 `/web` 和适配包路径 `/repository`，手机推送关闭。初次尚无签名索引时，适配包接口返回 404，完成下一节后恢复。启动：
+单独维护 Hub 的部署者可仍使用 `deploy/compose/hub.runtime.yaml` 覆盖内置默认配置，或将自己的签名仓库挂载到 `/repository`；该操作仅适用于高级自建流程。Bridge 始终只需配置 Hub 地址，并从可访问的 Hub 获取签名公钥与 Relay 信息。
 
-```sh
-chmod 600 "$PULSE_HUB_DIR/hub.env"
-docker compose --env-file "$PULSE_HUB_DIR/hub.env" -f "$PULSE_HUB_DIR/compose.yaml" config --quiet
-docker compose --env-file "$PULSE_HUB_DIR/hub.env" -f "$PULSE_HUB_DIR/compose.yaml" pull
-docker compose --env-file "$PULSE_HUB_DIR/hub.env" -f "$PULSE_HUB_DIR/compose.yaml" up -d
-```
+## 2. 在 Linux 主机安装 Bridge
 
-访问 `http://服务器内网IP:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。可信个人内网可不设 Hub token；公网入口必须另有访问控制，不应把免 token 的 Hub 直接暴露到公网。
-
-若需要 Hub token，在 `hub.env` 加入 `AGENT_PULSE_TOKEN`，运行配置加 `token: "${env:AGENT_PULSE_TOKEN}"`，客户端配置相同 token。Compose 运行配置需要容器用户 65532 可读；秘密优先放在宿主 600 权限的环境文件中。`--env-file` 不会自动将所有变量传进容器，使用新增变量时必须同步配置 Compose 的 `environment`。
-
-## 2. 发布适配包
-
-Hub 负责分发，不负责自动生成签名包。在一台发布者主机上构建并签名，然后复制公开产物到 Hub；发布私钥只留在发布者机器，后续更新沿用该私钥并递增序号。
-
-在源码根目录执行（首次创建密钥，已有密钥不能重复生成）：
-
-```sh
-pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
-bash scripts/package-adapters.sh ./dist/repository 1
-install -d -m 700 "$HOME/.config/agent-pulse-publisher"
-./bin/agent-pulse-adapters keygen \
-  --private "$HOME/.config/agent-pulse-publisher/publisher.key" \
-  --public "$HOME/.config/agent-pulse-publisher/publisher.pub"
-./bin/agent-pulse-adapters publish --repository ./dist/repository \
-  --private "$HOME/.config/agent-pulse-publisher/publisher.key" \
-  --index ./dist/repository/index-input.json
-```
-
-将 `dist/repository/packages/` 和 `index.json` 复制到 Hub 部署目录的 `repository/`，文件及目录需容器用户可读。若两者在同一主机：
-
-```sh
-cp -R dist/repository/packages "$PULSE_HUB_DIR/repository/"
-cp dist/repository/index.json "$PULSE_HUB_DIR/repository/index.json"
-chmod -R a+rX "$PULSE_HUB_DIR/repository"
-```
-
-远程部署使用自己的安全传输方式；先复制不可变包，最后原子替换 `index.json`，避免更新过程中客户端读到不完整索引。首次部署完成后，Hub 的 `/api/v1/adapters/index` 应返回 `payload` 和 `signature`。把 `publisher.pub` 的一行 Base64 公钥交给每台 Bridge，无需向 Hub 或 Bridge 分发私钥。
-
-也可使用 GitHub Actions 的 `linux-adapters` 和 `windows-amd64` 产物，合并后再用自己的私钥签名；产物不是已信任的发布索引。具体合并命令、平台限制及更新规则见 [适配包发布](adapters.md#发布者构建与签名)。普通适配器更新只需发布更高序号的兼容包，不用逐台重装 Bridge；最低 Bridge 版本发生变化时仍需升级 Bridge。
-
-## 3. 在 Linux 主机安装 Bridge
-
-在该主机的源码根目录构建并安装：
+在该主机安装 Bridge。当前尚无 RC 安装包时，从源码构建：
 
 ```sh
 bash scripts/build.sh
 bash scripts/install-bridge.sh
 ```
 
-安装脚本不会启用服务或自动修改 Agent。编辑 `~/.config/agent-pulse/bridge.yaml`，替换下面所有占位值；路径必须是本机绝对路径，仅列出需要授权安装的 Agent：
+安装后推荐执行 `agent-pulse-bridge setup`。按提示填写 Hub 地址，再逐项选择启用、禁用或跳过的受支持 Agent。setup 会创建稳定随机主机指纹、默认采用系统主机名作为显示名，并列出本次修改的 Agent 配置文件。允许配置页面上的 Hub 地址为可信内网 HTTP；公网部署应使用 HTTPS 和访问控制。Relay 和适配包发布公钥均由 Bridge 直连 Hub 获取，公钥首次固定后若发生变化会停止同步并要求核验。
+
+setup 只保证完成配置修改，不保证运行中的 Agent 立即生效。完成后按提示重启或重新加载对应 Agent；Codex 还可能要求用户确认 hook 信任。Agent 配置文件无法解析或含不支持的 JSONC 时，Bridge 会拒绝覆盖，应先备份并整理为标准 JSON。
+
+对于需要脚本化部署的高级使用者，可手工配置 `~/.config/agent-pulse/bridge.yaml`，其中 `source_id` 应沿用 setup 已生成的值：
 
 ```yaml
 listen: "127.0.0.1:18702"
-source_id: "my-linux"
-hub_url: "http://服务器内网IP:18700"
+source_id: "setup 生成的稳定主机指纹"
+host_name: "" # 留空时使用系统主机名
+hub_url: "http://服务器内网地址:18700"
 adapters:
   directory: "/home/your-user/.local/share/agent-pulse/adapters"
-  public_key: "替换为 publisher.pub 的完整一行"
   poll_seconds: 300
   managed:
     codex: "/home/your-user/.codex/hooks.json"
@@ -105,8 +66,7 @@ adapters:
     opencode: "/home/your-user/.config/opencode/opencode.json"
 ```
 
-已有 OpenCode 若使用 `.jsonc`，应指向实际文件，先备份并整理为标准 JSON；安装器不覆盖无法解析的配置。其他 Agent 配置同样先备份。`managed` 决定安装器可改写的文件范围，不应列入未安装的宿主。各宿主受支持版本见适配器 `manifest.json`；超出范围时查看同步结果，不绕过兼容检查。
-
+`managed` 决定安装器可改写的文件范围，不应列入未安装的宿主。各宿主受支持版本见适配器 `manifest.json`；超出范围时查看同步结果，不绕过兼容检查。
 若 Agent 在用户目录安装，创建 `~/.config/agent-pulse/environment`，写入实际 PATH，不能依赖 systemd 读取 shell 启动配置：
 
 ```dotenv
@@ -124,7 +84,7 @@ systemctl --user is-active agent-pulse-bridge
 curl --fail http://127.0.0.1:18702/healthz
 ```
 
-手工同步使用当前 shell 的 PATH；服务启动后还应在管理页检查适配状态，确认 service 的 PATH 同样可找到宿主。用户服务若要在退出登录后继续运行，需要系统管理员启用该用户的 linger。Bridge 必须保留回环监听；同机 Windows 与 WSL 使用不同来源标识。
+手工同步使用当前 shell 的 PATH；服务启动后还应在管理页检查适配状态，确认 service 的 PATH 同样可找到宿主。用户服务若要在退出登录后继续运行，需要系统管理员启用该用户的 linger。Bridge 必须保留回环监听；同机 Windows 与 WSL 作为不同观察环境分别运行 setup，生成不同的主机指纹。
 
 若配置 token 或 Relay token，可以使用权限为 600、版本控制外的 Bridge YAML 保存。若使用 `${env:变量名}`，这些变量必须同时在 systemd 服务及各 Agent 的 hook 进程环境中存在；仅放在 systemd 的 EnvironmentFile 会导致交互式 Agent hook 加载配置失败。
 
@@ -138,7 +98,7 @@ curl --fail http://127.0.0.1:18702/healthz
 
 Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客户端](windows-client.md)，不要把上述 Linux systemd 步骤照搬到 Windows。
 
-## 4. 可选：部署公网 Relay
+## 3. 可选：部署公网 Relay
 
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：
 
@@ -149,18 +109,18 @@ AGENT_PULSE_RELAY_TOKEN=替换为生成的随机令牌
 
 在该目录执行 `docker compose --env-file relay.env -f compose.yaml config --quiet`、`pull`、`up -d`。默认仅绑定 `127.0.0.1:18701`；用 [Nginx 示例](../deploy/proxy/relay.nginx.conf) 配置域名和有效证书，保留 WebSocket Upgrade 及 `X-Forwarded-Proto` 转发。代理在容器中时，需按实际容器网络调整 `proxy_pass`，不能将其回环地址当作宿主地址。
 
-在 Hub 的 `hub.env` 中加入相同的 `AGENT_PULSE_RELAY_TOKEN`，在 `hub.runtime.yaml` 中加入：
+在 Hub 的环境变量中加入相同的 `AGENT_PULSE_RELAY_TOKEN` 和 Relay 外部 HTTPS 地址 `AGENT_PULSE_RELAY_URL`。例如 Compose 环境文件中设置：
 
-```yaml
-relay_url: "https://relay.example.invalid"
-relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
+```dotenv
+AGENT_PULSE_RELAY_URL=https://relay.example.invalid
+AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 ```
 
-替换域名后重新执行 Hub 的 Compose `up -d --force-recreate`，让环境和配置同时生效。Hub 主动连接 Relay；不必开放 Hub 公网入站。需要备用通路的 Bridge 和 Tray 同样配置 `relay_url` 和 `relay_token`，并重新加载。
+使用 Compose 时编辑 `hub.env` 后执行 `docker compose up -d --force-recreate`。若原先使用 `docker run`，需停止并删除原容器，再用相同数据卷重建容器并添加 `-e` 变量；SQLite 保留在原命名卷中。Hub 主动连接 Relay，不必开放 Hub 公网入站。新版 Bridge 与 Tray 直连 Hub 发现并缓存 Relay 配置，手工配置仍优先。缓存含中继凭据，应和便携配置一并保管。发布包含 ZCode 的适配包索引前，须先将所有消费该索引的 Bridge 升级到 0.5.0，详见适配器说明。
 
 验收公网 `/healthz` 返回 `hub_connected: true`；业务接口无凭据应返回 401；带凭据访问 `/api/v1/snapshot` 应与 Hub 的 `run_id` 一致。健康接口免 token 不代表业务接口免鉴权。公网必须 HTTPS/WSS，仅字面回环 IP 允许 HTTP。
 
-## 5. 验收、手机推送与升级
+## 4. 验收、手机推送与升级
 
 1. Hub 根地址显示管理页，设备列表出现当前 Bridge 和 Tray。
 2. 适配器页面中 `installed` 与预期版本一致；真实启动一次宿主后 `running` 也应更新。
@@ -173,7 +133,7 @@ relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
 | 现象 | 优先检查 |
 | --- | --- |
 | Hub 健康但无管理页 | 非容器部署是否配置 `web_directory`、是否已构建页面 |
-| 适配索引 404 | `repository/index.json` 是否存在、挂载及容器读取权限是否正确 |
+| 适配索引 404 | 确认部署的是完整 RC 镜像，而非仅用于发布者的 `hub-base`；自建仓库时检查 `/repository/index.json` 与容器读取权限 |
 | 服务在线但没有原生会话 | 宿主是否重新加载、hook 是否已信任、managed 路径和版本是否匹配 |
 | 手工同步成功，服务同步失败 | systemd PATH、配置所引用环境变量及文件权限 |
 | Relay 健康但 `hub_connected: false` | Hub 中继地址和 token、HTTPS/WebSocket 代理、出站网络 |

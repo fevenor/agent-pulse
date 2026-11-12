@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 )
 
 var ErrConflict = errors.New("event_id 已存在且内容不同")
+var ErrHostDeleted = errors.New("主机已删除，拒绝其待处理事件")
 
 type connection struct {
 	device protocol.Device
@@ -42,6 +44,11 @@ type Hub struct {
 }
 
 func Open(c config.Hub) (*Hub, error) {
+	publisherKey, err := resolvePublisherKey(c.AdapterDirectory, c.AdapterPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	c.AdapterPublicKey = publisherKey
 	path, err := filepath.Abs(c.Database)
 	if err != nil {
 		return nil, err
@@ -88,7 +95,7 @@ func (h *Hub) migrate() error {
 	if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 5 {
 		return fmt.Errorf("数据库版本较新，当前程序不能读取")
 	}
 	if version == 0 {
@@ -132,6 +139,29 @@ PRAGMA user_version=1;`)
 			return err
 		}
 	}
+	if version < 4 {
+		tx, err := h.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(`CREATE TABLE hosts(source_id TEXT PRIMARY KEY, default_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '', environment TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0, last_seen TEXT NOT NULL DEFAULT ''); CREATE TABLE deleted_hosts(source_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL); PRAGMA user_version=4;`); err != nil {
+			return err
+		}
+		for id, label := range h.config.Sources {
+			if _, err = tx.Exec(`INSERT OR IGNORE INTO hosts(source_id,default_name,environment) VALUES(?,?,?)`, id, label.Name, label.Environment); err != nil {
+				return err
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if version < 5 {
+		if _, err := h.db.Exec(`BEGIN; ALTER TABLE hosts ADD COLUMN role TEXT NOT NULL DEFAULT 'bridge'; PRAGMA user_version=5; COMMIT;`); err != nil {
+			return err
+		}
+	}
 	// 崩溃前开始发送的请求可能已送达，恢复时不能盲目重发。
 	_, err := h.db.Exec(`UPDATE push_jobs SET status='unknown' WHERE status='sending'`)
 	return err
@@ -169,6 +199,15 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback()
+	var deleted int
+	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM deleted_hosts WHERE source_id=?`, e.SourceID).Scan(&deleted); err == nil {
+		return false, ErrHostDeleted
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO hosts(source_id,default_name) VALUES(?,?)`, e.SourceID, e.SourceID); err != nil {
+		return false, err
+	}
 	var existing []byte
 	err = tx.QueryRowContext(ctx, `SELECT payload FROM events WHERE event_id=?`, e.EventID).Scan(&existing)
 	if err == nil {
@@ -273,6 +312,53 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	for id, label := range h.config.Sources {
 		s.Sources[id] = protocol.SourceLabel{Name: label.Name, Environment: label.Environment}
 	}
+	hostRows, err := h.db.QueryContext(ctx, `SELECT source_id,default_name,display_name,environment,archived FROM hosts`)
+	if err != nil {
+		return s, err
+	}
+	for hostRows.Next() {
+		var id, defaultName, displayName, environment string
+		var archived bool
+		if err = hostRows.Scan(&id, &defaultName, &displayName, &environment, &archived); err != nil {
+			break
+		}
+		name := displayName
+		if name == "" {
+			name = defaultName
+		}
+		if name == "" {
+			name = id
+		}
+		s.Sources[id] = protocol.SourceLabel{Name: name, Environment: environment, Archived: archived}
+	}
+	hostRowErr := hostRows.Err()
+	_ = hostRows.Close()
+	if err != nil {
+		return s, err
+	}
+	if hostRowErr != nil {
+		return s, hostRowErr
+	}
+	// 静态来源名称只作为回退，不能让已经删除的主机再次出现在客户端。
+	deletedRows, err := h.db.QueryContext(ctx, `SELECT source_id FROM deleted_hosts`)
+	if err != nil {
+		return s, err
+	}
+	for deletedRows.Next() {
+		var id string
+		if err = deletedRows.Scan(&id); err != nil {
+			break
+		}
+		delete(s.Sources, id)
+	}
+	deletedRowsErr := deletedRows.Err()
+	_ = deletedRows.Close()
+	if err != nil {
+		return s, err
+	}
+	if deletedRowsErr != nil {
+		return s, deletedRowsErr
+	}
 	rows, err := h.db.QueryContext(ctx, `SELECT source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at,COALESCE((SELECT json_extract(payload,'$.kind') FROM events WHERE event_id=sessions.last_event_id),'') FROM sessions ORDER BY source_id,agent,session_id`)
 	if err != nil {
 		return s, err
@@ -304,25 +390,39 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 			return s, err
 		}
 	}
-	s.Unread, err = h.eventsLocked(ctx, `WHERE e.notify=1 AND r.event_id IS NULL ORDER BY e.position`, nil)
+	s.Unread, err = h.eventsLocked(ctx, `WHERE e.notify=1 AND r.event_id IS NULL ORDER BY e.position`, nil, false)
 	if err != nil {
 		return s, err
 	}
 	for _, c := range h.devices {
 		if time.Since(c.device.LastSeen) <= 35*time.Second {
-			s.Devices = append(s.Devices, c.device)
+			device := c.device
+			if device.Role == "bridge" || device.Role == "tray" {
+				if label, exists := s.Sources[device.ID]; exists {
+					device.HostName = label.Name
+					device.Environment = label.Environment
+				}
+			}
+			s.Devices = append(s.Devices, device)
 		}
 	}
 	return s, nil
 }
 
 func (h *Hub) History(ctx context.Context, before int64, limit int) ([]protocol.EventView, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.eventsLocked(ctx, `WHERE (?=0 OR e.position<?) ORDER BY e.position DESC LIMIT ?`, []any{before, before, limit})
+	return h.HistoryWithArchived(ctx, before, limit, false)
 }
 
-func (h *Hub) eventsLocked(ctx context.Context, tail string, args []any) ([]protocol.EventView, error) {
+func (h *Hub) HistoryWithArchived(ctx context.Context, before int64, limit int, includeArchived bool) ([]protocol.EventView, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.eventsLocked(ctx, `WHERE (?=0 OR e.position<?) ORDER BY e.position DESC LIMIT ?`, []any{before, before, limit}, includeArchived)
+}
+
+func (h *Hub) eventsLocked(ctx context.Context, tail string, args []any, includeArchived bool) ([]protocol.EventView, error) {
+	if !includeArchived {
+		tail = strings.Replace(tail, "WHERE ", "WHERE NOT EXISTS (SELECT 1 FROM hosts archived_host WHERE archived_host.source_id=e.source_id AND archived_host.archived=1) AND ", 1)
+	}
 	rows, err := h.db.QueryContext(ctx, `SELECT e.position,e.payload,e.valid,e.received_at,r.event_id IS NOT NULL FROM events e LEFT JOIN reads r ON e.event_id=r.event_id `+tail, args...)
 	if err != nil {
 		return nil, err

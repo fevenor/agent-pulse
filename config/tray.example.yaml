@@ -1,15 +1,19 @@
 # 复制为程序旁的 tray.yaml 即可双击启动；也可用 --config 指定其他配置。
 # 相对文件路径以本配置所在目录为基准，不依赖启动工作目录。
 hub_url: "http://127.0.0.1:18700"
+# 默认使用系统主机名；Hub 中央设置的显示名优先，修改会对所有客户端生效。
+# host_name: "我的桌面"
 # token: "${env:AGENT_PULSE_TOKEN}"
+# 可省略中继配置：首次直连新版 Hub 后自动获取并缓存；手动配置优先。
 # relay_url: "https://relay.example.invalid"
 # relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
 
 # 省略时使用本配置所在目录中的 data/state.json。
-# 悬浮偏好位于 data/desktop.json；开机自动启动状态以 Windows 系统登记为准。
+# 悬浮偏好位于 data/desktop.json，主机静默/唤醒位于 data/hosts.json。
+# 自动发现的中继地址和凭据保存在 data/relay.json；应与配置一起妥善保管。
+# 开机自动启动状态以 Windows 系统登记为准。
 # 应用在当前 Windows 登录会话中仅允许运行一个实例。
 # state_file: "data/tray-state.json"
 
-# 可选：只管理本客户端启动的 Windows Bridge，退出时停止。
-# bridge_enabled: true
-# bridge_config: "bridge.local.yaml"
+# 默认只需填写 Hub 地址。需要采集本机 Agent 时，在 Tray 设置页运行配置向导；
+# 向导生成的 Bridge 配置和稳定主机标识保存在 data/bridge.yaml。

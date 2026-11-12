@@ -1,7 +1,10 @@
 pub mod autostart;
 pub mod desktop;
+pub mod discovery;
 pub mod instance;
 pub mod model;
+pub mod power;
+pub mod preferences;
 pub mod sessions;
 pub mod settings;
 pub mod sync;

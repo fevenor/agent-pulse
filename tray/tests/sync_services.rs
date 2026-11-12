@@ -115,13 +115,17 @@ fn real_services_offline_reads_restart_and_relay() {
     let (tx, rx) = async_channel::unbounded();
     let settings = Settings {
         hub_url: hub.clone(),
-        relay_url: relay.clone(),
-        relay_token: "isolated-test-token".into(),
         state_file: state.clone(),
+        data_dir: dir.0.clone(),
         ..Default::default()
     };
     let worker = sync::start(settings.clone(), Store::open(&state).unwrap(), tx);
     wait_view(&rx, |v| v.status == "已直连服务");
+    assert_eq!(settings.relay().relay_url, relay);
+    assert_eq!(
+        agent_pulse_tray::discovery::cached(&settings).relay_token,
+        "isolated-test-token"
+    );
     post(&hub, "one");
     let first = wait_view(&rx, |v| {
         v.state.unread().iter().any(|e| e.event_id == "one")
@@ -157,10 +161,13 @@ fn real_services_offline_reads_restart_and_relay() {
     let (tx, rx) = async_channel::unbounded();
     let settings = Settings {
         hub_url: format!("http://127.0.0.1:{}", port()),
-        relay_url: relay,
-        relay_token: "isolated-test-token".into(),
         state_file: state.clone(),
         ..Default::default()
+    };
+    // 模拟离开内网后只能连接已发现的中继；不在配置中重复填写凭据。
+    *settings.discovered_relay.write().unwrap() = agent_pulse_tray::discovery::Relay {
+        relay_url: relay,
+        relay_token: "isolated-test-token".into(),
     };
     let worker = sync::start(settings, Store::open(&state).unwrap(), tx);
     wait_view(&rx, |v| v.status == "已通过中继连接");

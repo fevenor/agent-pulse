@@ -1,16 +1,49 @@
 package hub
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"agent-pulse/internal/adapters"
 	"agent-pulse/internal/transport"
 )
+
+// resolvePublisherKey 只接纳显式公钥或本地发布仓库附带公钥，不在运行时生成信任。
+func resolvePublisherKey(directory, configured string) (string, error) {
+	key := strings.TrimSpace(configured)
+	if key == "" && directory != "" {
+		raw, err := os.ReadFile(filepath.Join(directory, "publisher.pub"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				// 基础镜像允许尚未附加发布仓库；有仓库却缺公钥则必须修复。
+				if _, directoryErr := os.Stat(directory); os.IsNotExist(directoryErr) {
+					return "", nil
+				}
+			}
+			return "", fmt.Errorf("无法读取适配包仓库的 publisher.pub；请提供已验证的发布公钥或显式配置 adapter_public_key：%w", err)
+		}
+		key = strings.TrimSpace(string(raw))
+		if key == "" {
+			return "", fmt.Errorf("适配包仓库的 publisher.pub 为空")
+		}
+	}
+	if key == "" {
+		return "", nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(decoded) != ed25519.PublicKeySize {
+		return "", fmt.Errorf("适配包发布公钥必须是 32 字节 Ed25519 公钥的 Base64 内容")
+	}
+	return key, nil
+}
 
 func (h *Hub) adapterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/adapters/index", func(w http.ResponseWriter, r *http.Request) {
@@ -34,20 +67,29 @@ func (h *Hub) adapterRoutes(mux *http.ServeMux) {
 		if !transport.Decode(w, r, &report) {
 			return
 		}
-		if report.SourceID == "" || len(report.SourceID) > 256 || len(report.Items) > 128 {
+		if !validHostID(report.SourceID) || len(report.Items) > 128 {
 			transport.Error(w, 400, "报告大小或来源无效")
 			return
 		}
 		report.UpdatedAt = time.Now().UTC()
 		data, _ := json.Marshal(report)
 		h.mu.Lock()
-		_, err := h.db.ExecContext(r.Context(), `INSERT INTO adapter_hosts(source_id,report) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET report=excluded.report`, report.SourceID, data)
+		// 删除与状态登记共用锁，并由 SQL 检查删除标记，旧报告不能重建主机记录。
+		result, err := h.db.ExecContext(r.Context(), `INSERT INTO adapter_hosts(source_id,report) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_hosts WHERE source_id=?) ON CONFLICT(source_id) DO UPDATE SET report=excluded.report`, report.SourceID, data, report.SourceID)
+		var affected int64
 		if err == nil {
+			affected, err = result.RowsAffected()
+		}
+		if err == nil && affected > 0 {
 			h.changedLocked()
 		}
 		h.mu.Unlock()
 		if err != nil {
 			transport.Error(w, 503, "状态未保存")
+			return
+		}
+		if affected == 0 {
+			transport.Error(w, http.StatusGone, ErrHostDeleted.Error())
 			return
 		}
 		transport.JSON(w, 200, map[string]string{"status": "ok"})

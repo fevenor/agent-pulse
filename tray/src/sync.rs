@@ -13,6 +13,7 @@ use tungstenite::{Message, client::IntoClientRequest, stream::MaybeTlsStream};
 
 pub enum Input {
     Refresh,
+    Notified(Vec<String>),
     Read(Vec<String>),
     Stop,
     Desktop {
@@ -70,32 +71,23 @@ fn worker(
         .max_redirects(0)
         .build()
         .into();
-    let endpoints: Vec<_> = [
-        (
-            settings.hub_url.as_str(),
-            settings.token.as_str(),
-            "已直连服务",
-        ),
-        (
-            settings.relay_url.as_str(),
-            settings.relay_token.as_str(),
-            "已通过中继连接",
-        ),
-    ]
-    .into_iter()
-    .filter(|e| !e.0.is_empty())
-    .collect();
     let mut desktop = crate::desktop::status();
     let _ = updates.send_blocking(view(
         &store,
-        if endpoints.is_empty() {
+        if settings.hub_url.is_empty() && settings.relay().relay_url.is_empty() {
             "尚未配置连接"
         } else {
             "正在连接"
         },
     ));
     loop {
-        for (base, token, label) in &endpoints {
+        crate::discovery::refresh(&settings);
+        let relay = settings.relay();
+        let endpoints = [
+            (&settings.hub_url, &settings.token, "已直连服务"),
+            (&relay.relay_url, &relay.relay_token, "已通过中继连接"),
+        ];
+        for (base, token, label) in endpoints.iter().filter(|e| !e.0.is_empty()) {
             let result = connected(
                 (base, token, label),
                 &client,
@@ -103,12 +95,14 @@ fn worker(
                 &input,
                 &updates,
                 &mut desktop,
+                &settings,
             );
+            let _ = updates.send_blocking(view(&store, "连接中断 · 显示本地缓存"));
             if matches!(result, Ok(false)) {
                 return;
             }
         }
-        let status = if endpoints.is_empty() {
+        let status = if settings.hub_url.is_empty() && settings.relay().relay_url.is_empty() {
             "尚未配置连接"
         } else {
             "连接中断 · 显示本地缓存"
@@ -134,6 +128,9 @@ fn apply(
     match command {
         Input::Stop => return false,
         Input::Refresh => {}
+        Input::Notified(ids) => {
+            let _ = store.change(|s| s.notified.extend(ids));
+        }
         Input::Desktop { locked, fullscreen } => *desktop = (locked, fullscreen),
         Input::Read(ids) => {
             store.error = None;
@@ -231,10 +228,11 @@ fn connected(
     input: &mpsc::Receiver<Input>,
     updates: &async_channel::Sender<View>,
     desktop: &mut (Option<bool>, Option<bool>),
+    settings: &Settings,
 ) -> Result<bool, String> {
     let (base, token, label) = endpoint;
     let mut socket = connect(base, token)?;
-    socket.send(Message::Text(json!({"type":"hello","payload":{"id":store.state.device_id,"role":"tray","locked":desktop.0,"fullscreen":desktop.1}}).to_string().into())).map_err(|_|"登记设备失败")?;
+    socket.send(Message::Text(json!({"type":"hello","payload":{"id":store.state.device_id,"role":"tray","host_name":settings.host_name,"locked":desktop.0,"fullscreen":desktop.1}}).to_string().into())).map_err(|_|"登记设备失败")?;
     let start = Instant::now();
     let mut response_at = Instant::now();
     let mut heartbeat = Instant::now();
@@ -282,6 +280,9 @@ fn connected(
         match socket.read() {
             Ok(Message::Text(text)) => {
                 response_at = Instant::now();
+                if synced {
+                    let _ = updates.send_blocking(view(store, label));
+                }
                 let message: Value = serde_json::from_str(&text).map_err(|_| "订阅消息无效")?;
                 match message["type"].as_str() {
                     Some("hello") => {
@@ -339,16 +340,23 @@ fn connected(
         }
         // 设备未知、锁屏和全屏均不弹出；解锁后先同步已读与快照。
         if synced && quiet && desktop.0 == Some(false) && desktop.1 == Some(false) {
-            let notifications = store.state.notifications();
+            let candidates = store.state.notifications();
+            let muted = settings.preferences.read().unwrap().muted_sources.clone();
+            let suppressed: Vec<_> = candidates
+                .iter()
+                .filter(|e| muted.contains(&e.source_id))
+                .map(|e| e.event_id.clone())
+                .collect();
+            if !suppressed.is_empty() {
+                store.change(|s| s.notified.extend(suppressed))?;
+            }
+            let notifications = store.state.notifications_for(&muted);
             if !notifications.is_empty() {
-                store.change(|s| {
-                    s.notified
-                        .extend(notifications.iter().map(|e| e.event_id.clone()))
-                })?;
                 let mut update = view(store, label);
                 let count = notifications.len();
                 let mut alert = notifications.into_iter().next().unwrap();
                 if count > 1 {
+                    alert.source_id.clear();
                     alert.session_id.clear();
                     alert.event_id.clear();
                     alert.title = format!("{count} 个会话有新提醒");

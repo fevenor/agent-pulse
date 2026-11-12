@@ -18,6 +18,8 @@ type Hook struct {
 	CWD            string   `json:"cwd"`
 	AgentID        string   `json:"agent_id"`
 	AgentType      string   `json:"agent_type"`
+	AgentName      string   `json:"agentName"`
+	ParentSession  string   `json:"parentSessionId"`
 	TurnID         string   `json:"turn_id"`
 	ToolID         string   `json:"tool_use_id"`
 	Tool           string   `json:"tool_name"`
@@ -55,7 +57,7 @@ func antigravityMain(h Hook, hook string, binding string) bool {
 
 func Convert(agent, source, hook string, raw []byte, now time.Time, binding string) (*protocol.Event, error) {
 	var h Hook
-	if len(raw) > protocol.MaxEventBytes || json.Unmarshal(raw, &h) != nil {
+	if len(raw) > protocol.MaxHookBytes || json.Unmarshal(raw, &h) != nil {
 		return nil, errors.New("hook JSON 无效")
 	}
 	if h.Event != "" && h.Event != hook {
@@ -64,9 +66,14 @@ func Convert(agent, source, hook string, raw []byte, now time.Time, binding stri
 	if h.AgentID != "" || h.AgentType != "" || strings.HasPrefix(hook, "Subagent") {
 		return nil, nil
 	}
+	// ZCode 3.17.2 默认主会话不带 agentName；子代理显式带 zcode-* 名称。
+	// 工具钩子没有可靠归属字段，以下仅转换三个会话生命周期事件。
+	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "" || (hook != "SessionStart" && hook != "UserPromptSubmit" && hook != "Stop")) {
+		return nil, nil
+	}
 	kind := ""
 	switch agent {
-	case "codex", "qoderclicn":
+	case "codex", "qoderclicn", "zcode":
 		if h.SessionID == "" {
 			return nil, errors.New("缺少会话标识")
 		}

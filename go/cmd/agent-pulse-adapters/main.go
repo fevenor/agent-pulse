@@ -17,7 +17,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("用法：agent-pulse-adapters keygen|pack|publish；私钥只保存在发布者本机")
+		return fmt.Errorf("用法：agent-pulse-adapters keygen|pack|publish|verify；私钥只保存在发布者本机")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	repository := fs.String("repository", "repository", "发布目录")
@@ -45,6 +45,20 @@ func run() error {
 			return err
 		}
 		return adapters.AtomicJSON(*out, p)
+	case "verify":
+		public := fs.String("public", "publisher.pub", "发布公钥文件")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		key, err := os.ReadFile(*public)
+		if err != nil {
+			return err
+		}
+		index, err := adapters.VerifyRepository(*repository, string(key))
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(index)
 	case "publish":
 		private := fs.String("private", "publisher.key", "发布私钥")
 		index := fs.String("index", "index-input.json", "含递增 sequence 与 packages 的目标索引")

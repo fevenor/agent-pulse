@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-const BridgeVersion = "0.4.0"
+const BridgeVersion = "0.5.0"
 const MaxPackageBytes = 32 << 20
 
 var identifier = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -63,7 +63,7 @@ func (m Manifest) Validate() error {
 	if m.Kind != "executable" && m.Kind != "opencode-plugin" {
 		return errors.New("不支持的适配包运行方式")
 	}
-	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" {
+	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" {
 		return errors.New("不支持的宿主配置格式")
 	}
 	for _, value := range []string{m.Version, m.MinBridge, m.AgentMin, m.AgentMax} {
@@ -265,6 +265,26 @@ func SignIndex(repository, privatePath string, index Index) error {
 	if _, err = Verify(transportJSON(signed), base64.StdEncoding.EncodeToString(ed25519.PrivateKey(key).Public().(ed25519.PublicKey))); err != nil {
 		return err
 	}
+	if err := verifyRepositoryPackages(repository, index); err != nil {
+		return err
+	}
+	return AtomicJSON(filepath.Join(repository, "index.json"), signed)
+}
+
+// VerifyRepository 复用客户端验签规则，并验证索引引用的每个包，不修改仓库。
+func VerifyRepository(repository, publicKey string) (Index, error) {
+	raw, err := os.ReadFile(filepath.Join(repository, "index.json"))
+	if err != nil {
+		return Index{}, err
+	}
+	index, err := Verify(raw, publicKey)
+	if err != nil {
+		return Index{}, err
+	}
+	return index, verifyRepositoryPackages(repository, index)
+}
+
+func verifyRepositoryPackages(repository string, index Index) error {
 	for _, p := range index.Packages {
 		data, err := os.ReadFile(filepath.Join(repository, "packages", p.SHA256+".zip"))
 		if err != nil {
@@ -275,7 +295,7 @@ func SignIndex(repository, privatePath string, index Index) error {
 			return errors.New("仓库包大小或摘要不匹配")
 		}
 	}
-	return AtomicJSON(filepath.Join(repository, "index.json"), signed)
+	return nil
 }
 func transportJSON(value any) []byte { data, _ := json.Marshal(value); return data }
 

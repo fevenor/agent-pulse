@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +15,11 @@ import (
 
 func (h *Hub) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
+	// 沿用 Hub 的访问控制；仅直接连接可获取，不通过快照或 Relay 代理暴露。
+	mux.HandleFunc("GET /api/v1/client-config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		transport.JSON(w, http.StatusOK, map[string]string{"relay_url": h.config.RelayURL, "relay_token": h.config.RelayToken, "public_key": h.config.AdapterPublicKey})
+	})
 	mux.HandleFunc("GET /api/v1/push-jobs", func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -54,6 +60,10 @@ func (h *Hub) Handler(token string) http.Handler {
 		duplicate, err := h.Accept(r.Context(), e)
 		if errors.Is(err, ErrConflict) {
 			transport.Error(w, 409, err.Error())
+			return
+		}
+		if errors.Is(err, ErrHostDeleted) {
+			transport.Error(w, http.StatusGone, err.Error())
 			return
 		}
 		if err != nil {
@@ -116,6 +126,7 @@ func (h *Hub) Handler(token string) http.Handler {
 				return
 			}
 		}
+		includeArchived := r.URL.Query().Get("include_archived") == "true"
 		key := protocol.SessionKey{SourceID: r.URL.Query().Get("source_id"), Agent: r.URL.Query().Get("agent"), SessionID: r.URL.Query().Get("session_id")}
 		var items []protocol.EventView
 		if key != (protocol.SessionKey{}) {
@@ -123,9 +134,9 @@ func (h *Hub) Handler(token string) http.Handler {
 				transport.Error(w, 400, "会话筛选必须包含来源、Agent 和会话标识")
 				return
 			}
-			items, err = h.SessionHistory(r.Context(), key, before, limit)
+			items, err = h.SessionHistoryWithArchived(r.Context(), key, before, limit, includeArchived)
 		} else {
-			items, err = h.History(r.Context(), before, limit)
+			items, err = h.HistoryWithArchived(r.Context(), before, limit, includeArchived)
 		}
 		if err != nil {
 			transport.Error(w, 503, "历史读取失败")
@@ -136,6 +147,7 @@ func (h *Hub) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/connect", h.connect)
 	h.sessionRoutes(mux)
 	h.adapterRoutes(mux)
+	h.hostRoutes(mux)
 	return transport.Guard(token, false, mux)
 }
 
@@ -179,6 +191,10 @@ func (h *Hub) serveSocket(ws stateSocket) {
 	}
 	h.mu.Lock()
 	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	if err := h.registerPresenceLocked(context.Background(), c.device); err != nil {
 		h.mu.Unlock()
 		return
 	}

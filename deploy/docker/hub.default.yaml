@@ -1,0 +1,10 @@
+# 基础镜像可直接启动；正式发布镜像另外附带 /repository 和 publisher.pub。
+listen: "0.0.0.0:18700"
+database: "/data/hub.db"
+token: "${env:AGENT_PULSE_TOKEN:-}"
+relay_url: "${env:AGENT_PULSE_RELAY_URL:-}"
+relay_token: "${env:AGENT_PULSE_RELAY_TOKEN:-}"
+web_directory: "/web"
+adapter_directory: "/repository"
+reminder_ttl_seconds: 86400
+push: []

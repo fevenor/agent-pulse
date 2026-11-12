@@ -8,6 +8,7 @@ use tray_icon::{
 use unicode_segmentation::UnicodeSegmentation;
 
 pub struct Tray {
+    guid: u128,
     pub icon: TrayIcon,
     menu: Menu,
     sessions: Vec<MenuItem>,
@@ -32,6 +33,8 @@ impl Tray {
         self.menu.clone()
     }
     pub fn create(sender: async_channel::Sender<Command>) -> Self {
+        NOTIFICATION_SENDER.with(|s| *s.borrow_mut() = Some(sender.clone()));
+        let guid = uuid::Uuid::new_v4().as_u128();
         let menu = Menu::new();
         let caption = MenuItem::new("活跃会话", false, None);
         let open = MenuItem::new("打开会话列表", true, None);
@@ -84,13 +87,23 @@ impl Tray {
             }
         }));
         let icon = TrayIconBuilder::new()
+            .with_guid(guid)
             .with_tooltip("AgentPulse")
             .with_menu(Box::new(menu.clone()))
             .with_menu_on_left_click(false)
             .with_icon(pulse_icon(false))
             .build()
             .expect("无法创建托盘图标");
+        unsafe {
+            let _ = windows::Win32::UI::Shell::SetWindowSubclass(
+                windows::Win32::Foundation::HWND(icon.window_handle()),
+                Some(notification_callback),
+                1,
+                0,
+            );
+        }
         Self {
+            guid,
             icon,
             menu,
             sessions: vec![],
@@ -100,6 +113,31 @@ impl Tray {
             float,
             fingerprint: String::new(),
         }
+    }
+    pub fn notify(&self, title: &str, body: &str) -> bool {
+        use windows::{
+            Win32::{Foundation::HWND, UI::Shell::*},
+            core::GUID,
+        };
+        let mut data = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: HWND(self.icon.window_handle()),
+            uFlags: NIF_GUID | NIF_INFO,
+            guidItem: GUID::from_u128(self.guid),
+            dwInfoFlags: NIIF_INFO | NIIF_RESPECT_QUIET_TIME,
+            ..Default::default()
+        };
+        wide_copy(&mut data.szInfoTitle, title);
+        // Windows 将空正文解释为关闭气泡；命令钩子的正文通常为空。
+        wide_copy(
+            &mut data.szInfo,
+            if body.is_empty() {
+                "点击查看需要关注的会话。"
+            } else {
+                body
+            },
+        );
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &data).as_bool() }
     }
     pub fn resolve(&self, id: &str) -> Option<SessionKey> {
         self.actions.borrow().get(id).cloned()
@@ -167,26 +205,45 @@ fn rank(s: &Session) -> u8 {
     }
 }
 fn pulse_icon(unread: bool) -> Icon {
-    let mut pixels = vec![0; 32 * 32 * 4];
-    for y in 0..32 {
-        for x in 0..32 {
-            let pulse = ((3..=10).contains(&x) && (y - 16i32).abs() <= 1)
-                || ((10..=14).contains(&x) && (y - (16 - (x - 10) * 2)).abs() <= 1)
-                || ((14..=20).contains(&x) && (y - (8 + (x - 14) * 3)).abs() <= 1)
-                || ((20..=24).contains(&x) && (y - (26 - (x - 20) * 2)).abs() <= 1)
-                || ((24..=29).contains(&x) && (y - 18).abs() <= 1);
-            let dot = unread && (x - 26).pow(2) + (y - 5).pow(2) <= 16;
-            let i = (y * 32 + x) as usize * 4;
-            if pulse || dot {
-                pixels[i..i + 4].copy_from_slice(if dot {
-                    &[209, 137, 33, 255]
-                } else {
-                    &[52, 114, 209, 255]
-                });
-            }
+    Icon::from_rgba(crate::artwork::pixels(32, unread), 32, 32).expect("图标生成失败")
+}
+thread_local! {
+    static NOTIFICATION_SENDER: RefCell<Option<async_channel::Sender<Command>>> = const { RefCell::new(None) };
+}
+fn wide_copy<const N: usize>(target: &mut [u16; N], text: &str) {
+    let mut index = 0;
+    for c in text.chars().filter(|c| *c != '\0') {
+        let mut units = [0u16; 2];
+        let encoded = c.encode_utf16(&mut units);
+        if index + encoded.len() >= N {
+            break;
         }
+        target[index..index + encoded.len()].copy_from_slice(encoded);
+        index += encoded.len();
     }
-    Icon::from_rgba(pixels, 32, 32).expect("图标生成失败")
+}
+unsafe extern "system" fn notification_callback(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    _: usize,
+    _: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::Shell::*;
+    #[cfg(feature = "dev-demo")]
+    if message == 6002 && (lparam.0 as u32 & 0xffff) == NIN_BALLOONSHOW {
+        eprintln!("开发验收：Windows 已显示系统通知");
+    }
+    // 锁定 tray-icon 0.26.1 的托盘回调消息；其自身未转发气泡点击。
+    if message == 6002 && (lparam.0 as u32 & 0xffff) == NIN_BALLOONUSERCLICK {
+        NOTIFICATION_SENDER.with(|s| {
+            if let Some(tx) = s.borrow().as_ref() {
+                let _ = tx.try_send(Command::Attention);
+            }
+        });
+    }
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 #[cfg(test)]
 mod tests {

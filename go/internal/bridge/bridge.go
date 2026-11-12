@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -133,7 +134,7 @@ func (b *Bridge) Run(ctx context.Context) {
 			accepted = err == nil && status == 202 && receipt.EventID == entry.event.EventID && receipt.Accepted == "durable"
 		}
 		// 明确无效的单条事件不阻塞后续事件；保留失败计数和标识供诊断。
-		permanent := status == 400 || status == 409 || status == 413 || status == 422
+		permanent := status == 400 || status == 409 || status == 410 || status == 413 || status == 422
 		if accepted || permanent {
 			b.mu.Lock()
 			b.queue[0] = nil
@@ -176,12 +177,17 @@ func pause(ctx context.Context, d time.Duration) bool {
 }
 
 func (b *Bridge) presence(ctx context.Context) {
+	hostName := b.config.HostName
+	if hostName == "" {
+		hostName, _ = os.Hostname()
+	}
+	device := protocol.Device{ID: b.config.SourceID, Role: "bridge", HostName: hostName}
 	for ctx.Err() == nil {
-		err := transport.Watch(ctx, b.config.HubURL, b.config.Token, protocol.Device{ID: b.config.SourceID, Role: "bridge"}, func(protocol.Version) error { return nil })
+		err := transport.Watch(ctx, b.config.HubURL, b.config.Token, device, func(protocol.Version) error { return nil })
 		if err != nil && b.config.RelayURL != "" && ctx.Err() == nil {
 			// 定期重建回退连接，以重新探测直连；不让回退路径永久黏住。
 			fallback, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_ = transport.Watch(fallback, b.config.RelayURL, b.config.RelayToken, protocol.Device{ID: b.config.SourceID, Role: "bridge"}, func(protocol.Version) error { return nil })
+			_ = transport.Watch(fallback, b.config.RelayURL, b.config.RelayToken, device, func(protocol.Version) error { return nil })
 			cancel()
 		}
 		if !pause(ctx, 2*time.Second) {

@@ -15,9 +15,13 @@ import (
 var ErrSessionChanged = errors.New("会话已变化，请刷新后重试")
 
 func (h *Hub) SessionHistory(ctx context.Context, key protocol.SessionKey, before int64, limit int) ([]protocol.EventView, error) {
+	return h.SessionHistoryWithArchived(ctx, key, before, limit, false)
+}
+
+func (h *Hub) SessionHistoryWithArchived(ctx context.Context, key protocol.SessionKey, before int64, limit int, includeArchived bool) ([]protocol.EventView, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.eventsLocked(ctx, `WHERE e.source_id=? AND e.agent=? AND e.session_id=? AND (?=0 OR e.position<?) ORDER BY e.position DESC LIMIT ?`, []any{key.SourceID, key.Agent, key.SessionID, before, before, limit})
+	return h.eventsLocked(ctx, `WHERE e.source_id=? AND e.agent=? AND e.session_id=? AND (?=0 OR e.position<?) ORDER BY e.position DESC LIMIT ?`, []any{key.SourceID, key.Agent, key.SessionID, before, before, limit}, includeArchived)
 }
 
 func (h *Hub) ManageSession(ctx context.Context, req protocol.SessionChange) error {

@@ -1,6 +1,6 @@
 [package]
 name = "agent-pulse-tray"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "AgentPulse Windows 原生会话提醒客户端"
 publish = false
@@ -21,7 +21,11 @@ url = "=2.5.8"
 uuid = { version = "=1.29.2", features = ["v4"] }
 raw-window-handle = "=0.6.2"
 unicode-segmentation = "1"
-windows = { version = "=0.61.3", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Com", "Win32_UI_Shell", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_RemoteDesktop"] }
+time = { version = "=0.3.55", features = ["parsing", "local-offset"] }
+windows = { version = "=0.61.3", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Power", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Com", "Win32_UI_Shell", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_RemoteDesktop"] }
+
+[build-dependencies]
+embed-resource = "=3.0.12"
 
 [profile.release]
 debug = false

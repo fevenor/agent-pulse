@@ -81,8 +81,10 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package-adapters.ps1 -NativeOnly
-          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==3; assert {x['id'] for x in p}=={'codex','antigravity','qoderclicn'}; assert all(x['platform']=='windows/amd64' for x in p)"
+          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==4; assert {x['id'] for x in p}=={'codex','antigravity','qoderclicn','zcode'}; assert all(x['platform']=='windows/amd64' for x in p)"
           if ($LASTEXITCODE -ne 0) { throw 'Windows 命令适配包清单检查失败' }
+          uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Hub 镜像准备流程测试失败' }
           ./scripts/package-windows.ps1
           uv run --offline --no-project python -c "import runpy; runpy.run_path('tests/e2e/windows_desktop.py')['binary_boundary_check']()"
           if ($LASTEXITCODE -ne 0) { throw '发布与演示隔离检查失败' }

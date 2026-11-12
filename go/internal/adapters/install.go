@@ -12,6 +12,11 @@ import (
 
 // 只修改明确归本安装器所有的命令。未能解析用户配置时拒绝写入。
 func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]byte, error) {
+	return updateHookConfig(c, configPath, p, raw, true)
+}
+
+// 禁用与安装共用所有权匹配，只移除本 Bridge 配置所属的钩子。
+func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte, enable bool) ([]byte, error) {
 	root := map[string]any{}
 	if len(raw) > 0 {
 		if json.Unmarshal(raw, &root) != nil || root == nil {
@@ -27,6 +32,9 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 		return nil, err
 	}
 	prefix := quote(exe) + " dispatch --config " + quote(cfg) + " --adapter " + quote(p.ID) + " --hook "
+	if p.ConfigStyle == "process-hooks" {
+		return updateProcessHookConfig(root, exe, cfg, p, enable)
+	}
 	if p.Kind == "opencode-plugin" {
 		loader := filepath.Join(c.Adapters.Directory, "loaders", p.ID)
 		entries := []any{}
@@ -38,16 +46,21 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 			}
 		}
 		found := false
+		kept := []any{}
 		for _, entry := range entries {
 			if plugin, ok := entry.(map[string]any); ok && plugin["package"] == loader {
 				found = true
+				if !enable {
+					continue
+				}
 				plugin["options"] = map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}
 			}
+			kept = append(kept, entry)
 		}
-		if !found {
-			entries = append(entries, map[string]any{"package": loader, "options": map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}})
+		if enable && !found {
+			kept = append(kept, map[string]any{"package": loader, "options": map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}})
 		}
-		root["plugins"] = entries
+		root["plugins"] = kept
 	} else {
 		key := "hooks"
 		if p.ConfigStyle == "named-hooks" {
@@ -104,6 +117,9 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 			direct[event] = true
 		}
 		for event, matcher := range p.Hooks {
+			if !enable {
+				break
+			}
 			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 1}
 			var entry any = map[string]any{"matcher": matcher, "hooks": []any{handler}}
 			if direct[event] {

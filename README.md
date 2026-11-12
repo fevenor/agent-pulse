@@ -2,34 +2,35 @@
 
 AgentPulse 是供个人使用的多主机 Agent 会话通知工具。Hub（会话中心）保存会话与已读状态，Relay（公网中继）提供备用通路，Bridge（本地接入进程）采集事件，Tray（桌面小组件）显示提醒。
 
-Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、提醒卡片和离线已读恢复，使用 Rust + GPUI。接入 OpenCode、Codex、Antigravity CLI 与 qoderclicn；各来源及桌面行为的验证边界见开发记录。
+Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、展开式时间线、系统通知、按主机静默/任务唤醒和离线已读恢复，使用 Rust + GPUI。接入 OpenCode、Codex、Antigravity CLI、qoderclicn 与 Windows ZCode 主会话生命周期；各来源及桌面行为的验证边界见开发记录。
 
-## 从这里开始
+## 普通用户：开始使用
 
-**首次部署先读 [部署指南](docs/deployment.md)**：从已发布镜像启动 Hub，发布适配包，在各 Agent 主机安装 Bridge，再按需接入 Relay 和 Windows Tray；包含配置、启动命令、成功判据和常见故障。部署容器无需准备完整开发工具链。
+开始使用需要一台运行 Hub 的服务器，以及至少一台安装了受支持 Agent 的主机。当前项目尚未发布 RC，公开下载包尚未提供；以下说明描述发布后的用户流程，完整部署步骤和验收标准见[部署指南](docs/deployment.md)。
 
-| 你的任务 | 入口 |
-| --- | --- |
-| 在内网服务器部署 Hub | [Hub 镜像部署](docs/deployment.md#1-部署-hub) |
-| 让本机 Agent 上报会话 | [适配包发布](docs/deployment.md#2-发布适配包) → [Bridge 安装](docs/deployment.md#3-在-linux-主机安装-bridge) |
-| 增加公网备用通路 | [Relay 部署](docs/deployment.md#4-可选部署公网-relay) |
-| 使用 Windows 桌面提醒 | [Windows 客户端](docs/windows-client.md) |
-| 修改源码或接续开发 | [Agent 工作指引](AGENTS.md)、[开发计划](docs/development-plan.md) |
+1. **部署 Hub**：RC 发布后从项目发布页获取已包含默认配置、管理网页与签名适配包的 Hub 容器镜像，在可信网络中启动。普通用户无需挂载仓库或配置适配公钥。Hub 保存会话、已读状态和主机名称；新主机首次连接后默认以系统主机名显示。之后可在 Hub 管理页面统一修改名称，所有 Tray 会在同步后看到新名称。
+2. **连接 Agent 主机**：在运行 Agent 的主机安装 Bridge，并运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。适配包由正式发布流程提供时无需自行构建；当前尚未发布 RC。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
+3. **使用 Windows Tray**：RC 发布后下载并解压 Windows 便携包，在程序旁的配置文件中填写 Hub 地址后启动。Tray 默认只需 Hub 地址；有 Relay 时会从 Hub 自动发现配置。会话详情可调整当前主机的静默和任务期间保持唤醒设置。
+4. **按需部署 Relay**：只有需要跨公网或备用连接时才部署。将 Relay 地址与令牌配置到 Hub；Bridge 从 Hub 获取配置，Tray 也会自动同步。公网连接必须使用 HTTPS/WSS。
 
-手机渠道、token 和实际主机地址由使用者自行配置，示例中的占位值不可直接用于部署。Bridge 运行不代表宿主 hook 已加载，完成后应按 [部署验收](docs/deployment.md#5-验收手机推送与升级) 核对真实事件。
+Hub 和 Bridge 示例配置可从 [`config/`](config/) 目录查看。Agent 执行部署时，可先阅读[Bridge 示例配置](config/bridge.example.yaml)、[Hub 示例配置](config/hub.example.yaml)和[部署指南](docs/deployment.md)，其中给出了服务地址、适配包及 Relay 的配置形状。正式 RC 镜像内置相应签名仓库和公开公钥；Bridge 首次直连 Hub 后固定信任该公钥。发布者离线维护签名私钥，普通使用者无需处理签名仓库。所有示例地址、名称和令牌均为占位值，不可直接作为实际凭据使用。
+
+手机推送属于可选功能。Bridge 在线不代表 Agent 钩子已生效；请按部署指南运行一次真实 Agent 会话并核对 Hub 中收到的事件。
 
 ## 参考文档
 
-- [需求文档](docs/agent-pulse-requirements.md)：范围与验收。
-- [实现设计](docs/agent-pulse-design.md)：简化后的结构、可靠性、Tray 选型及扩展边界。
-- [开发记录](docs/development-status.md)：环境、已完成事项和后续工作。
-- [Linux 运行说明](docs/linux-quickstart.md)：构建、启动、接入 OpenCode、配置 HTTP 推送和排查。
-- [来源接入和更新](docs/adapters.md)：四种来源、签名发布、自动安装与兼容限制。
-- [镜像构建与部署](docs/images.md)：GitHub 自动构建、双架构容器验证和 Relay 镜像部署。
-- [Windows 开发](docs/windows-development.md)：原生工具链、检查命令、Debian 联调和剩余验收。
-- [Windows 客户端](docs/windows-client.md)：运行、离线恢复、Bridge 管理和原生打包。
-- [变更记录](CHANGELOG.md)：需求、设计和工程变更历史。
+- [部署指南](docs/deployment.md)：面向使用者的安装、配置、验收和故障处理。
+- [Windows 客户端](docs/windows-client.md)：Tray 的运行与便携配置。
+- [适配器说明](docs/adapters.md)：受支持的 Agent、钩子与签名包更新。
+- [需求文档](docs/agent-pulse-requirements.md)：项目功能范围。
+- [实现设计](docs/agent-pulse-design.md)：系统结构和技术边界。
+- [开发记录](docs/development-status.md)：实现进度和验证证据。
+- [Linux 运行说明](docs/linux-quickstart.md)：Linux Bridge、Hub、Relay 的运行说明。
+- [镜像构建与部署](docs/images.md)：容器镜像和架构说明。
+- [变更记录](CHANGELOG.md)：已发生的功能和工程变更。
+## 开发者：从源码运行
 
+开发与验证命令面向贡献者。部署已发布镜像的使用者无需安装这些工具。
 ## 工作目录
 
 ```text

@@ -11,6 +11,9 @@ import (
 
 const MaxEventBytes = 64 << 10
 
+// 原生钩子可能附带完整提示词或回复；本地转换后仍受 64 KiB 网络事件上限约束。
+const MaxHookBytes = 8 << 20
+
 // AdapterResult 仅在本机适配包与 dispatch 间使用；Reply 必须是宿主的被动回复。
 type AdapterResult struct {
 	Event *Event         `json:"event,omitempty"`
@@ -118,17 +121,32 @@ type Version struct {
 }
 
 type Device struct {
-	Path       string    `json:"path"`
-	ID         string    `json:"id"`
-	Role       string    `json:"role"`
-	Locked     *bool     `json:"locked,omitempty"`
-	Fullscreen *bool     `json:"fullscreen,omitempty"`
-	LastSeen   time.Time `json:"last_seen"`
+	Path        string    `json:"path"`
+	ID          string    `json:"id"`
+	Role        string    `json:"role"`
+	HostName    string    `json:"host_name,omitempty"`
+	Environment string    `json:"environment,omitempty"`
+	Locked      *bool     `json:"locked,omitempty"`
+	Fullscreen  *bool     `json:"fullscreen,omitempty"`
+	LastSeen    time.Time `json:"last_seen"`
 }
 
 type SourceLabel struct {
 	Name        string `json:"name"`
 	Environment string `json:"environment"`
+	Archived    bool   `json:"archived"`
+}
+
+// HostInfo 是 Hub 管理页面使用的主机摘要；source_id 是稳定指纹，name 是用户可读名称。
+type HostInfo struct {
+	SourceID    string    `json:"source_id"`
+	Role        string    `json:"role"`
+	Name        string    `json:"name"`
+	DefaultName string    `json:"default_name,omitempty"`
+	Environment string    `json:"environment"`
+	Archived    bool      `json:"archived"`
+	LastSeen    time.Time `json:"last_seen,omitempty"`
+	Online      bool      `json:"online"`
 }
 type Snapshot struct {
 	Sources map[string]SourceLabel `json:"sources,omitempty"`

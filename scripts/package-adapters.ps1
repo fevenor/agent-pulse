@@ -7,14 +7,14 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 $repositoryPath = [IO.Path]::GetFullPath($Repository)
 New-Item -ItemType Directory -Force $repositoryPath | Out-Null
 $packages = @()
-foreach ($adapter in @('codex', 'antigravity', 'qoderclicn')) {
+foreach ($adapter in @('codex', 'antigravity', 'qoderclicn', 'zcode')) {
     $packageDir = Join-Path $projectRoot "dist/adapter-build-windows/$adapter"
     New-Item -ItemType Directory -Force $packageDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot "bin/dev/agent-pulse-adapter-$adapter.exe") -Destination (Join-Path $packageDir 'adapter.exe')
     $manifest = Get-Content -Raw (Join-Path $projectRoot "adapters/$adapter/manifest.json") | ConvertFrom-Json
     $manifest.platform = 'windows/amd64'
     $manifest.entry = 'adapter.exe'
-    $manifest.min_bridge = '0.3.0'
+    if ([version]$manifest.min_bridge -lt [version]'0.3.0') { $manifest.min_bridge = '0.3.0' }
     $manifestPath = Join-Path $projectRoot "dist/adapter-build-windows/$adapter-manifest.json"
     [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 12))
     $packagePath = Join-Path $repositoryPath "$adapter.json"

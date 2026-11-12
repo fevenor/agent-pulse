@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #[cfg(all(feature = "dev-demo", not(debug_assertions)))]
 compile_error!("发布构建禁止包含演示功能；请使用 preview profile");
+mod artwork;
 mod assets;
 #[cfg(feature = "dev-demo")]
 mod demo;
@@ -38,15 +39,19 @@ enum Command {
     Detail(SessionKey),
     MenuSession(String),
     ToggleFloat,
+    HostPolicy(String, bool),
+    ToggleEvent(String),
+    ReportVisible(String),
     ResetFloat,
     Drag(i32, i32),
     Settings,
     Autostart(bool),
     StartupSettings,
+    BridgeSetup,
+    BridgeSetupFinished(Result<(), String>),
     Read(Vec<String>),
     ReadAll(SessionKey),
     Manage(Box<Session>, &'static str, serde_json::Value),
-    HistoryIndex(usize),
     Older,
     Quit,
     #[cfg(feature = "dev-demo")]
@@ -66,6 +71,15 @@ unsafe extern "system" fn console_control(_: u32) -> windows::core::BOOL {
     true.into()
 }
 fn main() {
+    let args: Vec<_> = std::env::args_os().collect();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--bridge-setup-console")
+    {
+        let success =
+            args.len() == 3 && platform::Bridge::setup_console(std::path::Path::new(&args[2]));
+        std::process::exit(if success { 0 } else { 1 });
+    }
     if let Err(e) = run() {
         eprintln!("AgentPulse：{e}");
         if !cfg!(debug_assertions) {
@@ -121,6 +135,7 @@ fn window(
     };
     cx.open_window(options, move |w, cx| {
         w.set_window_title(title);
+        platform::set_window_icon(w);
         if popup {
             platform::borderless(w, kind == Kind::Float || kind == Kind::Card);
         } else if kind == Kind::Settings {
@@ -197,6 +212,7 @@ fn run() -> Result<(), String> {
             &settings.config_path,
         )?)
     };
+    let setup_settings = settings.clone();
     let startup_status = autostart
         .as_ref()
         .map(Registration::status)
@@ -241,6 +257,12 @@ fn run() -> Result<(), String> {
         .map(|b| b.status())
         .unwrap_or_else(|| "本机接入未启用".into());
     let (reply_tx, reply_rx) = async_channel::unbounded();
+    let host_preferences = settings.preferences.clone();
+    let host_path = if demo_mode {
+        None
+    } else {
+        Some(settings.data_dir.join("hosts.json"))
+    };
     let requests = if demo_mode {
         None
     } else {
@@ -251,19 +273,25 @@ fn run() -> Result<(), String> {
         card_alert: None,
         selected: None,
         history: vec![],
-        history_index: 0,
+        expanded_events: Default::default(),
+        visible_events: Default::default(),
+        visible_elapsed: Default::default(),
+        read_requested: Default::default(),
         history_more: false,
         loading: false,
         generation: 0,
         message: String::new(),
         management_busy: false,
         filter: 0,
-        shown: Default::default(),
         floating: false,
         bridge: bridge_status,
         demo: demo_mode,
         startup_status,
         startup_message: String::new(),
+        preferences: host_preferences.read().unwrap().clone(),
+        power_status: "未请求保持唤醒".into(),
+        emphasis: false,
+        bridge_setup_running: false,
         #[cfg(feature = "dev-demo")]
         demo_dark: false,
     }));
@@ -301,11 +329,15 @@ fn run() -> Result<(), String> {
                     eprintln!("开发演示已就绪：默认驻留托盘，设置可通过托盘菜单打开");
                 }
                 let mut card_until = None;
+                let mut awake = agent_pulse_tray::power::WakeGuard::default();
+                let mut last_update = Instant::now();
+                let mut emphasis_until: Option<Instant> = None;
                 let mut bridge_check = Instant::now();
                 let mut menu_dirty = true;
                 loop {
+                    let tick_ms = floating.interval_ms();
                     cx.background_executor()
-                        .timer(Duration::from_millis(floating.interval_ms()))
+                        .timer(Duration::from_millis(tick_ms))
                         .await;
                     #[cfg(feature = "dev-demo")]
                     if STOP.load(Ordering::Relaxed) {
@@ -317,7 +349,38 @@ fn run() -> Result<(), String> {
                     if floating.tick(list_hwnd) {
                         let _ = tx.try_send(Command::Show(true));
                     }
+                    let detail_visible = detail
+                        .update(cx, |_, w, _| platform::readable(platform::handle(w)))
+                        .unwrap_or(false);
+                    let visible_reads = if detail_visible {
+                        shared
+                            .borrow_mut()
+                            .advance_read_visibility(Duration::from_millis(tick_ms))
+                    } else {
+                        shared.borrow_mut().visible_events.clear();
+                        Vec::new()
+                    };
+                    if !visible_reads.is_empty() {
+                        let _ = tx.try_send(Command::Read(visible_reads));
+                    }
+                    let needs_read_poll = {
+                        let data = shared.borrow();
+                        detail_visible
+                            && data.history.iter().any(|event| {
+                                data.expanded_events.contains(&event.event_id)
+                                    && data
+                                        .view
+                                        .state
+                                        .unread()
+                                        .iter()
+                                        .any(|e| e.event_id == event.event_id)
+                            })
+                    };
+                    if needs_read_poll {
+                        notify(detail, cx);
+                    }
                     while let Ok(update) = updates_rx.try_recv() {
+                        last_update = Instant::now();
                         menu_dirty = true;
                         let alert = update.alert.clone();
                         let can_notify = update.can_notify;
@@ -330,6 +393,26 @@ fn run() -> Result<(), String> {
                                 })
                             {
                                 data.message = "会话有新活动，刷新后查看最新事件".into();
+                            }
+                            let current_unread: std::collections::BTreeSet<_> = update
+                                .state
+                                .unread()
+                                .into_iter()
+                                .map(|e| e.event_id)
+                                .collect();
+                            let newly_read: std::collections::BTreeSet<_> = data
+                                .view
+                                .state
+                                .unread()
+                                .into_iter()
+                                .filter(|old| !current_unread.contains(&old.event_id))
+                                .map(|e| e.event_id)
+                                .collect();
+                            // 已读只更新标记，不改变本次浏览的展开状态，避免正文跳动。
+                            for event in &mut data.history {
+                                if newly_read.contains(&event.event_id) {
+                                    event.read = true;
+                                }
                             }
                             data.view = update;
                             let dismiss = data.card_alert.as_ref().is_some_and(|alert| {
@@ -353,13 +436,53 @@ fn run() -> Result<(), String> {
                             let _ = card.update(cx, |_, w, _| platform::hide(w));
                             card_until = None;
                         }
-                        if alert.is_some() && can_notify {
-                            shared.borrow_mut().card_alert = alert;
-                            let _ = card.update(cx, |_, w, cx| {
-                                platform::show_card(w);
-                                cx.notify();
-                            });
-                            card_until = Some(Instant::now() + Duration::from_secs(7));
+                        if let Some(alert) = alert.filter(|_| can_notify) {
+                            let muted = host_preferences.read().unwrap().muted_sources.clone();
+                            let ids: Vec<_> = shared
+                                .borrow()
+                                .view
+                                .state
+                                .notifications()
+                                .iter()
+                                .filter(|e| !muted.contains(&e.source_id))
+                                .filter(|e| {
+                                    alert.event_id.is_empty() || alert.event_id == e.event_id
+                                })
+                                .map(|e| e.event_id.clone())
+                                .collect();
+                            if !ids.is_empty() {
+                                let delivered = if floating.prefs.visible {
+                                    floating.alert();
+                                    emphasis_until = Some(Instant::now() + Duration::from_secs(7));
+                                    shared.borrow_mut().emphasis = true;
+                                    true
+                                } else {
+                                    cx.update(|cx| {
+                                        cx.global::<icon::Tray>().notify(&alert.title, &alert.body)
+                                    })
+                                    .unwrap_or(false)
+                                };
+                                if delivered {
+                                    if let Some(input) = &input {
+                                        let _ = input.send(Input::Notified(ids));
+                                    }
+                                } else {
+                                    shared.borrow_mut().card_alert = Some(alert);
+                                    let shown = card
+                                        .update(cx, |_, w, cx| {
+                                            platform::show_card(w);
+                                            cx.notify();
+                                            platform::visible(platform::handle(w))
+                                        })
+                                        .unwrap_or(false);
+                                    if shown {
+                                        if let Some(input) = &input {
+                                            let _ = input.send(Input::Notified(ids));
+                                        }
+                                        card_until = Some(Instant::now() + Duration::from_secs(7));
+                                    }
+                                }
+                            }
                         }
                         for handle in [list, detail, float, settings_window] {
                             notify(handle, cx);
@@ -385,7 +508,7 @@ fn run() -> Result<(), String> {
                                         data.history_more = events.len() == 30;
                                         if before == 0 {
                                             data.history = events;
-                                            data.history_index = 0;
+                                            data.initialize_history_expansion();
                                         } else {
                                             data.history.extend(events);
                                         }
@@ -454,6 +577,32 @@ fn run() -> Result<(), String> {
                                     cx.notify();
                                 });
                             }
+                            Command::HostPolicy(source, wake) => {
+                                let mut next = host_preferences.read().unwrap().clone();
+                                let selected = if wake {
+                                    &mut next.awake_sources
+                                } else {
+                                    &mut next.muted_sources
+                                };
+                                if !selected.remove(&source) {
+                                    selected.insert(source);
+                                }
+                                let result = host_path
+                                    .as_ref()
+                                    .map(|path| next.save(path))
+                                    .unwrap_or(Ok(()));
+                                let mut data = shared.borrow_mut();
+                                match result {
+                                    Ok(()) => {
+                                        *host_preferences.write().unwrap() = next.clone();
+                                        data.preferences = next;
+                                        data.startup_message.clear();
+                                    }
+                                    Err(e) => data.startup_message = e,
+                                }
+                                drop(data);
+                                notify(settings_window, cx);
+                            }
                             Command::ToggleFloat => {
                                 floating.toggle();
                                 shared.borrow_mut().floating = floating.prefs.visible;
@@ -494,6 +643,40 @@ fn run() -> Result<(), String> {
                                     notify(settings_window, cx);
                                 }
                             }
+                            Command::BridgeSetup => {
+                                if demo_mode || shared.borrow().bridge_setup_running {
+                                    continue;
+                                }
+                                shared.borrow_mut().bridge_setup_running = true;
+                                shared.borrow_mut().startup_message = "正在打开 Agent 配置向导…".into();
+                                notify(settings_window, cx);
+                                let setup_settings = setup_settings.clone();
+                                let setup_tx = tx.clone();
+                                if std::thread::Builder::new()
+                                    .name("agent-pulse-bridge-setup".into())
+                                    .spawn(move || {
+                                        let result = platform::Bridge::run_setup(&setup_settings);
+                                        let _ = setup_tx.try_send(Command::BridgeSetupFinished(result));
+                                    })
+                                    .is_err()
+                                {
+                                    let mut data = shared.borrow_mut();
+                                    data.bridge_setup_running = false;
+                                    data.startup_message = "无法启动本机 Agent 配置线程".into();
+                                    drop(data);
+                                    notify(settings_window, cx);
+                                }
+                            }
+                            Command::BridgeSetupFinished(result) => {
+                                let mut data = shared.borrow_mut();
+                                data.bridge_setup_running = false;
+                                data.startup_message = match result {
+                                    Ok(()) => "Agent 钩子配置已完成。请退出并重新启动 Tray，使内置 Bridge 启动并接收事件。修改后的 Agent 配置可能还需重启或重新加载；Codex 等宿主还可能要求确认项目或命令信任。".into(),
+                                    Err(error) => format!("本机 Agent 配置未完成：{error}"),
+                                };
+                                drop(data);
+                                notify(settings_window, cx);
+                            }
                             Command::StartupSettings => {
                                 if let Err(e) = agent_pulse_tray::autostart::open_system_settings()
                                 {
@@ -506,7 +689,10 @@ fn run() -> Result<(), String> {
                                 let mut data = shared.borrow_mut();
                                 data.selected = Some(key.clone());
                                 data.history.clear();
-                                data.history_index = 0;
+                                data.expanded_events.clear();
+                                data.visible_events.clear();
+                                data.visible_elapsed.clear();
+                                data.read_requested.clear();
                                 data.message.clear();
                                 data.generation += 1;
                                 data.loading = !demo_mode;
@@ -521,6 +707,7 @@ fn run() -> Result<(), String> {
                                         .filter(|e| e.key() == key)
                                         .cloned()
                                         .collect();
+                                    data.initialize_history_expansion();
                                 } else if let Some(requests) = &requests {
                                     let _ = requests.send(Request::History {
                                         key,
@@ -537,6 +724,12 @@ fn run() -> Result<(), String> {
                                 });
                             }
                             Command::Read(ids) => {
+                                {
+                                    let mut data = shared.borrow_mut();
+                                    for id in &ids {
+                                        data.visible_elapsed.remove(id);
+                                    }
+                                }
                                 if let Some(input) = &input {
                                     let _ = input.send(Input::Read(ids));
                                 } else {
@@ -544,6 +737,7 @@ fn run() -> Result<(), String> {
                                     notify(list, cx);
                                     notify(float, cx);
                                 }
+                                notify(detail, cx);
                             }
                             Command::ReadAll(key) => {
                                 let ids = shared
@@ -557,12 +751,16 @@ fn run() -> Result<(), String> {
                                     .collect();
                                 let _ = tx.try_send(Command::Read(ids));
                             }
-                            Command::HistoryIndex(index) => {
+                            Command::ToggleEvent(id) => {
                                 let mut data = shared.borrow_mut();
-                                data.history_index =
-                                    index.min(data.history.len().saturating_sub(1));
+                                if !data.expanded_events.remove(&id) {
+                                    data.expanded_events.insert(id);
+                                }
                                 drop(data);
                                 notify(detail, cx);
+                            }
+                            Command::ReportVisible(id) => {
+                                shared.borrow_mut().visible_events.insert(id);
                             }
                             Command::Older => {
                                 let mut data = shared.borrow_mut();
@@ -639,7 +837,9 @@ fn run() -> Result<(), String> {
                                     .unread
                                     .retain(|e| e.event_id != event.event_id);
                                 data.view.state.pending_reads.remove(&event.event_id);
-                                data.shown.remove(&event.event_id);
+                                data.expanded_events.insert(event.event_id.clone());
+                                data.visible_elapsed.remove(&event.event_id);
+                                data.read_requested.remove(&event.event_id);
                                 data.view.state.snapshot.unread.insert(0, event);
                                 drop(data);
                                 let _ = tx.try_send(Command::Detail(key));
@@ -668,16 +868,57 @@ fn run() -> Result<(), String> {
                             }
                             #[cfg(feature = "dev-demo")]
                             Command::DemoAlert => {
-                                let mut data = shared.borrow_mut();
-                                data.card_alert = data.view.state.snapshot.unread.first().cloned();
-                                drop(data);
-                                let _ = card.update(cx, |_, w, cx| {
-                                    platform::show_card(w);
-                                    cx.notify();
-                                });
-                                card_until = Some(Instant::now() + Duration::from_secs(7));
+                                let alert =
+                                    shared.borrow().view.state.snapshot.unread.first().cloned();
+                                if let Some(alert) = alert {
+                                    if floating.prefs.visible {
+                                        floating.alert();
+                                        emphasis_until =
+                                            Some(Instant::now() + Duration::from_secs(7));
+                                        shared.borrow_mut().emphasis = true;
+                                        notify(float, cx);
+                                    } else if !cx
+                                        .update(|cx| {
+                                            cx.global::<icon::Tray>()
+                                                .notify(&alert.title, &alert.body)
+                                        })
+                                        .unwrap_or(false)
+                                    {
+                                        shared.borrow_mut().card_alert = Some(alert);
+                                        let _ = card.update(cx, |_, w, cx| {
+                                            platform::show_card(w);
+                                            cx.notify();
+                                        });
+                                        card_until = Some(Instant::now() + Duration::from_secs(7));
+                                    }
+                                }
                             }
                         }
+                    }
+                    if emphasis_until.is_some_and(|until| Instant::now() >= until) {
+                        emphasis_until = None;
+                        shared.borrow_mut().emphasis = false;
+                        notify(float, cx);
+                    }
+                    let running = {
+                        let data = shared.borrow();
+                        data.preferences.running(
+                            &data.view.state.snapshot,
+                            !demo_mode
+                                && data.view.status.starts_with("已")
+                                && last_update.elapsed() < Duration::from_secs(40),
+                        )
+                    };
+                    let power_status = match awake.update(running > 0) {
+                        Ok(()) if running > 0 => {
+                            format!("保持唤醒：所选主机有 {running} 个任务运行中")
+                        }
+                        Ok(()) => "未请求保持唤醒：没有所选主机的在线运行任务".into(),
+                        Err(e) => e,
+                    };
+                    if shared.borrow().power_status != power_status {
+                        shared.borrow_mut().power_status = power_status;
+                        notify(settings_window, cx);
                     }
                     if card_until.is_some_and(|at| Instant::now() >= at) {
                         let _ = card.update(cx, |_, w, _| platform::hide(w));
@@ -687,7 +928,7 @@ fn run() -> Result<(), String> {
                         let data = shared.borrow();
                         let _ = cx.update(|cx| {
                             cx.global_mut::<icon::Tray>().update(
-                                &data.view.state.snapshot.sessions,
+                                &data.sessions(),
                                 data.view.state.unread().len(),
                                 floating.prefs.visible,
                                 data.demo || data.view.status.starts_with("已"),

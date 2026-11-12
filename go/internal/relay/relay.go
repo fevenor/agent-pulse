@@ -264,7 +264,16 @@ func (r *Relay) flushOne(ctx context.Context) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if reply.Status == 200 {
+	if reply.Status == http.StatusGone && path == "/api/v1/events" {
+		// Hub 已删除该主机；清理其全部旧事件，包括此前因其他错误而阻塞的记录。
+		var event protocol.Event
+		if json.Unmarshal(payload, &event) != nil || event.SourceID == "" {
+			return false
+		}
+		_, err = r.db.ExecContext(ctx, `DELETE FROM pending WHERE path='/api/v1/events' AND json_extract(payload,'$.source_id')=?`, event.SourceID)
+		return err == nil
+	}
+	if reply.Status == http.StatusOK || reply.Status == http.StatusGone {
 		_, err = r.db.ExecContext(ctx, `DELETE FROM pending WHERE position=?`, pos)
 		return err == nil
 	}

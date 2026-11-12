@@ -105,6 +105,9 @@ func compare(a, b string) int {
 	return 0
 }
 func Detect(ctx context.Context, m Manifest) (string, error) {
+	if m.ID == "zcode" {
+		return zcodeDesktopVersion()
+	}
 	path, err := exec.LookPath(m.Command)
 	if err != nil {
 		return "", errors.New("未安装宿主命令")
@@ -217,7 +220,15 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 	if err != nil {
 		return err
 	}
-	index, err := Verify(raw, c.Adapters.PublicKey)
+	publisherKey := strings.TrimSpace(c.Adapters.PublicKey)
+	if publisherKey == "" {
+		keyBytes, keyErr := os.ReadFile(filepath.Join(dir, "publisher.pub"))
+		if keyErr != nil {
+			return fmt.Errorf("发布公钥未配置：设置 adapters.public_key 或将公钥文件放入 %s", filepath.Join(dir, "publisher.pub"))
+		}
+		publisherKey = strings.TrimSpace(string(keyBytes))
+	}
+	index, err := Verify(raw, publisherKey)
 	if err != nil {
 		return err
 	}
@@ -516,4 +527,52 @@ func rollback(c config.Bridge, id, failedHash, reason string) error {
 		return os.Remove(journal)
 	}
 	return AtomicJSON(filepath.Join(c.Adapters.Directory, "state.json"), s)
+}
+
+// Disable 从当前有效配置中移除本工具所属钩子，保留用户后续增加的其他配置。
+func Disable(c config.Bridge, id, configPath string) error {
+	path := c.Adapters.Managed[id]
+	if c.Adapters.Directory == "" || path == "" {
+		return errors.New("该 Agent 未在 adapters.managed 中启用")
+	}
+	unlock, err := lockInstall(c.Adapters.Directory)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err = recoverInstall(c.Adapters.Directory); err != nil {
+		return err
+	}
+	state, err := loadState(c.Adapters.Directory)
+	if err != nil {
+		return err
+	}
+	installed, ok := state.Installed[id]
+	if !ok || len(installed.ConfigAfter) == 0 {
+		return errors.New("找不到安装记录，未修改 Agent 配置")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	next, err := updateHookConfig(c, configPath, installed.Package, current, false)
+	if err != nil {
+		return fmt.Errorf("无法安全移除 AgentPulse 钩子，未修改 Agent 配置：%w", err)
+	}
+	before := cloneState(state)
+	delete(state.Installed, id)
+	journal := filepath.Join(c.Adapters.Directory, "pending.json")
+	if err = AtomicJSON(journal, installJournal{Path: path, Before: current, After: next, Existed: true, State: before}); err != nil {
+		return err
+	}
+	if err = AtomicJSON(filepath.Join(c.Adapters.Directory, "state.json"), state); err == nil {
+		err = AtomicFile(path, next, 0600)
+	}
+	if err != nil {
+		if recovered := recoverInstall(c.Adapters.Directory); recovered != nil {
+			return recovered
+		}
+		return err
+	}
+	return os.Remove(journal)
 }

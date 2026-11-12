@@ -48,6 +48,8 @@ try {
             if ($Integration) { Invoke-Checked cargo @('test', '--release', '--locked', '--test', 'sync_services', '--', '--ignored') }
             $guardOutput = (& cargo check --release --locked --features dev-demo 2>&1 | Out-String)
             if ($LASTEXITCODE -eq 0 -or -not $guardOutput.Contains('发布构建禁止包含演示功能')) { throw '演示发布隔离检查失败' }
+            # 上一步故意验证编译失败；清除已确认的预期退出码，避免 CI 将整个检查判失败。
+            $global:LASTEXITCODE = 0
             Write-Output '演示发布隔离检查通过：release + dev-demo 按预期拒绝编译。'
         } finally { Pop-Location }
     }

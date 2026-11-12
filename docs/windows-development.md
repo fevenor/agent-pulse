@@ -53,7 +53,7 @@ Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 W
 
 ## 自动构建
 
-`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和三个未签名 Windows 命令适配包，保留 14 天；通用 OpenCode 包从 Linux Workflow 的 `linux-adapters` 产物取得，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
+`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和四个未签名 Windows 命令适配包（含 ZCode），保留 14 天；通用 OpenCode 包从 Linux Workflow 的 `linux-adapters` 产物取得，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
 
 ## Debian 与容器
 

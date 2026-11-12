@@ -14,6 +14,37 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def executable_icon_check():
+    """从真实发布程序读取图标组，覆盖任务栏/资源管理器使用的 PE 资源。"""
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LoadLibraryExW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_uint]
+    kernel.LoadLibraryExW.restype = ctypes.c_void_p
+    kernel.FindResourceW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    kernel.FindResourceW.restype = ctypes.c_void_p
+    kernel.LoadResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel.LoadResource.restype = ctypes.c_void_p
+    kernel.LockResource.argtypes = [ctypes.c_void_p]
+    kernel.LockResource.restype = ctypes.c_void_p
+    kernel.FreeLibrary.argtypes = [ctypes.c_void_p]
+    module = kernel.LoadLibraryExW(str(ROOT / "bin/agent-pulse-tray.exe"), None, 2)
+    assert module, "无法读取发布程序资源"
+    try:
+        resource = kernel.FindResourceW(module, 1, 14)
+        assert resource, "EXE 缺少默认图标组"
+        pointer = kernel.LockResource(kernel.LoadResource(module, resource))
+        assert pointer, "图标组不可读"
+        header = ctypes.string_at(pointer, 6)
+        reserved, kind, count = struct.unpack("<HHH", header)
+        assert reserved == 0 and kind == 1 and count >= 7, "缺少多尺寸图标"
+        for index in range(count):
+            entry = ctypes.string_at(pointer + 6 + index * 14, 14)
+            image_id = struct.unpack_from("<H", entry, 12)[0]
+            assert kernel.FindResourceW(module, image_id, 3), "图标组引用了缺失图片"
+    finally:
+        kernel.FreeLibrary(module)
+
+
 def binary_boundary_check():
     """检查真实产物，防止运行时分支隐藏入口却仍把演示数据打进发布包。"""
     release = (ROOT / "bin/agent-pulse-tray.exe").read_bytes()
@@ -74,6 +105,7 @@ def demo_console_check(directory):
 
 
 def main():
+    executable_icon_check()
     if "--with-demo" in sys.argv:
         binary_boundary_check()
     exe = ROOT / "bin/agent-pulse-tray.exe"

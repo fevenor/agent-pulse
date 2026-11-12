@@ -8,6 +8,8 @@
 
 会话由 `(source_id, agent, session_id)` 唯一确定。子代理和未知 scope 返回 400。Bridge 可为缺省 `source_id` 填充本地配置值；来源不一致返回 400。`emit` 命令还可补随机事件 ID 和当前时间，显式提供稳定 ID 才能安全地跨多次命令调用重试。
 
+Bridge 首次 `setup` 为每个观察环境生成随机稳定的 `source_id` 主机指纹，并保存在本机 Bridge 配置中；同一物理电脑上的 Windows 与 WSL 是不同观察环境。Bridge 与 Tray 的 `host_name` 默认取操作系统主机名；Hub 管理页维护的显示名会覆盖默认名并同步给所有 Tray。产品界面不提供修改指纹的功能，使用者仍可自行编辑配置。Bridge 与 Tray hello 都登记各自设备名称；只有 Bridge hello 更新 Bridge 主机默认名称并自动解除归档，Tray 不会覆盖同指纹 Bridge 的资料或解除归档。
+
 `sequence` 是来源提供的会话内递增原生序号，必须能跨观察进程重启比较，不能用插件启动时归零的计数器。较旧序号只入历史，不覆盖会话。省略序号的实时事件按到达顺序处理，同时保留先前已知原生序号；无可靠顺序的补报必须设置 `historical: true`，只入历史且不生成强提醒。不得拿客户端时间代替可靠序号。
 
 相同 ID 和相同业务内容返回成功且 `duplicate: true`；相同 ID 内容不同返回 409。时间规范化为 UTC 后比较，未知字段返回 400。
@@ -18,6 +20,10 @@
 | --- | --- |
 | `POST /api/v1/events` | 统一事件。Hub 返回 200，`{event_id, accepted:"durable", duplicate}` 表示事务提交；Relay 返回 202、`accepted:"durable"` 表示中继落盘；Bridge 返回 202、`accepted:"memory"` 仅表示内存接收 |
 | `POST /api/v1/read` | `{"event_ids":["..."]}`，一次 1 至 256 个 ID；Hub 200 后已读持久化，允许早于事件到达。Relay 200 表示 Hub 已确认，202 表示只在中继暂存 |
+| `GET /api/v1/client-config` | 仅直连 Hub 获取 `{relay_url,relay_token,public_key}`，供 Tray/Bridge 发现 Relay、Bridge 固定适配包发布公钥；不经 Relay 转发 |
+| `GET /api/v1/hosts` | 返回主机指纹、Hub 显示名、默认主机名、环境、归档、最近连接和在线状态 |
+| `PATCH /api/v1/hosts/{source_id}` | 设置 `display_name` 或 `archived`；空显示名恢复系统主机名 |
+| `DELETE /api/v1/hosts/{source_id}` | 永久清理该主机数据并登记删除墓碑；旧 Bridge/积压事件被拒绝 |
 | `GET /api/v1/snapshot` | `{run_id,version,sessions,unread,devices,sources}`，完整会话、强提醒未读和当前连接设备 |
 | `GET /api/v1/events?before=0&limit=50` | 历史倒序数组；下一页 `before` 使用上一页最后一条 `position`；limit 1 至 200 |
 | `POST /api/v1/sessions/manage` | 会话键、最近事件 ID 和管理版本，加要变更的归档/别名/人工状态；Hub 200 才表示已保存，Relay 离线返回 503，不排队 |
@@ -36,9 +42,11 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 
 可选令牌用 `Authorization: Bearer ...`。内网默认不要求，Relay 始终要求。浏览器 WebSocket 在 `agent-pulse` 子协议之外提供 `pulse-token.<Base64URL(令牌)>`，服务端仅协商 `agent-pulse`，令牌不放入 URL。HTTP JSON 变更接口和 WebSocket 检查同源 Origin，不提供跨站 CORS。Bridge 还要求回环 IP Host。代理终止 HTTPS 时须正确覆盖 `X-Forwarded-Proto`。
 
+客户端配置接口沿用 Hub 可选 Bearer 鉴权，响应为 `Cache-Control: no-store`，只返回中继地址/凭据和适配包发布公钥，不返回其他服务配置。公钥来自 Hub 的 `adapter_public_key`；Bridge 首次从已配置 Hub 直连获取并按 Hub 地址和主机指纹固定，后续换钥会拒绝自动接受。首次信任不经 Relay 建立。两个中继字段均为空表示未配置中继；响应不会包含在快照中，Relay 查询白名单不包含该接口。Tray 与 Bridge 将成功结果按 Hub 地址缓存，手动 Relay 配置优先。Hub 选择本身是发布公钥的首次信任来源；可信个人内网可使用受控 HTTP，公网部署必须配置 HTTPS 和访问控制。
+
 ## 会话详情与管理
 
-历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。`sources` 是 Hub 配置中的来源标识到 `{name, environment}` 的映射。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、`archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
+历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。会话快照中的 `sources` 将来源指纹映射为 Hub 当前统一维护的 `{name, environment, archived}`。归档主机的会话和未读对 Tray 隐藏，事件历史默认排除；Hub 管理页可显式查询归档历史。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、会话级 `archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
 
 管理请求示例：
 
@@ -50,7 +58,7 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 
 新有效来源活动清除人工状态并递增管理版本，归档和别名保留。旧原生序号或 `historical: true` 不解除覆盖；无序号实时事件仍按到达顺序，不用客户端时钟推断先后。修正为结束/中断使之前等待提醒失效，不生成虚假 Agent 事件或手机通知。恢复自动不会重新激活已失效的旧提醒。
 
-Relay 仅转发管理请求，Hub 不可达时返回 503，绝不以 202 伪装保存成功。请求结果未知时客户端先刷新确认，不自动换通路重复提交人工修改。Hub 使用数据库版本 3，启动自动迁移旧库；升级前备份，回退旧程序需恢复旧库。
+Relay 仅转发会话管理请求，Hub 不可达时返回 503，绝不以 202 伪装保存成功。主机管理只直连 Hub。请求结果未知时客户端先刷新确认，不自动换通路重复提交人工修改。Hub 数据库当前版本为 5，启动时执行顺序迁移；升级前备份，回退旧程序需恢复旧库。
 
 ## WebSocket
 
@@ -82,4 +90,4 @@ Relay 只持久化事件与已读请求。Hub 断线时查询和包下载返回 
 
 ## 本地命令适配协议
 
-`bridge dispatch` 从 stdin 接收宿主 JSON，调用独立包的 `--hook <事件名> --source <来源>`。stdout 返回 `{ "event": <统一事件>, "reply": {} }`；忽略时省略 event。dispatch 校验事件后提交本地 Bridge，并将被动 reply 返回宿主。仅允许空对象或单个 `decision: allow|stop` 字段，不允许通过适配器输出修改工具授权、注入内容或强制继续。此协议只用于本机，不增加远程执行接口。
+`bridge dispatch` 从 stdin 接收最多 8 MiB 的宿主 JSON（仅本地输入，网络统一事件仍限 64 KiB），调用独立包的 `--hook <事件名> --source <来源>`。stdout 返回 `{ "event": <统一事件>, "reply": {} }`；忽略时省略 event。dispatch 校验事件后提交本地 Bridge，并将被动 reply 返回宿主。仅允许空对象或单个 `decision: allow|stop` 字段，不允许通过适配器输出修改工具授权、注入内容或强制继续。此协议只用于本机，不增加远程执行接口。

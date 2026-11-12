@@ -32,6 +32,7 @@ type Hub struct {
 	RelayToken         string                 `json:"relay_token"`
 	WebDirectory       string                 `json:"web_directory"`
 	AdapterDirectory   string                 `json:"adapter_directory"`
+	AdapterPublicKey   string                 `json:"adapter_public_key"`
 }
 
 type Relay struct {
@@ -58,6 +59,7 @@ type Channel struct {
 type Bridge struct {
 	Listen      string         `json:"listen"`
 	SourceID    string         `json:"source_id"`
+	HostName    string         `json:"host_name"`
 	HubURL      string         `json:"hub_url"`
 	Token       string         `json:"token"`
 	QueueEvents int            `json:"queue_events"`
@@ -89,6 +91,8 @@ func LoadRelay(path string) (Relay, error) {
 	}
 	return c, nil
 }
+
+func ValidateRelaySettings(raw, token string) error { return relaySettings(raw, token) }
 
 func relaySettings(raw, token string) error {
 	if raw == "" {
@@ -158,10 +162,27 @@ func LoadHub(path string) (Hub, error) {
 }
 
 func LoadBridge(path string) (Bridge, error) {
-	c := Bridge{Listen: "127.0.0.1:18702", HubURL: "http://127.0.0.1:18700", QueueEvents: 10000, QueueBytes: 64 << 20}
+	c := bridgeDefaults()
 	if err := load(path, &c); err != nil {
 		return c, err
 	}
+	return validateBridge(c)
+}
+
+// ParseBridge 供交互配置在写入前验证内存中的完整配置，并按正常加载规则展开环境变量。
+func ParseBridge(data []byte) (Bridge, error) {
+	c := bridgeDefaults()
+	if err := decode(data, "Bridge 配置", &c); err != nil {
+		return c, err
+	}
+	return validateBridge(c)
+}
+
+func bridgeDefaults() Bridge {
+	return Bridge{Listen: "127.0.0.1:18702", HubURL: "http://127.0.0.1:18700", QueueEvents: 10000, QueueBytes: 64 << 20}
+}
+
+func validateBridge(c Bridge) (Bridge, error) {
 	if err := relaySettings(c.RelayURL, c.RelayToken); err != nil {
 		return c, err
 	}
@@ -171,8 +192,8 @@ func LoadBridge(path string) (Bridge, error) {
 	if c.Adapters.PollSeconds < 5 {
 		return c, fmt.Errorf("adapters.poll_seconds 至少为 5")
 	}
-	if (c.Adapters.Directory == "") != (c.Adapters.PublicKey == "") {
-		return c, fmt.Errorf("adapters.directory 与 public_key 必须同时配置")
+	if c.Adapters.Directory == "" && (c.Adapters.PublicKey != "" || len(c.Adapters.Managed) > 0) {
+		return c, fmt.Errorf("配置 adapters.public_key 或 managed 前必须设置 adapters.directory")
 	}
 	if c.Adapters.Directory != "" && !filepath.IsAbs(c.Adapters.Directory) {
 		return c, fmt.Errorf("adapters.directory 必须为绝对路径")
@@ -187,6 +208,9 @@ func LoadBridge(path string) (Bridge, error) {
 	}
 	if strings.TrimSpace(c.SourceID) == "" || len(c.SourceID) > 256 || strings.ContainsAny(c.SourceID, "\x00\r\n") {
 		return c, fmt.Errorf("source_id 必填，最长 256 字节")
+	}
+	if len(c.HostName) > 256 || strings.ContainsAny(c.HostName, "\x00\r\n") {
+		return c, fmt.Errorf("host_name 最长 256 字节且不能含换行")
 	}
 	if err := HTTPURL(c.HubURL); err != nil {
 		return c, fmt.Errorf("hub_url: %w", err)
@@ -218,13 +242,17 @@ func Loopback(address string) error {
 	return nil
 }
 
-var envRef = regexp.MustCompile(`\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}`)
+var envRef = regexp.MustCompile(`\$\{env:([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
 
 func load(path string, target any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("无法读取配置文件 %s", path)
 	}
+	return decode(data, path, target)
+}
+
+func decode(data []byte, path string, target any) error {
 	if len(data) > 1<<20 {
 		return fmt.Errorf("配置文件超过 1 MiB")
 	}
@@ -302,7 +330,11 @@ func simple(n *yaml.Node, path string) (any, error) {
 		case "!!str":
 			missing := false
 			v := envRef.ReplaceAllStringFunc(n.Value, func(ref string) string {
-				val, ok := os.LookupEnv(envRef.FindStringSubmatch(ref)[1])
+				match := envRef.FindStringSubmatch(ref)
+				val, ok := os.LookupEnv(match[1])
+				if strings.Contains(ref, ":-") && (!ok || val == "") {
+					return match[2]
+				}
 				if !ok {
 					missing = true
 				}

@@ -50,15 +50,42 @@ uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
 
 网页测试需要已安装的 agent-browser 和 Chromium，启动独立浏览器会话与真实 Hub，验证别名与来源状态、归档/生效状态计数及筛选、友好名称搜索、恢复自动跟随、未读保留和明确已读、移动布局。使用临时数据，截图留在临时诊断目录，结束后关闭自建进程。包合并测试只使用本地合成 ZIP，覆盖跨平台合并、通用插件内容去重、冲突与损坏拒绝，并已纳入 Linux/Windows Workflow。
 
+Hub RC 发布仓库准备测试使用一次性密钥与合成包，不读取正式发布私钥：
+
+```sh
+uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters
+# 可选：先构建默认 Hub 镜像，再验证签名仓库覆盖、容器健康及自动公钥发现。
+uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters \
+  --docker-base agent-pulse-hub:default-check --docker-smoke
+```
+
+第二条命令启动一次性 Hub 容器并在退出时清理。失败时容器状态和日志写到 Git 忽略的 `tmp/`。
+
 ## 常规可靠性测试
 
 `bash scripts/check.sh` 包括 Go 竞态检测、本地网络集成、TypeScript 类型检查、映射样例和 Web 构建。Relay 离线队列、双向连接和适配包经中继下载在 Go 集成测试中验证；同机隔离状态目录模拟多个主机，不能替代物理多机部署验收。
 
 Windows 联调先用 `scripts/build.ps1 -DevelopmentTools` 生成 `bin/dev/` 测试服务 和 `scripts/check.ps1 -Tray -Integration`。Rust 中的真实服务测试默认忽略，`-Integration` 显式启用并验证 Windows Hub/Relay、客户端离线已读和重启恢复。Windows 安装器测试在普通 Go 检查中运行。
 
-默认 `scripts/build.ps1` 只提供用户 Tray，`scripts/build.ps1 -Demo` 提供前台演示。关闭其他 Tray 实例后执行 `uv run --offline --no-project python tests/e2e/windows_desktop.py`，验证发布参数拒绝、中文空格便携目录和不同启动工作目录、跨安装路径且不同配置的单实例拦截、内置 Bridge 启动和父进程结束后的清理；测试不操作桌面界面。加入 `--with-demo` 时，检查发布/演示二进制的 GUI/控制台子系统和演示专属文案隔离，另在测试专属隐藏控制台验证默认不打开设置、前台日志、真实 Ctrl+C 正常退出、不读取指定生产配置且不产生生产状态。须先构建 `-Demo`。Rust 单元测试在临时目录创建真实 `.lnk` 验证自启动维护，不向系统启动文件夹写入，不写注册表；禁用状态解析单独验证。原生菜单、悬浮拖拽、窗口滚动缩放和真实登录启动仍需单独验收。
+默认 `scripts/build.ps1` 只提供用户 Tray，`scripts/build.ps1 -Demo` 提供前台演示。关闭其他 Tray 实例后执行 `uv run --offline --no-project python tests/e2e/windows_desktop.py`，验证发布程序多尺寸图标资源、发布参数拒绝、中文空格便携目录和不同启动工作目录、跨安装路径且不同配置的单实例拦截、内置 Bridge 启动和父进程结束后的清理；测试不操作桌面界面。加入 `--with-demo` 时，检查发布/演示二进制的 GUI/控制台子系统和演示专属文案隔离，另在测试专属隐藏控制台验证默认不打开设置、前台日志、真实 Ctrl+C 正常退出、不读取指定生产配置且不产生生产状态。须先构建 `-Demo`。Rust 单元测试在临时目录创建真实 `.lnk` 验证自启动维护，不向系统启动文件夹写入，不写注册表；禁用状态解析单独验证。原生菜单、悬浮拖拽、窗口滚动缩放和真实登录启动仍需单独验收。
 
 Windows 与 Debian 的双来源联调使用 `uv run --offline --no-project python tests/e2e/windows_wsl.py`；前提是已构建 Windows 程序、测试标签的 Docker 镜像和 Linux Bridge，准备命令见 [Windows 开发](../../docs/windows-development.md#debian-与容器)。脚本清理自己创建的临时容器、文件与进程，不使用真实 Agent 或手机配置。
+
+## ZCode Windows 桌面
+
+需先退出其他 Tray，构建 `scripts/build.ps1 -DevelopmentTools` 和 `scripts/package-adapters.ps1 -NativeOnly`，已安装并登录 ZCode 3.17.2。以下测试会临时管理指定的 ZCode 用户钩子配置，必须先获用户授权；不用于无人知情的常规 CI。
+
+```powershell
+# 此命令保持运行；就绪后按下一段操作桌面。
+uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py serve --directory tmp/zcode-native
+# 在第二个终端执行验证与清理。
+uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py verify --directory tmp/zcode-native
+uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py stop --directory tmp/zcode-native
+```
+
+`serve` 创建无手机渠道的隔离 Hub、临时签名的 ZCode 包和正式 Tray，实际由内置 Bridge 安装钩子。就绪后在 ZCode 新建无项目任务，选择 GLM-5.3-Flash，发送一条不调用工具的简短请求并等待完成；`verify` 核对开始/继续/完成事件、实际运行版本和 Tray 未读。模型选择由桌面确认，脚本不自行调用模型。缺少这些事件应判失败，不能只看回答成功。
+
+默认配置为用户目录下的 `.zcode/cli/config.json`，可用 `--zcode-config` 指定其他测试配置；原配置备份保存在该忽略目录。`stop` 或一小时超时会停止自建进程并移除测试钩子，保留其他配置和钩子。整个测试目录含私人配置备份，不能提交或公开分发。
 
 ## Antigravity ACP
 

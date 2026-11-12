@@ -75,3 +75,57 @@ func TestStrictYAML(t *testing.T) {
 		})
 	}
 }
+
+func TestOptionalEnvironmentDefaults(t *testing.T) {
+	const missing = "PULSE_OPTIONAL_MISSING_FOR_TEST"
+	previous, existed := os.LookupEnv(missing)
+	_ = os.Unsetenv(missing)
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(missing, previous)
+		} else {
+			_ = os.Unsetenv(missing)
+		}
+	})
+	t.Setenv("PULSE_OPTIONAL_VALUE", "")
+	for _, tc := range []struct {
+		name, token string
+		want        string
+	}{
+		{"未设置使用默认空值", "${env:PULSE_OPTIONAL_MISSING_FOR_TEST:-}", ""},
+		{"未设置使用指定默认值", "${env:PULSE_OPTIONAL_MISSING_FOR_TEST:-fallback}", "fallback"},
+		{"已设置为空使用默认值", "${env:PULSE_OPTIONAL_VALUE:-fallback}", "fallback"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "bridge.yaml")
+			body := fmt.Sprintf("source_id: desktop\ntoken: '%s'\n", tc.token)
+			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := LoadBridge(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Token != tc.want {
+				t.Fatalf("token = %q, want %q", c.Token, tc.want)
+			}
+		})
+	}
+}
+
+func TestHubDefaultImageConfigLoadsWithoutOptionalEnvironment(t *testing.T) {
+	t.Setenv("AGENT_PULSE_TOKEN", "")
+	t.Setenv("AGENT_PULSE_RELAY_URL", "")
+	t.Setenv("AGENT_PULSE_RELAY_TOKEN", "")
+	path := filepath.Join("..", "..", "..", "deploy", "docker", "hub.default.yaml")
+	c, err := LoadHub(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Listen != "0.0.0.0:18700" || c.Database != "/data/hub.db" || c.WebDirectory != "/web" || c.AdapterDirectory != "/repository" {
+		t.Fatalf("容器默认路径或监听地址错误：%+v", c)
+	}
+	if c.Token != "" || c.RelayURL != "" || c.RelayToken != "" {
+		t.Fatal("未设置可选凭据时配置必须保持可启动")
+	}
+}

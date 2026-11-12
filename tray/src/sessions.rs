@@ -40,9 +40,10 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
             .build()
             .into();
         for request in rx {
+            let relay = settings.relay();
             let endpoints = [
                 (&settings.hub_url, &settings.token),
-                (&settings.relay_url, &settings.relay_token),
+                (&relay.relay_url, &relay.relay_token),
             ];
             match request {
                 Request::History {

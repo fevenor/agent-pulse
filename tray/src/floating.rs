@@ -28,6 +28,7 @@ pub struct Floating {
     left_at: Option<Instant>,
     fraction: f32,
     last_tick: Instant,
+    alert_until: Option<Instant>,
     last_rect: Option<(i32, i32, i32, i32, [i32; 4])>,
 }
 impl Floating {
@@ -47,6 +48,7 @@ impl Floating {
             left_at: None,
             fraction: 0.,
             last_tick: Instant::now(),
+            alert_until: None,
             last_rect: None,
         };
         if s.prefs.x.is_none() {
@@ -55,6 +57,10 @@ impl Floating {
         s.place();
         s.show();
         s
+    }
+    pub fn alert(&mut self) {
+        self.alert_until = Some(Instant::now() + Duration::from_secs(7));
+        self.left_at = None;
     }
     fn save(&self) {
         if let Some(p) = &self.path {
@@ -236,10 +242,13 @@ impl Floating {
         let r = platform::rect(self.hwnd);
         let inside = contains(r, p) && contains(area, p);
         let list_open = platform::visible(list);
-        let target = if inside || list_open {
+        let target = if inside || list_open || self.alert_until.is_some_and(|until| now < until) {
             self.left_at = None;
             let since = self.hovered.get_or_insert(now);
-            if list_open || now.duration_since(*since) >= Duration::from_millis(150) {
+            if list_open
+                || self.alert_until.is_some_and(|until| now < until)
+                || now.duration_since(*since) >= Duration::from_millis(150)
+            {
                 0.
             } else {
                 self.fraction

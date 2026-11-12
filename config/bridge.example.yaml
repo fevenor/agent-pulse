@@ -1,6 +1,9 @@
 listen: "127.0.0.1:18702"
 # 每个观察环境固定一个不同标识；同机 Windows 和 WSL 使用不同值。
-source_id: "my-linux"
+# 可选；默认使用系统主机名
+host_name: ""
+# 首次执行 agent-pulse-bridge setup 时生成并固定主机指纹。
+# source_id: ""
 hub_url: "http://127.0.0.1:18700"
 queue_events: 10000
 queue_bytes: 67108864
@@ -9,7 +12,8 @@ queue_bytes: 67108864
 # relay_token: "${env:AGENT_PULSE_RELAY_TOKEN}"
 # adapters:
 #   directory: "/home/your-user/.local/share/agent-pulse/adapters"
-#   public_key: "粘贴发布者公钥的 Base64 内容"
+#   # 通常由 Bridge 直连 Hub 获取并按主机指纹固定信任；仅自建特殊场景需手工指定。
+#   # public_key: "发布者公钥 Base64 内容"
 #   poll_seconds: 300
 #   pins: {}
 #   exclude: []

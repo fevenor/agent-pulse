@@ -20,19 +20,25 @@ pub struct Shared {
     pub card_alert: Option<Event>,
     pub selected: Option<SessionKey>,
     pub history: Vec<Event>,
-    pub history_index: usize,
+    pub expanded_events: BTreeSet<String>,
+    pub visible_events: BTreeSet<String>,
+    pub visible_elapsed: std::collections::BTreeMap<String, std::time::Duration>,
+    pub read_requested: BTreeSet<String>,
     pub history_more: bool,
     pub loading: bool,
     pub generation: u64,
     pub message: String,
     pub management_busy: bool,
     pub filter: u8,
-    pub shown: BTreeSet<String>,
     pub floating: bool,
     pub bridge: String,
     pub demo: bool,
     pub startup_status: StartupStatus,
     pub startup_message: String,
+    pub preferences: agent_pulse_tray::preferences::Preferences,
+    pub power_status: String,
+    pub emphasis: bool,
+    pub bridge_setup_running: bool,
     #[cfg(feature = "dev-demo")]
     pub demo_dark: bool,
 }
@@ -40,10 +46,13 @@ impl Shared {
     pub fn sessions(&self) -> Vec<Session> {
         let mut rows = self.view.state.snapshot.sessions.clone();
         let unread = self.view.state.unread();
-        rows.retain(|s| match self.filter {
-            0 => s.active(),
-            1 => unread.iter().any(|e| e.key() == s.key()),
-            _ => true,
+        rows.retain(|s| {
+            !self.view.state.snapshot.source_archived(&s.source_id)
+                && match self.filter {
+                    0 => s.active(),
+                    1 => unread.iter().any(|e| e.key() == s.key()),
+                    _ => true,
+                }
         });
         rows.sort_by(|a, b| {
             let priority = |s: &Session| {
@@ -62,16 +71,87 @@ impl Shared {
         });
         rows
     }
+    pub fn initialize_history_expansion(&mut self) {
+        self.expanded_events.clear();
+        self.visible_events.clear();
+        self.visible_elapsed.clear();
+        self.read_requested.clear();
+        let unread: BTreeSet<_> = self
+            .view
+            .state
+            .unread()
+            .into_iter()
+            .map(|event| event.event_id)
+            .collect();
+        self.expanded_events = Self::timeline_expansion_defaults(&self.history, &unread);
+    }
+
+    pub fn advance_read_visibility(&mut self, elapsed: std::time::Duration) -> Vec<String> {
+        let visible = std::mem::take(&mut self.visible_events);
+        let unread: BTreeSet<_> = self
+            .view
+            .state
+            .unread()
+            .into_iter()
+            .map(|event| event.event_id)
+            .collect();
+        advance_visible_reads(
+            visible,
+            &unread,
+            &mut self.visible_elapsed,
+            &mut self.read_requested,
+            elapsed,
+        )
+    }
+
+    pub fn timeline_expansion_defaults(
+        history: &[Event],
+        unread: &BTreeSet<String>,
+    ) -> BTreeSet<String> {
+        history
+            .iter()
+            .enumerate()
+            .filter(|(index, event)| *index == 0 || unread.contains(&event.event_id))
+            .map(|(_, event)| event.event_id.clone())
+            .collect()
+    }
+
     pub fn selected(&self) -> Option<Session> {
         self.view
             .state
             .snapshot
             .sessions
             .iter()
-            .find(|s| Some(s.key()) == self.selected)
+            .find(|s| {
+                Some(s.key()) == self.selected
+                    && !self.view.state.snapshot.source_archived(&s.source_id)
+            })
             .cloned()
     }
 }
+fn advance_visible_reads(
+    visible: BTreeSet<String>,
+    unread: &BTreeSet<String>,
+    elapsed_by_id: &mut std::collections::BTreeMap<String, std::time::Duration>,
+    requested: &mut BTreeSet<String>,
+    elapsed: std::time::Duration,
+) -> Vec<String> {
+    elapsed_by_id.retain(|id, _| unread.contains(id));
+    let mut ready = Vec::new();
+    for id in visible {
+        if !unread.contains(&id) || requested.contains(&id) {
+            continue;
+        }
+        let accumulated = elapsed_by_id.entry(id.clone()).or_default();
+        *accumulated += elapsed;
+        if *accumulated >= std::time::Duration::from_secs(3) {
+            requested.insert(id.clone());
+            ready.push(id);
+        }
+    }
+    ready
+}
+
 fn rank(s: &Session) -> u8 {
     match s.effective_state() {
         "waiting" => 0,
@@ -267,6 +347,9 @@ impl Render for Surface {
             let unread = self.shared.borrow().view.state.unread().len();
             return root
                 .rounded_lg()
+                .when(self.shared.borrow().emphasis, |d| {
+                    d.bg(rgb(t.hover)).border_2().border_color(rgb(t.amber))
+                })
                 .items_center()
                 .justify_center()
                 .cursor_pointer()
@@ -461,6 +544,8 @@ impl Render for Surface {
             let toggle = sender.clone();
             let startup = sender.clone();
             let remove_startup = sender.clone();
+            let bridge_setup = sender.clone();
+            let bridge_setup_running = data.bridge_setup_running;
             let body = div()
                 .p_5()
                 .flex()
@@ -503,6 +588,17 @@ impl Render for Surface {
                         })
                 })
                 .when(!data.startup_message.is_empty(), |body| body.child(div().text_color(rgb(t.amber)).child(data.startup_message.clone())))
+                .when(!data.demo, |body| {
+                    body.child(div().mt_3().child("本机 Agent 接入"))
+                        .child(button(
+                            "bridge-setup",
+                            if bridge_setup_running { "等待 Agent 配置向导完成…" } else { "配置并启用本机 Agent" },
+                            t,
+                        ).on_click(move |_, _, _| {
+                            let _ = bridge_setup.try_send(Command::BridgeSetup);
+                        }))
+                        .child(div().text_color(rgb(t.muted)).child("向导会在独立控制台中扫描并逐项询问支持的 Agent；最后报告保留至按 Enter 关闭，完成后需重启 Tray。配置保存在 data/，Tray 只需设置 Hub 地址。"))
+                })
                 .child(div().mt_3().child("服务连接"))
                 .child(
                     div()
@@ -510,7 +606,89 @@ impl Render for Surface {
                         .child(data.view.status.clone()),
                 )
                 .child(div().text_color(rgb(t.muted)).child(data.bridge.clone()))
-                .child("连接地址和凭据保存在程序旁的 tray.yaml，数据位于 data/。指定其他配置时使用该配置所在目录；修改后重启生效。");
+                .child("连接地址和凭据保存在程序旁的 tray.yaml，数据位于 data/。省略中继配置时，首次直连 Hub 后自动获取并缓存；手动中继配置优先。修改连接配置后重启生效。");
+            let mut body = body.child(div().mt_3().child("主机提醒与唤醒"))
+                .child(div().text_color(rgb(t.muted)).child("静默仅停止主动提醒，仍保留记录与未读。保持唤醒只在所选主机在线且有运行中任务时生效，允许屏幕熄灭。"))
+                .child(div().text_color(rgb(t.muted)).child(data.power_status.clone()));
+            let mut sources: BTreeSet<String> =
+                data.view.state.snapshot.sources.keys().cloned().collect();
+            sources.extend(
+                data.view
+                    .state
+                    .snapshot
+                    .sessions
+                    .iter()
+                    .map(|s| s.source_id.clone()),
+            );
+            sources.extend(
+                data.view
+                    .state
+                    .snapshot
+                    .devices
+                    .iter()
+                    .filter(|d| d.role == "bridge")
+                    .map(|d| d.id.clone()),
+            );
+            sources.retain(|source| !data.view.state.snapshot.source_archived(source));
+            if sources.is_empty() {
+                body = body.child("连接 Hub 后可选择主机");
+            }
+            for (i, source) in sources.into_iter().enumerate() {
+                let mute = data.preferences.muted_sources.contains(&source);
+                let wake = data.preferences.awake_sources.contains(&source);
+                let mute_id = source.clone();
+                let wake_id = source.clone();
+                let mute_tx = sender.clone();
+                let wake_tx = sender.clone();
+                body = body.child(
+                    div()
+                        .mt_2()
+                        .child(data.view.state.snapshot.source_label(&source))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    button(
+                                        ("mute", i),
+                                        if mute {
+                                            "静默：开启"
+                                        } else {
+                                            "静默：关闭"
+                                        },
+                                        t,
+                                    )
+                                    .on_click(
+                                        move |_, _, _| {
+                                            let _ = mute_tx.try_send(Command::HostPolicy(
+                                                mute_id.clone(),
+                                                false,
+                                            ));
+                                        },
+                                    ),
+                                )
+                                .child(
+                                    button(
+                                        ("wake", i),
+                                        if wake {
+                                            "任务唤醒：开启"
+                                        } else {
+                                            "任务唤醒：关闭"
+                                        },
+                                        t,
+                                    )
+                                    .on_click(
+                                        move |_, _, _| {
+                                            let _ = wake_tx.try_send(Command::HostPolicy(
+                                                wake_id.clone(),
+                                                true,
+                                            ));
+                                        },
+                                    ),
+                                ),
+                        ),
+                );
+            }
             #[cfg(feature = "dev-demo")]
             let body = if data.demo {
                 let menu = sender.clone();
@@ -590,7 +768,10 @@ impl Render for Surface {
                 div()
                     .text_color(rgb(t.muted))
                     .text_size(px(11.))
-                    .child(format!("最近活动：{}", session.updated_at)),
+                    .child(format!(
+                        "最近活动：{}",
+                        agent_pulse_tray::model::event_time(&session.updated_at)
+                    )),
             )
             .child(
                 div().text_color(rgb(t.muted)).text_size(px(11.)).child(
@@ -610,6 +791,45 @@ impl Render for Surface {
                     },
                 ),
             );
+        let host = session.source_id.clone();
+        let mute_enabled = data.preferences.muted_sources.contains(&host);
+        let wake_enabled = data.preferences.awake_sources.contains(&host);
+        let mute_tx = sender.clone();
+        let wake_tx = sender.clone();
+        let wake_host = host.clone();
+        body = body.child(
+            div()
+                .flex()
+                .gap_2()
+                .child(
+                    button(
+                        "detail-host-mute",
+                        if mute_enabled {
+                            "主机静默：开启"
+                        } else {
+                            "主机静默：关闭"
+                        },
+                        t,
+                    )
+                    .on_click(move |_, _, _| {
+                        let _ = mute_tx.try_send(Command::HostPolicy(host.clone(), false));
+                    }),
+                )
+                .child(
+                    button(
+                        "detail-host-awake",
+                        if wake_enabled {
+                            "任务期间保持唤醒：开启"
+                        } else {
+                            "任务期间保持唤醒：关闭"
+                        },
+                        t,
+                    )
+                    .on_click(move |_, _, _| {
+                        let _ = wake_tx.try_send(Command::HostPolicy(wake_host.clone(), true));
+                    }),
+                ),
+        );
         if !session.override_state.is_empty() {
             body = body.child(div().p_2().bg(rgb(t.hover)).child(format!(
                 "手动修正：{}；来源状态：{}；修正时间：{}。新的有效活动会恢复自动跟随。",
@@ -692,62 +912,93 @@ impl Render for Surface {
                 .border_t_1()
                 .border_color(rgb(t.line))
                 .pt_3()
-                .child("事件时间线"),
+                .child("事件时间线 · 本地时间"),
         );
         if data.loading {
             body = body.child(div().text_color(rgb(t.muted)).child("正在加载…"));
         }
-        if let Some(event) = data.history.get(data.history_index).cloned() {
-            let tx = sender.clone();
-            let read_shared = shared.clone();
-            let id = event.event_id.clone();
-            // 在实际绘制时检查滚动裁剪，后台窗口或尚未滚动到的事件不能自动已读。
-            let visible_title = canvas(
-                |_, _, _| (),
-                move |bounds, _, w, cx| {
-                    let mask = w.content_mask().bounds;
-                    if !w.is_window_active()
-                        || bounds.is_empty()
-                        || bounds.intersect(&mask) != bounds
-                    {
-                        return;
-                    }
-                    let mut data = read_shared.borrow_mut();
-                    if data.view.state.unread().iter().any(|e| e.event_id == id)
-                        && data.shown.insert(id.clone())
-                    {
-                        cx.defer(move |_| {
-                            let _ = tx.try_send(Command::Read(vec![id]));
-                        });
-                    }
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full();
-            body = body
+        for (index, event) in data.history.iter().cloned().enumerate() {
+            let expanded = data.expanded_events.contains(&event.event_id);
+            let unread = !event.read
+                && data
+                    .view
+                    .state
+                    .unread()
+                    .iter()
+                    .any(|e| e.event_id == event.event_id);
+            let tx_select = sender.clone();
+            let toggle_id = event.event_id.clone();
+            let status = if unread {
+                "未读"
+            } else if event.read || data.view.state.pending_reads.contains(&event.event_id) {
+                "已读"
+            } else {
+                "记录"
+            };
+            let label = agent_pulse_tray::model::event_label(&event.kind);
+            let summary = format!(
+                "{} · {} · {}{}",
+                agent_pulse_tray::model::event_time(&event.occurred_at),
+                label,
+                status,
+                if unread && !event.valid {
+                    " · 已失效"
+                } else {
+                    ""
+                }
+            );
+            let mut entry = div()
+                .border_l_2()
+                .border_color(rgb(if unread { t.blue } else { t.line }))
+                .pl_3()
+                .py_2()
                 .child(
-                    div()
-                        .text_color(rgb(t.muted))
-                        .text_size(px(11.))
-                        .child(event.occurred_at),
+                    button(
+                        ("timeline", index),
+                        format!("{}  {}", if expanded { "−" } else { "+" }, summary),
+                        t,
+                    )
+                    .on_click(move |_, _, _| {
+                        let _ = tx_select.try_send(Command::ToggleEvent(toggle_id.clone()));
+                    }),
+                );
+            if expanded {
+                let tx = sender.clone();
+                let id = event.event_id.clone();
+                // 每次绘制均报告当前可见事件，由主循环累计前台可见时间。
+                let visible_title = canvas(
+                    |_, _, _| (),
+                    move |bounds, _, w, _| {
+                        let mask = w.content_mask().bounds;
+                        if !unread
+                            || !w.is_window_active()
+                            || bounds.is_empty()
+                            || bounds.intersect(&mask).is_empty()
+                        {
+                            return;
+                        }
+                        let _ = tx.try_send(Command::ReportVisible(id.clone()));
+                    },
                 )
-                .child(
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full();
+                entry = entry.child(
                     div()
                         .relative()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(event.title)
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(event.title))
+                        .child(div().mt_2().child(event.body))
                         .child(visible_title),
-                )
-                .child(div().child(event.body));
-        } else if !data.loading {
+                );
+            } else {
+                entry = entry.child(div().text_color(rgb(t.muted)).child(event.title));
+            }
+            body = body.child(entry);
+        }
+        if data.history.is_empty() && !data.loading {
             body = body.child("暂无已采集事件");
         }
-        let index = data.history_index;
-        let len = data.history.len();
-        let previous = sender.clone();
-        let next = sender.clone();
         let older = sender.clone();
         let nav = div()
             .flex_shrink_0()
@@ -757,19 +1008,7 @@ impl Render for Surface {
             .border_color(rgb(t.line))
             .flex()
             .justify_between()
-            .child(button("previous", "上一条", t).on_click(move |_, _, _| {
-                let _ = previous.try_send(Command::HistoryIndex(index.saturating_sub(1)));
-            }))
-            .child(format!(
-                "{} / {}",
-                if len == 0 { 0 } else { index + 1 },
-                len
-            ))
-            .child(button("next", "下一条", t).on_click(move |_, _, _| {
-                let _ = next.try_send(Command::HistoryIndex(
-                    (index + 1).min(len.saturating_sub(1)),
-                ));
-            }))
+            .child(format!("已加载 {} 条 · 最新在上", data.history.len()))
             .when(data.history_more && !data.loading, |d| {
                 d.child(button("older", "加载更早", t).on_click(move |_, _, _| {
                     let _ = older.try_send(Command::Older);
@@ -785,5 +1024,71 @@ impl Render for Surface {
         )
         .child(nav)
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod timeline_tests {
+    use super::{Shared, advance_visible_reads};
+    use agent_pulse_tray::model::Event;
+    use std::collections::BTreeSet;
+
+    fn event(id: &str) -> Event {
+        Event {
+            event_id: id.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unread_default_expansion_and_latest_first_event() {
+        let history = vec![event("latest"), event("read"), event("unread")];
+        let unread = BTreeSet::from(["unread".to_string()]);
+        assert_eq!(
+            Shared::timeline_expansion_defaults(&history, &unread),
+            BTreeSet::from(["latest".to_string(), "unread".to_string()]),
+        );
+    }
+
+    #[test]
+    fn visible_unread_time_accumulates_only_for_reported_events() {
+        let unread = BTreeSet::from(["u".to_string()]);
+        let mut elapsed = std::collections::BTreeMap::new();
+        let mut requested = BTreeSet::new();
+        let tick = std::time::Duration::from_millis(1500);
+        assert!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                tick,
+            )
+            .is_empty()
+        );
+        assert!(
+            advance_visible_reads(BTreeSet::new(), &unread, &mut elapsed, &mut requested, tick,)
+                .is_empty()
+        );
+        assert_eq!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                tick,
+            ),
+            vec!["u".to_string()],
+        );
+        assert!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                std::time::Duration::from_secs(1),
+            )
+            .is_empty()
+        );
     }
 }

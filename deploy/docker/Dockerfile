@@ -23,6 +23,7 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build --chown=65532:65532 /data /data
 COPY --from=build /out/agent-pulse-hub /agent-pulse-hub
 COPY web/hub/dist/ /web/
+COPY deploy/docker/hub.default.yaml /etc/agent-pulse/hub.yaml
 USER 65532:65532
 WORKDIR /data
 ENTRYPOINT ["/agent-pulse-hub"]
