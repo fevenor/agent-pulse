@@ -23,6 +23,14 @@ Linux 服务端、管理页面、中继和适配包独立更新已实现。OpenC
 | 目标构建 | Linux amd64/arm64、Windows amd64 Go 程序及 Windows arm64 Bridge 可交叉编译；容器在 amd64 原生及 arm64 模拟运行通过；Windows amd64 原生构建和基础运行已通过，桌面特殊场景与 arm64 真机待验收 |
 | Tray | 0.5.0：原生图标、按悬浮状态分流通知、展开式时间线、中继发现、主机静默及任务唤醒；保留离线已读、会话管理和内置 Bridge；Hub 主机显示名对所有 Tray 统一生效；特殊桌面场景仍待验收 |
 
+## 2026-11-13 RC 草稿构建完成
+
+候选标签为 `v0.5.0-rc.1`，源码提交为 `671869593f737c4a5252432f768cc97d31555dc7`。该提交的 [Linux 检查与镜像发布](https://github.com/fevenor/agent-pulse/actions/runs/43419043050)和 [Windows 客户端检查与交付](https://github.com/fevenor/agent-pulse/actions/runs/43419043073)均成功。
+
+[RC 草稿工作流](https://github.com/fevenor/agent-pulse/actions/runs/43420937886)的标签核验、Linux、Windows 与草稿创建任务全部成功；已登录页面确认 [GitHub 草稿](https://github.com/fevenor/agent-pulse/releases/tag/untagged-53f630bc2b5ffe712fee)仍标记为 Draft，共 8 项资源（6 个上传附件及 2 个源码归档）。上传内容包含便携包、五包未签名仓库、Linux 发布工具、摘要、构建清单及试运行说明；没有正式签名仓库、替代公钥或私钥。Hub/Relay 的 RC 标签已发布，稳定 latest 未更新；Hub 基础镜像仍不等于完整签名 RC。
+
+本轮仅创建草稿，未转正；等待发布者人工运行数日后决定发布。源码标签保持指向已验证提交，本条结果作为文档记录，不重新构建或改变候选程序。真实模型、手机实收及已后置桌面场景不由工作流成功推断通过。
+
 ## 2026-11-13 Windows 草稿构建输出编码修复
 
 提交 `396f955` 的 Linux 工作流已成功；Windows 的构建、完整检查及演示配置均通过，打包阶段在 Hub 镜像准备检查的最后一行中文成功说明处触发 Python `cp1252` 的 `UnicodeEncodeError`。不是签名或钩子失败。Windows 工作流显式设置 Python UTF-8 模式及输出编码，保留原检查；修复后远端结果另记。
