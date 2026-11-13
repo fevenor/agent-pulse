@@ -1,5 +1,6 @@
 """验证真实 Hub/Relay 镜像的鉴权、持久队列、恢复与已读；仅创建临时资源。"""
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -42,13 +43,21 @@ def main():
     parser.add_argument("--arch", choices=["amd64", "arm64"], default="amd64")
     parser.add_argument("--hub-image", default="agent-pulse-hub:test-amd64")
     parser.add_argument("--relay-image", default="agent-pulse-relay:test-amd64")
+    parser.add_argument("--emulator-file", type=Path, help="显式只读挂载用户态模拟器，不注册主机内核处理器")
     args = parser.parse_args()
+    emulator = args.emulator_file.expanduser().resolve() if args.emulator_file else None
+    if emulator is not None and (not emulator.is_file() or not os.access(emulator, os.X_OK)):
+        parser.error("模拟器必须是现有可执行文件")
     name = "agent-pulse-e2e-" + secrets.token_hex(5)
     token = secrets.token_urlsafe(24)
     hub_port, relay_port = port(), port()
     hub_url, relay_url = f"http://127.0.0.1:{hub_port}", f"http://127.0.0.1:{relay_port}"
     containers, volumes = [], []
+    image_commands = {}
     evidence = {"architecture": args.arch, "host_architecture": platform.machine(), "checks": []}
+    if emulator is not None:
+        evidence["emulation"] = "显式用户态模拟，不修改主机配置"
+        evidence["emulator_sha256"] = hashlib.sha256(emulator.read_bytes()).hexdigest()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(base, path, body=None, auth=True):
@@ -81,6 +90,11 @@ def main():
                 assert info["Architecture"] == args.arch, "镜像架构不正确"
                 assert info["Config"]["User"] == "65532:65532", "镜像必须以非 root 用户运行"
                 evidence[component + "_image_id"] = info["Id"]
+                if emulator is not None:
+                    # 保留镜像原始程序及参数，只在进程启动边界加用户态模拟器。
+                    entrypoint = info["Config"].get("Entrypoint") or []
+                    assert entrypoint, "模拟运行需要镜像具有原始启动程序"
+                    image_commands[component] = entrypoint + (info["Config"].get("Cmd") or [])
                 volume = name + "-" + component
                 docker("volume", "create", volume)
                 volumes.append(volume)
@@ -88,11 +102,16 @@ def main():
             def start(component, image):
                 container = name + "-" + component
                 containers.append(container)
+                emulator_options, command = [], []
+                if emulator is not None:
+                    emulator_options = ["--mount", f"type=bind,source={emulator},target=/agent-pulse-qemu,readonly",
+                                        "--entrypoint", "/agent-pulse-qemu"]
+                    command = image_commands[component]
                 docker("run", "-d", "--name", container, "--platform", "linux/" + args.arch,
                        "--network", "host", "--env", "AGENT_PULSE_TEST_TOKEN",
                        "--mount", f"type=volume,source={container},target=/data",
                        "--mount", f"type=bind,source={root / (component + '.yaml')},target=/etc/agent-pulse/{component}.yaml,readonly",
-                       image)
+                       *emulator_options, image, *command)
 
             start("relay", args.relay_image)
             wait(lambda: request(relay_url, "/healthz")[0] == 200)

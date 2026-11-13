@@ -40,6 +40,7 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	write(t, filepath.Join(commandDir, "test-agent"), "#!/bin/sh\necho 'test-agent 1.2.3'\n")
 	var testExecutable []byte
 	entry := "adapter"
+	configStyle := "hooks"
 	if runtime.GOOS == "windows" {
 		exe, err := os.Executable()
 		if err != nil {
@@ -52,6 +53,7 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 		write(t, filepath.Join(commandDir, "test-agent.exe"), string(testExecutable))
 		t.Setenv("AGENT_PULSE_INSTALL_TEST_HELPER", "adapter")
 		entry = "adapter.exe"
+		configStyle = "process-hooks"
 	}
 	t.Setenv("PATH", commandDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	mux := http.NewServeMux()
@@ -63,11 +65,13 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	defer srv.Close()
 	build := func(v, body string) Package {
 		dir := filepath.Join(root, "source", v)
-		if runtime.GOOS == "windows" && !strings.Contains(body, "missing-interpreter") {
+		if runtime.GOOS == "windows" {
 			body = string(testExecutable)
 		}
 		write(t, filepath.Join(dir, entry), body)
-		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: entry, Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}})
+		// Windows 不同版本复用同一合法辅助程序，用普通数据文件区分包摘要。
+		write(t, filepath.Join(dir, "测试版本.txt"), v+"\n")
+		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: entry, Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: configStyle, Hooks: map[string]string{"Stop": ""}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +110,20 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	publish(2, p2)
 	if err := Sync(context.Background(), hosts[0], filepath.Join(root, "bridge.yaml")); err != nil {
 		t.Fatal(err)
+	}
+	installed, err := loadState(hosts[0].Adapters.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed.Installed["sample"].Package.SHA256 != p2.SHA256 || installed.Installed["sample"].Package.Version != p2.Version {
+		t.Fatalf("坏入口回滚测试未先安装目标版本：%+v", installed.Installed["sample"])
+	}
+	if runtime.GOOS == "windows" {
+		// 用缺失入口模拟无法启动，不把脚本文本伪装成 EXE 交给系统执行。
+		entryPath := filepath.Join(packageDir(hosts[0].Adapters.Directory, p2), p2.Entry)
+		if err := os.Remove(entryPath); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := Dispatch(context.Background(), hosts[0], "sample", "Stop", []byte(`{}`)); err == nil {
 		t.Fatal("损坏入口应失败")
@@ -180,6 +198,39 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	state, _ = loadState(c.Adapters.Directory)
 	if state.Installed["sample"].Package.Version != "1.0.0" || !strings.Contains(state.Installed["sample"].Error, "Bridge") {
 		t.Fatal("不兼容的通用运行能力应保留旧包并说明原因", state)
+	}
+	// 次版本变化继续安装，但警告不能冒充安装失败；补丁变化不再被硬锁。
+	minorPackage := build("1.2.0", "#!/bin/sh\nprintf '{}'\n")
+	minorPackage.AgentMin, minorPackage.AgentMax = "1.1.0", "1.1.0"
+	publish(6, minorPackage)
+	if err := Sync(context.Background(), c, "bridge.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	state, _ = loadState(c.Adapters.Directory)
+	report := ReportState(c, nil)
+	if state.Installed["sample"].Package.Version != minorPackage.Version || state.Installed["sample"].Error != "" || len(report.Items) != 1 || report.Items[0].Warning == "" {
+		t.Fatalf("次版本提示不应阻断安装：状态=%+v，报告=%+v", state, report)
+	}
+	patchPackage := build("1.3.0", "#!/bin/sh\nprintf '{}'\n")
+	patchPackage.AgentMin, patchPackage.AgentMax = "1.2.0", "1.2.0"
+	publish(7, patchPackage)
+	if err := Sync(context.Background(), c, "bridge.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	report = ReportState(c, nil)
+	if len(report.Items) != 1 || report.Items[0].Installed != patchPackage.Version || report.Items[0].Error != "" || report.Items[0].Warning != "" {
+		t.Fatalf("补丁变化应默认支持：%+v", report)
+	}
+	// 程序内容不变而版本元数据递增时仍须切换版本，不能因 ZIP 摘要相同而漏更新。
+	metadataPackage := patchPackage
+	metadataPackage.Version = "1.3.1"
+	publish(8, metadataPackage)
+	if err := Sync(context.Background(), c, "bridge.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	report = ReportState(c, nil)
+	if len(report.Items) != 1 || report.Items[0].Installed != metadataPackage.Version || report.Items[0].Error != "" {
+		t.Fatalf("相同内容的新包版本未更新：%+v", report)
 	}
 	rawIndex, _ := os.ReadFile(filepath.Join(repo, "index.json"))
 	var signed SignedIndex

@@ -53,6 +53,8 @@ try {
     assert.ok(index.packages.some((entry: { id: string; version: string }) => entry.id === manifest.id && entry.version === expectedVersion), "独立包已过期，请先运行 scripts/package-adapters.sh");
     execFileSync(join(root,"bin/agent-pulse-adapters"),["keygen","--private",join(temp,"publisher.key"),"--public",join(temp,"publisher.pub")]);
     execFileSync(join(root,"bin/agent-pulse-adapters"),["publish","--private",join(temp,"publisher.key"),"--repository",repository,"--index",join(repository,"index-input.json")]);
+    // 已签名测试仓库须随包提供公钥，让 Hub 按正式启动规则验证。
+    await cp(join(temp,"publisher.pub"),join(repository,"publisher.pub"));
   }
   await writeFile(join(temp, "hub.yaml"), `listen: "127.0.0.1:${hubPort}"\ndatabase: "${temp}/hub.db"\npush: []\nadapter_directory: "${repository}"\n`);
   await writeFile(join(temp, "bridge.yaml"), `listen: "127.0.0.1:${bridgePort}"\nsource_id: "smoke-linux"\nhub_url: "${hubURL}"\n`);

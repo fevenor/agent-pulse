@@ -8,6 +8,25 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+
+
+def rename_prepared_directory(staging: Path, output: Path):
+    """同一输出父目录内原子改名；Windows 短时占用最多等待 1.5 秒，不覆盖已有目标。"""
+    staging, output = staging.resolve(), output.resolve()
+    if staging.parent != output.parent:
+        raise ValueError("发布暂存目录与输出必须位于同一父目录")
+    for attempt in range(5):
+        if output.exists():
+            raise ValueError("输出目录已存在，不覆盖已有发布产物")
+        try:
+            os.rename(staging, output)
+            return
+        except PermissionError as error:
+            # 只对 Windows 的访问/共享占用错误短时重试；其余错误及耗尽后保留原异常。
+            if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 4:
+                raise
+            time.sleep(0.1 * (2 ** attempt))
 
 
 def prepare(repository: Path, public_key: Path, base_image: str, output: Path, tool: Path):

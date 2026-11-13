@@ -144,3 +144,72 @@ func TestSetupRejectsInvalidHubBeforeWriting(t *testing.T) {
 		}
 	}
 }
+
+// 不调用真实宿主，直接验证 Windows 与 Linux 的默认来源边界。
+func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
+	for _, tc := range []struct {
+		platform string
+		want     []string
+	}{
+		{"windows", []string{"zcode"}},
+		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode"}},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			home := t.TempDir()
+			items := setupAgentCatalog(home, tc.platform)
+			if len(items) != len(tc.want) {
+				t.Fatalf("默认来源数量错误：%+v", items)
+			}
+			for i, id := range tc.want {
+				if items[i].ID != id {
+					t.Fatalf("默认来源顺序或范围错误：%+v", items)
+				}
+				relative, err := filepath.Rel(home, items[i].ConfigPath)
+				if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+					t.Fatalf("默认配置超出测试用户目录：%q", items[i].ConfigPath)
+				}
+			}
+		})
+	}
+}
+
+// 收敛默认来源不删除用户既有的其他 managed 登记或宿主配置。
+func TestSetupScopeChangePreservesOtherManagedEntries(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "bridge.yaml")
+	expected := map[string]string{
+		"codex":       filepath.Join(root, "old-codex.json"),
+		"antigravity": filepath.Join(root, "existing-agy.json"),
+		"qoderclicn":  filepath.Join(root, "existing-qoder.json"),
+		"opencode":    filepath.Join(root, "existing-opencode.json"),
+	}
+	raw, err := yaml.Marshal(map[string]any{"source_id": "scope-test", "host_name": "测试主机", "hub_url": "http://hub.example.invalid:18700", "adapters": map[string]any{"directory": filepath.Join(root, "adapters"), "managed": expected}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadOrCreateSetupConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected["codex"] = filepath.Join(root, "new-codex.json")
+	c.Adapters.Managed["codex"] = expected["codex"]
+	if err = writeSetupConfig(path, c, map[string]bool{"codex": true}, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := config.ParseBridge(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range expected {
+		if result.Adapters.Managed[id] != want {
+			t.Fatalf("其他来源登记被清除或改写：来源=%s，收到=%q", id, result.Adapters.Managed[id])
+		}
+	}
+}

@@ -76,6 +76,8 @@ def serve(directory, target):
                     "--public", str(directory / "publisher.pub")], check=True)
     subprocess.run([str(tool), "publish", "--repository", str(repository), "--private",
                     str(directory / "publisher.key"), "--index", str(repository / "input.json")], check=True)
+    # 测试仓库必须包含签名对应的公钥；不使用正式发布私钥。
+    shutil.copy2(directory / "publisher.pub", repository / "publisher.pub")
     hub_port, bridge_port = port(), port()
     base = f"http://127.0.0.1:{hub_port}"
     write(directory / "hub.json", {"listen": f"127.0.0.1:{hub_port}",

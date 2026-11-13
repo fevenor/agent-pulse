@@ -601,6 +601,8 @@ fn run() -> Result<(), String> {
                                     Err(e) => data.startup_message = e,
                                 }
                                 drop(data);
+                                // 快捷偏好同时显示在详情和设置，不能等待下一次心跳才重绘。
+                                notify(detail, cx);
                                 notify(settings_window, cx);
                             }
                             Command::ToggleFloat => {

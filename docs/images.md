@@ -4,6 +4,8 @@
 
 [GitHub Workflow](../.github/workflows/images.yml) 负责 Hub 与 Relay 的检查和基础镜像构建。PR、main/master 推送、`v*` 标签和手动触发均执行检查；仅推送事件在检查通过后发布至 GHCR。Relay 是直接可部署镜像；Hub 自动构建标签为 `hub-base`，它包含默认运行配置和网页，但尚无 RC 对应的签名适配仓库，不能当作普通用户发布镜像。正式 Hub RC 由发布者在本地签名后，使用本页的准备脚本附加仓库并推送版本标签。手动触发只验证，不发布。
 
+发布前用于集中验证的完整版本称为**预发布候选版本（RC）**。发布编译器与 Go 标准库固定为 Go 1.27.4，`go/go.mod` 的 Go 1.25.0 仅保留源码语言兼容底线；`golang.org/x/sys` 使用最小修复版本 0.44.0。固定版本不能代替真实二进制构建信息核验，也不表示既有远端镜像已经更新。
+
 ## 构建与标签
 
 流程先运行 Go 竞态/静态检查、OpenCode 类型与映射测试、Vue 生产构建，再构建 `linux/amd64`、`linux/arm64` 的 Hub/Relay。两种架构均启动真实容器，验证鉴权、离线队列、崩溃恢复、反向通道、页面和已读；arm64 使用 QEMU 模拟。镜像使用非 root 用户，SQLite 存在独立数据卷。
@@ -13,7 +15,13 @@
 - `ghcr.io/fevenor/agent-pulse/hub-base:sha-<完整提交哈希>`
 - `ghcr.io/fevenor/agent-pulse/relay:sha-<完整提交哈希>`
 
-默认分支另发布 `hub-base:latest` 和 `relay:latest`；`v*` 标签另发布基础 Hub 与 Relay 同名版本。只有完成本地签名与镜像附加步骤后，发布者才将完整 Hub 镜像标记为普通用户使用的 `hub:<RC版本>`。部署固定完整 RC 标签，不能使用 `hub-base`。
+默认分支仅发布提交 SHA 标签，不在试运行前更新稳定 `latest`；版本标签发布基础 Hub 与 Relay 的同名版本。只有完成本地签名与镜像附加步骤后，发布者才将完整 Hub 镜像标记为普通用户使用的 `hub:<RC版本>`。部署固定完整 RC 标签，不能使用 `hub-base`。
+
+## RC 试运行草稿
+
+推送 `v<工程版本>-rc.<序号>` 标签触发 `release-draft.yml`，复用同一提交的 Linux 与 Windows 工作流；只有两类检查及产物构建均成功才创建 GitHub Release 草稿。草稿保持预发布标记，不自动转正、不更新稳定镜像别名。已被人工发布或改为其他状态的 Release 不由重跑覆盖。
+
+草稿附 Windows 单入口便携包、五包未签名仓库、Linux 发布工具、构建清单、摘要和中文试运行说明。私有配置和发布私钥不进入 CI 或附件；没有长期密钥时不生成替代公钥，不把基础 Hub 镜像冒充完整签名 RC。发布者可沿用现有 Hub/已签名仓库试运行客户端，或在 Linux 本机使用已有长期密钥签名，再按下文准备完整 Hub 镜像。草稿仅发布固定 SHA/RC 标签，人工运行数日后的发布与稳定版本推广由发布者单独决定。
 
 ## 准备普通用户 Hub RC 镜像
 
@@ -41,6 +49,8 @@ docker buildx build --platform linux/amd64,linux/arm64 --push \
   --tag ghcr.io/fevenor/agent-pulse/hub:rc版本 ./dist/hub-release
 ```
 
+正式发布采用 Linux 发布机流程。Windows 辅助目录准备在完整仓库上仍有原子改名拒绝访问的已知验证边界，不能用小仓库测试推断稳定；当前结果见[开发记录](development-status.md)。
+
 脚本使用 Bridge 同一验签工具核对索引签名、包摘要与大小，将 `publisher.pub` 和索引引用的不可变包复制到新的构建目录，拒绝损坏仓库和已存在的输出目录。它不读取私钥、不签名、不构建或推送镜像；最终 `docker buildx` 步骤需发布者显式执行。完整镜像包含默认 Hub 配置、网页和 `/repository`，Hub 自动读取随仓库提供的 `publisher.pub`；显式 `adapter_public_key` 仍优先。普通用户部署已签名 RC 时无需挂载仓库或配置公钥。
 
 使用仓库自带 `GITHUB_TOKEN` 的 packages 写权限，无需额外保存镜像仓库密码。私有镜像拉取需部署主机已有 GHCR 读取授权；公开镜像可匿名拉取。第一次远端运行仍需检查仓库 Actions 权限与镜像可见性。本地构建通过不代表 GitHub 上已执行或已发布。
@@ -63,7 +73,20 @@ for arch in amd64 arm64; do
 done
 ```
 
-构建阶段由本机 Go 交叉编译，不要求 QEMU；在 amd64 上运行 arm64 容器则需要主机已注册 QEMU。Workflow 通过 Docker 官方 Action 准备模拟器。本地脚本不修改主机模拟器配置，缺少时会明确测试失败。构建不会调用真实 Agent 模型或手机渠道。
+构建阶段由本机 Go 交叉编译，不要求 QEMU；在 amd64 上运行 arm64 容器需要主机已有模拟器，或显式提供下文的用户态模拟器。Workflow 通过 Docker 官方 Action 准备模拟器。本地测试不修改主机模拟器配置；不提供模拟器时不能把 arm64 构建通过当成运行通过。构建不会调用真实 Agent 模型或手机渠道。
+
+### 不注册内核处理器的模拟运行
+
+`--emulator-file` 接收已校验来源、可执行且与 Docker 主机 CPU 架构匹配的静态 QEMU 文件。可将官方软件包下载到私有验证目录，核对大小与摘要后仅解包，不安装系统包。测试只读挂载该文件，在容器启动边界保留镜像原始程序和参数；非 root 用户、鉴权、持久队列、崩溃恢复与已读断言不变。它不注册内核二进制格式处理器（binfmt），也不需要特权安装容器。
+
+```sh
+uv run --offline --no-project python tests/e2e/relay_containers.py \
+  --arch arm64 --hub-image agent-pulse-hub:test-arm64 \
+  --relay-image agent-pulse-relay:test-arm64 \
+  --emulator-file /验证目录/qemu-aarch64
+```
+
+文件路径须能被 Docker 主机读取。未指定该参数时仍使用镜像默认启动方式；显式模拟运行通过只证明同一 ARM 二进制在该模拟条件下工作，不代表 ARM 真机验收。
 
 ## 部署 Relay 已发布镜像
 

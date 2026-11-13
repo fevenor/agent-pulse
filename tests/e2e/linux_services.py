@@ -64,6 +64,8 @@ try:
     shutil.copytree(project / "dist/repository", repo)
     run([binary / "agent-pulse-adapters", "keygen", "--private", root / "publisher.key", "--public", root / "publisher.pub"])
     run([binary / "agent-pulse-adapters", "publish", "--repository", repo, "--private", root / "publisher.key", "--index", repo / "index-input.json"])
+    # 公钥随测试仓库提供，不降低 Hub 的启动校验。
+    shutil.copy2(root / "publisher.pub", repo / "publisher.pub")
     (root / "hub.yaml").write_text(f'''listen: "127.0.0.1:{hub_port}"
 database: "{root}/hub.db"
 adapter_directory: "{repo}"

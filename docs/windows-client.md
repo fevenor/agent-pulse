@@ -78,6 +78,10 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 - 锁屏、全屏及桌面状态未知时抑制卡片，桌面状态按周期读取；睡眠唤醒、远程桌面和真实全屏体验仍需原生验收。
 - 缓存损坏保留原文件并报错，不自动清空未确认的已读。状态文件含提醒正文，应放在当前用户可控制的本地目录。
 
+## Windows 接入范围
+
+本轮 RC 的 Windows 本机来源只纳入 ZCode 图形界面；Windows Codex CLI 与 ChatGPT Windows 桌面端均后置。其他产品的现有 CLI/插件接入保持在 Linux/WSL，不要求它们在 Windows 原生终端运行。后续 Windows 支持优先核实图形界面产品的官方入口，不预先建设通用桌面采集平台。默认向导仅检测 ZCode，已有其他来源配置不会因范围收敛自动删除。
+
 ## Windows 窗口手工验收要点
 
 可先启动下文构建的 `--demo` 演示版。演示版不连接服务、不读取或写入正式状态，可检查托盘菜单、会话列表、详情、长消息滚动和窗口大小。需检查主机同步、静默/唤醒和通知时，使用隔离 Hub 与合成事件；不要使用真实会话正文做截图或提交测试材料。
@@ -92,6 +96,10 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 8. **悬浮图标**：检查开关、置顶、拖到屏幕边缘、收起后露出、鼠标移开后再次收起；托盘菜单关闭后应即时隐藏。多屏或 DPI 变化仅在条件具备时测试，否则记为未验收。
 9. **主机管理**：在 Hub 修改显示名，确认各 Tray 都更新；归档后 Tray 隐藏会话，Hub 仍可查看历史；Bridge 重连解除归档。永久删除仅使用测试主机，并检查旧指纹无法重新登记。
 10. **本机 Agent 配置入口**：只在隔离/可恢复的 Agent 配置上检查向导。确认它只列出已检测或先前由本 Bridge 管理的 Agent，逐项提供启用/禁用/跳过选项，并在报告中列出实际修改的文件；报告应等待按 Enter 后关闭。
+
+第 6 项主机快捷偏好可使用**本机隔离 Hub、正式 Tray 及内置 Bridge**验证，不必等待远端部署。合成事件仅用于控制状态和提醒分支，不能替代真实宿主或手机实收。偏好保存后详情与设置均重绘；重启验收必须复用同一隔离配置和状态目录。
+
+详情快捷偏好、任务唤醒与正常退出、通知分流、悬浮入口四类剩余检查不作为本轮 RC 发布阻断，发布后结合长期运行补验。后置不表示已经验收通过，发现问题保留具体现象与适用边界。
 
 按编号记录“通过 / 失败 / 未验收”。失败时只记脱敏后的现象，不提供会话正文、主机指纹或真实服务地址。
 
@@ -125,8 +133,8 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ## Windows 适配包
 
-`scripts/package-adapters.ps1` 生成 `dist/repository-windows/` 的 Windows amd64 命令包、通用 OpenCode 包和未签名索引。发布者仍需签名后分发。Codex、Qoder、Antigravity 包最低 Bridge 0.3.0，OpenCode 0.3.0 包最低 Bridge 0.4.0；ZCode 0.1.0 包需要 Bridge 0.5.0（Tray 0.5.0 已内置）。发布含 ZCode 的索引前，所有消费该索引的 Bridge 均须升级到 0.5.0，旧版不识别新增的进程钩子配置格式。先更新 Hub/Relay，再更新 Bridge/Tray，最后发布新索引。
+`scripts/package-adapters.ps1` 生成 `dist/repository-windows/` 的 ZCode 一个 Windows amd64 原生包及未签名索引；OpenCode 通用包由 Linux 构建，不代表本轮支持 Windows OpenCode 宿主。发布者仍需签名后分发。ZCode 0.1.x 包需要 Bridge 0.5.0（Tray 0.5.0 已内置）。发布含 ZCode 的索引前，所有消费该索引的 Bridge 均须升级到 0.5.0，旧版不识别新增的进程钩子配置格式。先更新 Hub/Relay，再更新 Bridge/Tray，最后发布新索引。
 
-安装器使用系统锁、临时文件同步替换与不可变包目录，保留用户其他配置，更新不覆盖正在执行的包。ZCode 3.17.2 已通过无项目任务、GLM-5.3-Flash 与内置 Bridge 的实际链路测试，接入方法及异常退出限制见 [适配器说明](adapters.md)。真实 Codex、Qoder、Antigravity 和 OpenCode 的 Windows 宿主加载与 hook 信任仍需逐一验收，构建成功不等于日常 Agent 已接入。
+安装器使用系统锁、临时文件同步替换与不可变包目录，保留用户其他配置，更新不覆盖正在执行的包。ZCode 3.17.2 已通过无项目任务、GLM-5.3-Flash 与内置 Bridge 的实际链路测试，接入方法及异常退出限制见 [适配器说明](adapters.md)。Windows Codex CLI 和 ChatGPT Windows 桌面端不属于本轮 RC，后续规划单独核实能力；Qoder、Antigravity、OpenCode 的 Windows 终端接入不在当前范围，通用转换测试存在不等于承诺这些宿主已经接入。
 
 交互规则见源码文档 `docs/windows-desktop-design.md`；自动检查、原生验收摘要及待验收项见 `docs/development-status.md`。设计预览和自动化测试不能代替真实桌面的视觉、多屏、焦点与长期使用验收。

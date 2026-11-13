@@ -22,7 +22,7 @@ try {
             $devOutput = Join-Path $projectRoot 'bin/dev'
             New-Item -ItemType Directory -Force $devOutput | Out-Null
             Invoke-Checked go @('build','-trimpath','-buildvcs=false','-o', "$devOutput/", './cmd/agent-pulse-hub','./cmd/agent-pulse-relay','./cmd/agent-pulse-bridge','./cmd/agent-pulse-client','./cmd/agent-pulse-adapters','./cmd/agent-pulse-push-test')
-            foreach ($adapter in @('codex','antigravity','qoderclicn','zcode')) {
+            foreach ($adapter in @('zcode')) {
                 Invoke-Checked go @('build','-trimpath','-buildvcs=false','-ldflags',"-s -w -X main.adapterID=$adapter",'-o',(Join-Path $devOutput "agent-pulse-adapter-$adapter.exe"),'./cmd/agent-pulse-adapter')
             }
         }

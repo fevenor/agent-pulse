@@ -1,0 +1,63 @@
+name: 构建 RC 试运行草稿
+
+on:
+  push:
+    tags: ['v*-rc.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+concurrency:
+  group: rc-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 核对候选标签
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          [[ "$REF_TYPE" == tag && "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || { echo "只能从 RC 标签生成试运行草稿" >&2; exit 1; }
+  linux:
+    needs: validate
+    uses: ./.github/workflows/images.yml
+  windows:
+    needs: validate
+    uses: ./.github/workflows/windows.yml
+  draft:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: 合并候选产物并创建草稿
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOTOOLCHAIN: local
+          GOPROXY: https://proxy.golang.org
+        run: |
+          uv run --offline --no-project python scripts/test_rc_draft.py
+          uv run --offline --no-project python scripts/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft
+      - uses: actions/upload-artifact@v7
+        with:
+          name: RC 草稿发布结果
+          path: dist/rc-draft/release-result.json
+          if-no-files-found: error
+          retention-days: 14

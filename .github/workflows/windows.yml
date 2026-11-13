@@ -4,8 +4,9 @@ on:
   pull_request:
   push:
     branches: [main, master]
-    tags: ['v*']
+    tags: ['v*', '!v*-rc.*']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -20,6 +21,8 @@ jobs:
     timeout-minutes: 60
     env:
       VOLTA_FEATURE_PNPM: '1'
+      GOTOOLCHAIN: 'local'
+      GOPROXY: 'https://proxy.golang.org'
       CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +30,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
+          go-version: '1.27.4'
           cache-dependency-path: go/go.sum
       - uses: volta-cli/action@v4
         with:
@@ -81,7 +84,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package-adapters.ps1 -NativeOnly
-          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==4; assert {x['id'] for x in p}=={'codex','antigravity','qoderclicn','zcode'}; assert all(x['platform']=='windows/amd64' for x in p)"
+          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==1; assert {x['id'] for x in p}=={'zcode'}; assert all(x['platform']=='windows/amd64' for x in p)"
           if ($LASTEXITCODE -ne 0) { throw 'Windows 命令适配包清单检查失败' }
           uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
           if ($LASTEXITCODE -ne 0) { throw 'Hub 镜像准备流程测试失败' }

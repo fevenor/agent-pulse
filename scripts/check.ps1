@@ -10,7 +10,12 @@ function Invoke-Checked {
 }
 $previousToolchain = $env:GOTOOLCHAIN
 $previousPnpm = $env:VOLTA_FEATURE_PNPM
+$previousConsoleEncoding = [Console]::OutputEncoding
+$previousOutputEncoding = $OutputEncoding
 try {
+    # Rust 诊断使用 UTF-8；暂时统一当前进程编码，避免中文系统代码页误解码隔离断言。
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    $OutputEncoding = [Console]::OutputEncoding
     $env:GOTOOLCHAIN = 'local'
     Invoke-Checked go @('version')
     Push-Location (Join-Path $projectRoot 'go')
@@ -54,6 +59,8 @@ try {
         } finally { Pop-Location }
     }
 } finally {
+    [Console]::OutputEncoding = $previousConsoleEncoding
+    $OutputEncoding = $previousOutputEncoding
     $env:GOTOOLCHAIN = $previousToolchain
     $env:VOLTA_FEATURE_PNPM = $previousPnpm
 }

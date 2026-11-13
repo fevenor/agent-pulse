@@ -221,22 +221,22 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	return nil
 }
 
-func scanSetupAgents(ctx context.Context) []setupAgent {
-	home, _ := os.UserHomeDir()
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		appData = filepath.Join(home, "AppData", "Roaming")
+// 按当前平台的确认范围列出来源，避免 Windows 扫描无计划的终端产品。
+func setupAgentCatalog(home, platform string) []setupAgent {
+	if platform == "windows" {
+		return []setupAgent{{ID: "zcode", Name: "ZCode", Command: "ZCode.exe", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "ZCode.exe"}}}
 	}
-	items := []setupAgent{
-		{ID: "codex", Name: "Codex", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
+	return []setupAgent{
+		{ID: "codex", Name: "Codex CLI", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
 		{ID: "antigravity", Name: "Antigravity CLI", Command: "agy", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "agy"}},
 		{ID: "qoderclicn", Name: "Qoder 中国版 CLI", Command: "qoderclicn", ConfigPath: filepath.Join(home, ".qoder-cn", "settings.json"), Manifest: Manifest{ID: "qoderclicn", Command: "qoderclicn"}},
 		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: filepath.Join(home, ".config", "opencode", "opencode.json"), Manifest: Manifest{ID: "opencode", Command: "opencode"}},
 	}
-	if runtime.GOOS == "windows" {
-		items[3].ConfigPath = filepath.Join(appData, "opencode", "opencode.json")
-		items = append(items, setupAgent{ID: "zcode", Name: "ZCode", Command: "ZCode.exe", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "ZCode.exe"}})
-	}
+}
+
+func scanSetupAgents(ctx context.Context) []setupAgent {
+	home, _ := os.UserHomeDir()
+	items := setupAgentCatalog(home, runtime.GOOS)
 	for i := range items {
 		version, err := Detect(ctx, items[i].Manifest)
 		if err == nil {

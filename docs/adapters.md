@@ -1,6 +1,6 @@
 # 来源接入与独立适配包
 
-适配器负责产品事件到统一协议的转换。Bridge 只负责本地入口、转发和适配包安装，不链接产品转换代码。当前 Linux 接入覆盖 OpenCode、Codex、Antigravity CLI（`agy`）和 Qoder 中国版 CLI（`qoderclicn`）；宿主版本以各目录的 `manifest.json` 为准。Windows 增加 ZCode 3.17.2 的原生进程钩子；只支持已验证的 Windows amd64 桌面版与主会话生命周期。RC 命令适配包范围为 Linux amd64 和 Windows amd64；Hub 镜像支持 Linux arm64 不代表该平台的 Agent 命令适配包可用。OpenCode 插件为通用 JavaScript 包。
+适配器负责产品事件到统一协议的转换。Bridge 只负责本地入口、转发和适配包安装，不链接产品转换代码。Linux 接入覆盖 OpenCode、Codex、Antigravity CLI（`agy`）和 Qoder 中国版 CLI（`qoderclicn`）；本轮 Windows RC 仅覆盖 ZCode 图形界面；Windows Codex CLI 和 ChatGPT Windows 桌面端是后续规划，不纳入当前包与默认配置入口。其他 Windows 终端 Agent 不在本轮范围。后续 Windows 产品优先调研图形界面的官方接入能力。已验宿主版本、事件和限制见下文及开发记录。RC 原生适配包范围为 Linux amd64 和 Windows amd64；Hub 的 Linux arm64 镜像不代表该平台的 Agent 包可用。OpenCode 为通用 JavaScript 包，但本轮宿主支持范围在 Linux。
 
 ## 支持边界
 
@@ -18,6 +18,10 @@ Hook 只返回被动响应，不修改批准决定、注入提示词或要求 Ag
 
 产品配置参考：[Codex hooks](https://developers.openai.com/codex/hooks)、[Qoder hooks](https://docs.qoder.com/cli/hooks)、[Antigravity hooks](https://antigravity.google/docs/hooks)。实际验证证据见 [开发记录](development-status.md)，不以在线文档代替本机版本验证。
 
+## 宿主版本政策
+
+`x.y.z` 分别表示主、次、补丁版本。同一已验 `x.y` 下补丁变化默认支持；同一主版本内次版本变化允许继续使用但不承诺兼容；主版本变化需重新测试后纳入支持，不要求每个补丁版本重复验收。该政策与已验版本证据分开记录。Bridge 按清单 `agent_min`/`agent_max` 的主次版本线选择：补丁差异不阻断，同主版本内超出已验次版本线仍安装并报告警告，主版本超出声明则拒绝。Hub 将警告与安装失败分开显示；签名、协议、平台和最低 Bridge 版本要求保持原校验，不因宿主政策放宽。
+
 ## 发布者：构建与签名
 
 发布私钥只留在发布者机器；签名发布仓库包含 `index.json`、`packages/` 和公开的 `publisher.pub`，不能包含私钥或未签名 `index-input.json`。以下操作在本地生成文件，不提交 Git，也不自动推送到服务器。
@@ -29,15 +33,15 @@ bash scripts/package-adapters.sh ./dist/repository 1
 ./bin/agent-pulse-adapters publish --repository ./dist/repository --private /安全目录/publisher.key --index ./dist/repository/index-input.json
 ```
 
-`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 命令包，要求 Bridge 0.3.0 或更新兼容版本。OpenCode 0.3.0 包增加可选原生会话标题，最低 Bridge 0.4.0；先更新 Hub/Relay，再更新 Bridge 与插件，避免旧服务严格校验拒绝新字段。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
+`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 命令包，要求 Bridge 0.3.0 或更新兼容版本。OpenCode 0.3.x 包提供可选原生会话标题，最低 Bridge 0.4.0；先更新 Hub/Relay，再更新 Bridge 与插件，避免旧服务严格校验拒绝新字段。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
 
-ZCode 0.1.0 使用 `process-hooks` 配置格式，最低 Bridge 0.5.0。**在公用索引加入 ZCode 前，先将读取该索引的所有 Bridge（含 Linux）升级到 0.5.0**；旧版会拒绝不认识的配置格式，不能只靠平台过滤避免此问题。已有安装不会因新索引失败而删除。
+ZCode 0.1.x 使用 `process-hooks` 配置格式，最低 Bridge 0.5.0。**在公用索引加入 ZCode 前，先将读取该索引的所有 Bridge（含 Linux）升级到 0.5.0**；旧版会拒绝不认识的配置格式，不能只靠平台过滤避免此问题。已有安装不会因新索引失败而删除。
 
 每次发布递增 `sequence`。`packages` 是本次可用的版本集合，同一来源默认选择当前平台的最高兼容版本。集中回滚时，在新的更高序号索引里为该来源选择已有旧包，不复用旧序号。保留多个版本可供单机 `pins` 固定使用。相同版本不得更改内容，修改必须发布新版本。
 
 同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
 
-Windows 侧先执行 `./scripts/package-adapters.ps1 -NativeOnly`，只生成四个 Windows 命令包（Codex、Qoder、Antigravity、ZCode）；通用 OpenCode 包统一采用 Linux 仓库中的一次构建。Windows Workflow 默认如此打包，Linux 镜像 Workflow 同时提供 `linux-adapters` 产物。普通 Windows 本机构建不加该参数时，仍可生成完整的单平台仓库。
+Windows 侧执行 `./scripts/package-adapters.ps1`，只生成 ZCode 一个 Windows 原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。通用 OpenCode 包统一采用 Linux 仓库中的一次构建，当前支持 Linux 宿主。Windows Workflow 按相同单包清单验收，Linux Workflow 仍提供原有 Linux 来源及通用插件。
 
 ```sh
 uv run --offline --no-project python scripts/merge_adapter_repositories.py \
@@ -85,7 +89,7 @@ Codex 和 qoderclicn 的宿主信任提示由用户在宿主中确认，安装�
 
 ## ZCode 桌面接入
 
-支持 Windows amd64 的 ZCode 3.17.2。安装器从默认用户/系统安装位置或 PATH 定位 `ZCode.exe`，读取文件版本资源，避免为了探测版本启动桌面程序；非默认安装位置需将可执行文件所在目录加入 PATH。其他版本须核对事件结构后更新兼容范围，不自动视为已支持。
+ZCode 已实测基线为 Windows amd64 的 3.17.2，主/次/补丁版本政策见上文。安装器从默认用户/系统安装位置或 PATH 定位 `ZCode.exe`，读取文件版本资源，避免为了探测版本启动桌面程序；非默认安装位置需将可执行文件所在目录加入 PATH。同一版本线的兼容承诺不表示每个补丁均有实测证据；已知事件结构不兼容情况需单列。
 
 Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 `zcode`，值为本机 `%USERPROFILE%/.zcode/cli/config.json` 的实际绝对路径；保留原有公钥、包目录及其他来源。不要把示例百分号变量直接写入 YAML 期待自动展开。经签名的 Windows ZCode 包安装后，设置页“钩子”可看到 AgentPulse 管理的三个事件。
 

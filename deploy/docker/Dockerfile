@@ -1,5 +1,7 @@
 # 仓库根目录为构建上下文；Web 先由 pnpm 构建到 web/hub/dist。
-FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm AS build
+ENV GOTOOLCHAIN=local \
+    GOPROXY=https://proxy.golang.org
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src/go

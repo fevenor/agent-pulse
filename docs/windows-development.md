@@ -6,7 +6,7 @@ Windows 主工作副本使用本地 NTFS 目录、原生 PowerShell 和 Windows 
 
 | 用途 | 准备要求 |
 | --- | --- |
-| Go 服务与 Bridge | Go 1.25 或更新兼容版本；最低版本以 `go/go.mod` 为准；脚本使用 `GOTOOLCHAIN=local` |
+| Go 服务与 Bridge | 源码语言兼容底线仍为 Go 1.25.0；自动发布构建与本轮验收固定 Go 1.27.4；脚本使用 `GOTOOLCHAIN=local`，不自动下载编译器 |
 | 原生桌面 | Rustup，`tray/rust-toolchain.toml` 指定的工具链、MSVC 目标和组件；依赖以 `Cargo.lock` 为准 |
 | C++ 链接 | Visual Studio Build Tools 的 C++ 桌面开发、MSVC x64/x86、Windows SDK；PowerShell 脚本通过 vswhere 定位安装目录 |
 | Web / OpenCode | Volta 管理 Node.js 24.14.1、pnpm 10.33.2，版本由各 `package.json` 声明；只用 pnpm |
@@ -51,9 +51,21 @@ try { cargo clippy --release --locked --all-targets -- -D warnings } finally { P
 
 Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 Windows 竞态检测要求兼容的 mingw-w64 C 编译器，MSVC 不能直接替代；当前继续由 Linux 执行竞态检查。官方要求见 [Go 竞态检测](https://go.dev/doc/articles/race_detector#Requirements)。
 
+## Windows 钩子链路与适用范围
+
+本轮 Windows RC 只支持 ZCode 原生进程钩子：程序路径和参数数组分开传入，版本探测直接读取 EXE 资源，两者不经过 PowerShell。Windows Codex CLI 和 ChatGPT Windows 桌面端只列后续规划，不默认扫描、不构建或发布其包；旧登记保留但不重新探测或更新命令型/插件型来源。
+
+旧命令字符串回显和批处理版本探测曾执行编码 PowerShell，现已随非本轮功能移出当前执行回归。保留的命令构造/所有权纯测试只用于旧配置识别，不启动脚本。旧超时与防护反馈不改写为已解决，也不作为 ZCode 已有正常生命周期的失败证据；后续恢复对应来源时需重新设计并验收其真实链路，不恢复隔离文件或关闭防护。
+
+原生参数与标准输入测试从实际 ZCode 配置生成入口取得 command/args，直接调用合法测试 EXE，核对 7 个参数及中文/emoji、前导空白、CRLF 输入字节。同步器回归同时确认后置来源既有配置不改写、没有安装状态重建。测试不调用在线模型，不代替真实宿主事件或手机实收。
+
+源码语言底线不是发布标准库版本。若使用解压的局部 Go SDK，当前进程的 `GOROOT`、`PATH` 和 `GOTOOLDIR` 必须对应同一套 Go 1.27.4，不只替换 `go.exe` 而保留旧 `GOROOT`，也不必修改系统 Go 或全局配置。原生参数数组启动工具时应显式继承已有 `CARGO_HOME`、`RUSTUP_HOME` 和 `VOLTA_HOME`；可在验证进程设置 `RUSTUP_AUTO_INSTALL=0`，避免工具 shim 落入另一套默认缓存后自动下载。
+
+保持唤醒验收结束后退出自建 Tray 并清理自建服务；系统执行状态是所有请求的汇总，不提供逐进程归属。若其他程序同时有请求，不能用汇总值替代当前 Tray 的单独释放证明，也不覆盖其他应用的请求来制造“清零”。
+
 ## 自动构建
 
-`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和四个未签名 Windows 命令适配包（含 ZCode），保留 14 天；通用 OpenCode 包从 Linux Workflow 的 `linux-adapters` 产物取得，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
+`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和 ZCode 一个未签名 Windows 原生适配包，保留 14 天；Linux 来源及通用 OpenCode 插件保持由 Linux Workflow 构建，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。OpenCode 通用包不代表本轮支持 Windows 宿主。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
 
 ## Debian 与容器
 
@@ -98,6 +110,8 @@ uv run --offline --no-project python tests/e2e/windows_wsl.py
 
 继续沿用 Rust + GPUI，不因一次构建或网络故障切换框架。只有出现无法合理解决的关键桌面行为或维护障碍时，按已确认方案评估 Go + Walk。Bridge 保持 Go，不提前重写其他组件。
 
-桌面实测仍需覆盖：锁屏/解锁、睡眠唤醒、真实全屏、卡片外观、托盘点击/菜单、多显示器/DPI、远程桌面和长期运行。当前状态轮询的延迟、失联期间卡片行为需与实际使用体验一起验收。宿主方面逐个验证 Windows 原生 Agent 版本、加载与 hook 信任；不自动改写日常配置或调用真实模型、手机渠道。
+桌面实测仍需覆盖：锁屏/解锁、睡眠唤醒、真实全屏、卡片外观、托盘点击/菜单、多显示器/DPI、远程桌面和长期运行。当前状态轮询的延迟、失联期间卡片行为需与实际使用体验一起验收。宿主方面只验证本轮 ZCode 图形界面的实际加载；Windows Codex CLI 后置；不自动改写日常配置或调用真实模型、手机渠道。
+
+详情快捷偏好、唤醒退出、通知分流及悬浮入口的剩余原生检查在 RC 发布后长期运行中补验，不作本轮发布阻断，不能因此改写已有未验收结论。
 
 发布构建使用 `scripts/package-windows.ps1`；包只用于可解压运行，不隐式注册自启动或部署公网服务。自动化测试与原生验收分别记录。Git 读操作设置 `GIT_OPTIONAL_LOCKS=0`；暂存、提交、推送和其他 Git 写操作继续按用户单独授权范围执行。

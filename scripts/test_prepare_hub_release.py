@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from urllib.error import URLError
+from unittest.mock import patch
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -59,6 +60,47 @@ def docker_smoke(image, expected_key):
         subprocess.run(["docker", "rm", "--force", container], capture_output=True, check=False)
 
 
+def check_atomic_rename():
+    """模拟短时占用与永久错误，不降低同父目录和不覆盖约束。"""
+    with tempfile.TemporaryDirectory(prefix="rename-test-", dir=ROOT / "tmp") as value:
+        root = Path(value)
+        staging, output = root / "staging", root / "output"
+        staging.mkdir()
+        (staging / "payload").write_text("保留内容", encoding="utf-8")
+        original = module.os.rename
+        calls = []
+
+        def temporarily_locked(source, target):
+            calls.append((source, target))
+            if len(calls) < 3:
+                error = PermissionError("模拟 Windows 短时占用")
+                error.winerror = 5
+                raise error
+            return original(source, target)
+
+        with patch.object(module.os, "rename", side_effect=temporarily_locked), patch.object(module.time, "sleep") as sleep:
+            module.rename_prepared_directory(staging, output)
+            assert len(calls) == 3 and sleep.call_count == 2
+        assert not staging.exists() and (output / "payload").read_text(encoding="utf-8") == "保留内容"
+        staging.mkdir()
+        try:
+            module.rename_prepared_directory(staging, output)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("重试不得覆盖已有输出")
+        assert (output / "payload").read_text(encoding="utf-8") == "保留内容"
+        permanent = PermissionError("模拟非 Windows 的永久权限错误")
+        with patch.object(module.os, "rename", side_effect=permanent), patch.object(module.time, "sleep") as sleep:
+            try:
+                module.rename_prepared_directory(staging, root / "blocked")
+            except PermissionError as error:
+                assert error is permanent
+            else:
+                raise AssertionError("永久权限错误必须保持失败")
+            assert not sleep.called
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tool", type=Path, help="已构建的 agent-pulse-adapters 工具")
@@ -73,6 +115,7 @@ def main():
         parser.error("--docker-smoke 需要同时提供 --docker-base")
     temp_root = ROOT / "tmp"
     temp_root.mkdir(exist_ok=True)
+    check_atomic_rename()
     with tempfile.TemporaryDirectory(prefix="hub-release-test-", dir=temp_root) as value:
         root = Path(value)
         private, public = root / "publisher.key", root / "publisher.pub"

@@ -17,7 +17,7 @@
 | Agent 接入组件 | `xxx-adapter` | 对接具体 Agent 的 hook/plugin，转换为统一事件 |
 | 桌面小组件 | `agent-pulse-tray` | 首版用户 Windows 桌面；托盘、会话列表、提醒、设备状态上报和已读同步，结构上保留 macOS/Linux 扩展能力 |
 
-接入范围包含 OpenCode、Codex、Antigravity、zcode 和 Qoder。Linux 当前实施覆盖 OpenCode、Codex、Antigravity CLI 和 Qoder 中国版 CLI（`qoderclicn`）；ZCode 在 Windows 桌面接入主会话开始、用户提交与正常完成，不推断工具事件或非正常退出。Codex 高级事件和物理多主机更新验收后续迭代，已有能力及待验证边界必须明确记录。
+接入范围包含 OpenCode、Codex、Antigravity、ZCode 和 Qoder，但不是每个产品都覆盖每个平台。Linux 当前实施覆盖 OpenCode、Codex、Antigravity CLI 和 Qoder 中国版 CLI（`qoderclicn`）；本轮 Windows RC 只纳入 ZCode 图形界面；Windows Codex CLI 与 ChatGPT Windows 桌面端均列为后续规划，不在本轮实现或承诺支持。Qoder、Antigravity、OpenCode 的 Windows 终端适配不属于当前计划。ZCode 接入主会话开始、用户提交与正常完成，不推断工具事件或非正常退出。后续 Windows 来源优先考虑图形界面产品，ChatGPT Windows 桌面端等先调研公开接入能力，不预设存在 hook 或提前实现通用 GUI 采集平台。Codex 高级事件和物理多主机更新验收后续迭代，已有能力及待验证边界必须明确记录。
 
 ## 2. 部署与通信
 
@@ -51,6 +51,10 @@ Bridge 的运行方式：
 - 安装或更新接入配置时，保留用户已有的其他 hook/plugin 配置。
 - 扩展性需考虑只能提供 webhook 或简单 JS 的云端 Agent：允许经 HTTP 向可达的 Hub/Relay 提交统一事件，或通过薄接入层转换，不强制部署 Bridge。统一事件不得依赖本地进程或文件路径；当前不要求交付具体云端适配器或独立网关服务。
 
+### 宿主版本兼容原则
+
+对于 `x.y.z` 数字版本，`x` 是主版本、`y` 是次版本、`z` 是补丁版本。以已验收版本线为基准：同一 `x.y` 下补丁版本变化默认支持，不要求逐个补丁验收；同一 `x` 下次版本变化允许继续使用，但不承诺兼容性；主版本变化需要重新测试后再纳入支持。默认支持是项目的兼容政策，不是第三方不会破坏接口的保证，已知不兼容情况须明确说明。
+
 ### 3.2 会话与事件
 
 支持观察会话开始、恢复、运行、等待用户、结束及失联等状态。需要提醒的事件包括：
@@ -68,7 +72,7 @@ Bridge 的运行方式：
 
 维护所有已接入、可观察的进行中会话；组件重启或重连后恢复并核对状态。进程崩溃、强制结束或主机断电可能无法触发 hook，需要结合进程状态或心跳辅助检测；无法确定原因时显示“失联／未知”。
 
-五个 adapter 都属于交付范围。各自需说明支持的版本、事件和限制；缺少原生事件时，采用可靠的替代检测，或明确标注能力缺口，不根据猜测报告成功或失败。
+五个 adapter 按上述平台分工属于交付范围，不要求五个产品都具备 Windows 终端适配。各自需说明支持的版本、事件和限制；缺少原生事件时，采用可靠的替代检测，或明确标注能力缺口，不根据猜测报告成功或失败。
 
 ### 3.3 Hub Web 管理界面
 

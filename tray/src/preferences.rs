@@ -50,6 +50,106 @@ impl Preferences {
 mod tests {
     use super::*;
     use crate::model::{Device, Session};
+
+    fn preferences_test_directory() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pulse-preferences-中文 空格-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_hosts_file_loads_empty_preferences() {
+        let dir = preferences_test_directory();
+        let path = dir.join("hosts.json");
+        assert!(!path.exists());
+
+        let prefs = Preferences::load(&path).unwrap();
+        assert!(prefs.muted_sources.is_empty());
+        assert!(prefs.awake_sources.is_empty());
+        assert!(!path.exists());
+
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn saved_source_sets_survive_reload() {
+        let dir = preferences_test_directory();
+        let path = dir.join("hosts.json");
+        let prefs = Preferences {
+            muted_sources: BTreeSet::from(["静默来源".into(), "共同来源".into()]),
+            awake_sources: BTreeSet::from(["运行来源".into(), "共同来源".into()]),
+        };
+
+        prefs.save(&path).unwrap();
+        let reloaded = Preferences::load(&path).unwrap();
+        assert_eq!(reloaded.muted_sources, prefs.muted_sources);
+        assert_eq!(reloaded.awake_sources, prefs.awake_sources);
+
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn saving_again_replaces_old_source_sets() {
+        let dir = preferences_test_directory();
+        let path = dir.join("hosts.json");
+        let old = Preferences {
+            muted_sources: BTreeSet::from(["旧静默来源".into()]),
+            awake_sources: BTreeSet::from(["旧运行来源".into()]),
+        };
+        let updated = Preferences {
+            muted_sources: BTreeSet::from(["中文 静默来源".into(), " source with spaces ".into()]),
+            awake_sources: BTreeSet::from([
+                "中文 运行来源".into(),
+                "awake source with spaces".into(),
+            ]),
+        };
+
+        old.save(&path).unwrap();
+        updated.save(&path).unwrap();
+        let reloaded = Preferences::load(&path).unwrap();
+        assert_eq!(reloaded.muted_sources, updated.muted_sources);
+        assert_eq!(reloaded.awake_sources, updated.awake_sources);
+
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_hosts_file_returns_error_without_changing_bytes() {
+        let dir = preferences_test_directory();
+        let path = dir.join("hosts.json");
+        let raw = "{\"muted_sources\":[\"保留来源\"],".as_bytes();
+        fs::write(&path, raw).unwrap();
+
+        assert!(Preferences::load(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), raw);
+
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn saving_without_parent_directory_returns_error() {
+        let dir = preferences_test_directory();
+        let parent = dir.join("不存在的父目录");
+        let path = parent.join("hosts.json");
+        let prefs = Preferences {
+            muted_sources: BTreeSet::from(["静默来源".into()]),
+            awake_sources: BTreeSet::from(["运行来源".into()]),
+        };
+        assert!(!parent.exists());
+
+        assert!(prefs.save(&path).is_err());
+        assert!(!path.exists());
+        assert!(!path.with_extension("tmp").exists());
+        assert!(!parent.exists());
+
+        fs::remove_dir(dir).unwrap();
+    }
     #[test]
     fn mute_preserves_unread_and_requires_delivery_confirmation() {
         use crate::model::{Event, State};

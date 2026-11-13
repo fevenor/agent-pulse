@@ -73,6 +73,9 @@ func (m Manifest) Validate() error {
 			}
 		}
 	}
+	if m.AgentMin != "" && m.AgentMax != "" && compare(m.AgentMin, m.AgentMax) > 0 {
+		return errors.New("宿主兼容版本下限不得高于上限")
+	}
 	if !fs.ValidPath(m.Entry) || m.Entry == "." || strings.Contains(m.Entry, "\\") || filepath.IsAbs(m.Entry) {
 		return errors.New("入口路径无效")
 	}

@@ -115,6 +115,8 @@ try:
         ["publish", "--repository", repo, "--private", root / "publisher.key", "--index", repo / "index-input.json"],
     ]:
         subprocess.run([str(binary / "agent-pulse-adapters"), *map(str, command_args)], check=True)
+    # 新 Hub 从发布仓库读取公钥；测试仓库也必须携带同一次签名的公钥。
+    shutil.copy2(root / "publisher.pub", repo / "publisher.pub")
     hub_port, bridge_port = port(), port()
     hub_url = "http://127.0.0.1:" + str(hub_port)
     (root / "hub.yaml").write_text(f'listen: "127.0.0.1:{hub_port}"\ndatabase: "{root}/hub.db"\nadapter_directory: "{repo}"\n')

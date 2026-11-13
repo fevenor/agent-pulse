@@ -2,7 +2,7 @@
 
 AgentPulse 是供个人使用的多主机 Agent 会话通知工具。Hub（会话中心）保存会话与已读状态，Relay（公网中继）提供备用通路，Bridge（本地接入进程）采集事件，Tray（桌面小组件）显示提醒。
 
-Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、展开式时间线、系统通知、按主机静默/任务唤醒和离线已读恢复，使用 Rust + GPUI。接入 OpenCode、Codex、Antigravity CLI、qoderclicn 与 Windows ZCode 主会话生命周期；各来源及桌面行为的验证边界见开发记录。
+Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、展开式时间线、系统通知、按主机静默/任务唤醒和离线已读恢复，使用 Rust + GPUI。Linux 接入 OpenCode、Codex、Antigravity CLI 和 qoderclicn；本轮 Windows RC 只接入 ZCode 图形界面主会话生命周期；Windows Codex CLI 与 ChatGPT 桌面端均为后续规划；各来源及桌面行为的验证边界见开发记录。
 
 ## 普通用户：开始使用
 

@@ -3,7 +3,7 @@ export interface Event { event_id: string; source_id: string; agent: string; ses
 export interface Device { id: string; role: string; host_name?: string; path: string; locked?: boolean; fullscreen?: boolean; last_seen: string }
 export interface SourceLabel { name: string; environment: string; archived?: boolean }
 export interface Snapshot { run_id: string; version: number; sessions: Session[]; unread: Event[]; devices: Device[]; sources?: Record<string, SourceLabel> }
-export interface Adapter { id: string; target: string; installed: string; running: string; agent_version: string; error?: string }
+export interface Adapter { id: string; target: string; installed: string; running: string; agent_version: string; error?: string; warning?: string }
 export interface Host { source_id: string; items: Adapter[]; error?: string; updated_at: string }
 export interface HostInfo { source_id: string; name: string; default_name?: string; environment: string; archived: boolean; last_seen?: string; online: boolean; role?: string }
 export interface Push { event_id: string; channel: string; status: string; attempts: number; next_at: string }

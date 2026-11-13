@@ -7,7 +7,7 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 $repositoryPath = [IO.Path]::GetFullPath($Repository)
 New-Item -ItemType Directory -Force $repositoryPath | Out-Null
 $packages = @()
-foreach ($adapter in @('codex', 'antigravity', 'qoderclicn', 'zcode')) {
+foreach ($adapter in @('zcode')) {
     $packageDir = Join-Path $projectRoot "dist/adapter-build-windows/$adapter"
     New-Item -ItemType Directory -Force $packageDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot "bin/dev/agent-pulse-adapter-$adapter.exe") -Destination (Join-Path $packageDir 'adapter.exe')
@@ -22,20 +22,7 @@ foreach ($adapter in @('codex', 'antigravity', 'qoderclicn', 'zcode')) {
     if ($LASTEXITCODE -ne 0) { throw "适配包 $adapter 构建失败" }
     $packages += Get-Content -Raw $packagePath | ConvertFrom-Json
 }
-# 合并跨平台仓库时只构建 Windows 命令包，通用插件统一使用 Linux 发布产物。
-if (-not $NativeOnly) {
-    $pluginDir = Join-Path $projectRoot 'adapters/opencode'
-    $package = Get-Content -Raw (Join-Path $pluginDir 'package.json') | ConvertFrom-Json
-    $previousPnpm = $env:VOLTA_FEATURE_PNPM
-    try {
-        $env:VOLTA_FEATURE_PNPM = '1'
-        & volta run --node $package.volta.node --pnpm ($package.packageManager -replace '^pnpm@', '') pnpm --dir $pluginDir build
-        if ($LASTEXITCODE -ne 0) { throw 'OpenCode 插件构建失败' }
-    } finally { $env:VOLTA_FEATURE_PNPM = $previousPnpm }
-    $packagePath = Join-Path $repositoryPath 'opencode.json'
-    & (Join-Path $projectRoot 'bin/dev/agent-pulse-adapters.exe') pack --source (Join-Path $pluginDir 'dist') --manifest (Join-Path $pluginDir 'manifest.json') --repository $repositoryPath --out $packagePath
-    if ($LASTEXITCODE -ne 0) { throw 'OpenCode 打包失败' }
-    $packages += Get-Content -Raw $packagePath | ConvertFrom-Json
-}
+# Windows 只交付 ZCode；-NativeOnly 保留为既有命令的兼容参数。
+# OpenCode 通用插件随 Linux 发布，不代表 Windows 宿主属于当前支持范围。
 [IO.File]::WriteAllText((Join-Path $repositoryPath 'index-input.json'), (@{sequence=$Sequence;packages=$packages} | ConvertTo-Json -Depth 20))
-Write-Output 'Windows 适配包和未签名索引已生成；宿主原生 hook 仍需按版本验收。'
+Write-Output 'Windows 适配包和未签名索引已生成；当前范围为 ZCode，真实加载与已验能力分别记录。'

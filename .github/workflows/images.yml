@@ -4,8 +4,9 @@ on:
   pull_request:
   push:
     branches: [main, master]
-    tags: ['v*']
+    tags: ['v*', '!v*-rc.*']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -23,13 +24,15 @@ jobs:
       packages: write
     env:
       VOLTA_FEATURE_PNPM: '1'
+      GOTOOLCHAIN: 'local'
+      GOPROXY: 'https://proxy.golang.org'
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
+          go-version: '1.27.4'
           cache-dependency-path: go/go.sum
       - uses: volta-cli/action@v4
         with:
@@ -97,7 +100,6 @@ jobs:
         if: github.event_name == 'push'
         env:
           IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           image_repository="${IMAGE_REPOSITORY,,}"
           for component in hub relay; do
@@ -106,8 +108,6 @@ jobs:
             tags=(--tag "$image:sha-$GITHUB_SHA")
             if [[ "$GITHUB_REF_TYPE" == tag ]]; then
               tags+=(--tag "$image:$GITHUB_REF_NAME")
-            elif [[ "$GITHUB_REF_NAME" == "$DEFAULT_BRANCH" ]]; then
-              tags+=(--tag "$image:latest")
             fi
             docker buildx build --platform linux/amd64,linux/arm64 --target "$component" \
               -f deploy/docker/Dockerfile "${tags[@]}" \

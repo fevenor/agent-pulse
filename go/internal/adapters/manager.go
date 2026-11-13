@@ -44,6 +44,7 @@ type Runtime struct {
 	At      time.Time `json:"at"`
 }
 type Status struct {
+	Warning      string `json:"warning,omitempty"`
 	ID           string `json:"id"`
 	Target       string `json:"target"`
 	Installed    string `json:"installed"`
@@ -104,6 +105,59 @@ func compare(a, b string) int {
 	}
 	return 0
 }
+
+// 宿主版本承诺按主、次、补丁区分；清单端点保留为已验证版本线，不再硬锁补丁。
+func hostCompatibility(raw string, m Manifest) (string, error) {
+	actual, ok := version(raw)
+	if !ok {
+		return "", errors.New("无法识别宿主版本")
+	}
+	lower, upper := [3]int{}, [3]int{}
+	hasLower, hasUpper := m.AgentMin != "", m.AgentMax != ""
+	if hasLower {
+		lower, ok = version(m.AgentMin)
+		if !ok {
+			return "", errors.New("宿主兼容版本下限无效")
+		}
+	}
+	if hasUpper {
+		upper, ok = version(m.AgentMax)
+		if !ok {
+			return "", errors.New("宿主兼容版本上限无效")
+		}
+	}
+	// 仅有一个端点时，该端点的主版本就是已验证主版本，不能无界接受下一主版本。
+	if hasLower && !hasUpper {
+		upper = lower
+	}
+	if hasUpper && !hasLower {
+		lower = upper
+	}
+	if (hasLower || hasUpper) && (actual[0] < lower[0] || actual[0] > upper[0]) {
+		return "", errors.New("宿主主版本未验证，需要重新测试后纳入支持")
+	}
+	lineCompare := func(a, b [3]int) int {
+		for i := 0; i < 2; i++ {
+			if a[i] < b[i] {
+				return -1
+			}
+			if a[i] > b[i] {
+				return 1
+			}
+		}
+		return 0
+	}
+	warning := ""
+	if (hasLower || hasUpper) && (lineCompare(actual, lower) < 0 || lineCompare(actual, upper) > 0) {
+		warning = "宿主次版本未验证：允许继续使用，但不承诺兼容性"
+	}
+	// 预发布后缀不是补丁版本承诺，仍可使用但明确提示。
+	if strings.Contains(raw, "-") {
+		warning = "宿主为预发布版本：允许继续使用，但不承诺兼容性"
+	}
+	return warning, nil
+}
+
 func Detect(ctx context.Context, m Manifest) (string, error) {
 	if m.ID == "zcode" {
 		return zcodeDesktopVersion()
@@ -115,6 +169,8 @@ func Detect(ctx context.Context, m Manifest) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	cmd := hostCommand(ctx, path, "--version")
+	// 宿主退出或取消后，其后代可能仍持有输出管道；限时收尾并保留失败。
+	cmd.WaitDelay = time.Second
 	var out limitedBuffer
 	out.limit = 4096
 	cmd.Stdout = &out
@@ -248,6 +304,10 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 		excluded[id] = true
 	}
 	for _, p := range index.Packages {
+		// Windows RC 只安装原生进程钩子，保留旧登记但不重新探测或更新后置的命令/插件来源。
+		if runtime.GOOS == "windows" && (p.Kind != "executable" || p.ConfigStyle != "process-hooks") {
+			continue
+		}
 		if c.Adapters.Managed[p.ID] == "" {
 			continue
 		}
@@ -288,8 +348,8 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 				continue
 			}
 			agentVersion = v
-			if candidate.AgentMin != "" && compare(v, candidate.AgentMin) < 0 || candidate.AgentMax != "" && compare(v, candidate.AgentMax) > 0 {
-				compatibilityErr = errors.New("宿主版本不在支持范围")
+			if _, versionErr := hostCompatibility(v, candidate.Manifest); versionErr != nil {
+				compatibilityErr = versionErr
 				continue
 			}
 			p = candidate
@@ -305,7 +365,7 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 			continue
 		}
 		state.Installed[id] = old
-		if old.Package.SHA256 == p.SHA256 {
+		if old.Package.Version == p.Version && old.Package.SHA256 == p.SHA256 {
 			if state.Rejected[p.SHA256] == "" {
 				old.Error = ""
 				state.Installed[id] = old
@@ -379,6 +439,9 @@ func ReportState(c config.Bridge, lastErr error) Report {
 	}
 	for id, p := range s.Installed {
 		status := Status{ID: id, Installed: p.Package.Version, Target: p.Target, AgentVersion: p.AgentVersion, Error: p.Error}
+		if p.Package.Version != "" && p.AgentVersion != "" {
+			status.Warning, _ = hostCompatibility(p.AgentVersion, p.Package.Manifest)
+		}
 		var running Runtime
 		if raw, err := os.ReadFile(filepath.Join(c.Adapters.Directory, "runtime", id+".json")); err == nil {
 			_ = json.Unmarshal(raw, &running)
