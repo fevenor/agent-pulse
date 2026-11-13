@@ -24,6 +24,9 @@ jobs:
       GOTOOLCHAIN: 'local'
       GOPROXY: 'https://proxy.golang.org'
       CARGO_BUILD_JOBS: '2'
+      # 英文 Windows runner 的管道默认 cp1252，中文诊断必须显式使用 UTF-8。
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
     steps:
       - uses: actions/checkout@v4
         with:
