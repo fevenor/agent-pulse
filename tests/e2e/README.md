@@ -4,7 +4,7 @@
 
 ```sh
 pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
-bash scripts/package-adapters.sh ./dist/repository 1
+bash scripts/build/package-adapters.sh ./dist/repository 1
 ```
 
 ## Codex
@@ -13,7 +13,7 @@ bash scripts/package-adapters.sh ./dist/repository 1
 uv run --offline --no-project python tests/e2e/codex_native.py
 ```
 
-使用 Codex 0.167.0 和本地 Responses 模拟服务，单实例串行运行，不调用在线模型。临时项目中的 `hooks.json` 由真实 Bridge 从签名包安装，捕获原生 SessionStart、UserPromptSubmit、Stop、SessionEnd，并核对 Hub 历史及适配器运行版本。
+使用 Codex 0.167.0 和本地 Responses 模拟服务，单实例串行运行，不调用在线模型。临时项目中的 `hooks.json` 由真实 Bridge 从签名包安装，捕获原生 SessionStart、UserPromptSubmit、Stop、SessionEnd，并核对 Hub 历史及适配器运行版本。名称索引使用隔离替身，验证真实 Stop hook 获取新名称及同 ID 更新，不等同交互 `/rename` 验收。
 
 测试在本次调用中信任自己生成并审阅的 hook，不持久修改用户信任设置，不读取用户模型配置。`projects` 通过 TOML 内联表传递临时目录的信任值；不能把带引号路径的点分参数误当成 TOML 表。正式安装仍由用户在 Codex 中确认 hook 信任。
 
@@ -37,25 +37,25 @@ AGENT_PULSE_QODER_WORKSPACE=/专用测试工作区 uv run --offline --no-project
 AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke
 ```
 
-需要 OpenCode 2.0.20，并先构建当前独立包。使用临时配置和插件仓库，验证独立包 loader、原生会话标题和表单、已读及 Hub 强制重启恢复；版本从当前清单读取，旧产物会提示重新打包。默认不调用模型；需要另做真实模型测试时使用 build 角色及 OpenCode 提供的免费模型。具体脚本位于 `adapters/opencode/test/smoke.ts`。
+需要 OpenCode 2.0.20，并先构建当前独立包。使用临时配置和插件仓库，验证独立包 loader、原生连续改名、同一会话身份、等待/未读保持、表单、已读及 Hub 强制重启恢复；版本从当前清单读取，旧产物会提示重新打包。默认不调用模型；需要另做真实模型测试时使用 build 角色及 OpenCode 提供的免费模型。具体脚本位于 `adapters/opencode/test/smoke.ts`。
 
 ## 管理网页与跨平台包
 
 ```sh
 pnpm --dir web/hub build
-bash scripts/build.sh
+bash scripts/build/build.sh
 uv run --offline --no-project python tests/e2e/hub_web.py
-uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+uv run --offline --no-project python scripts/check/test_merge_adapter_repositories.py
 ```
 
-网页测试需要已安装的 agent-browser 和 Chromium，启动独立浏览器会话与真实 Hub，验证别名与来源状态、归档/生效状态计数及筛选、友好名称搜索、恢复自动跟随、未读保留和明确已读、移动布局。使用临时数据，截图留在临时诊断目录，结束后关闭自建进程。包合并测试只使用本地合成 ZIP，覆盖跨平台合并、通用插件内容去重、冲突与损坏拒绝，并已纳入 Linux/Windows Workflow。
+网页测试需要已安装的 agent-browser 和 Chromium，启动独立浏览器会话与真实 Hub，验证备注不覆盖原生名称、同 ID 改名、旧名称过滤、无名称不展示后台 ID及来源状态、归档/生效状态计数及筛选、友好名称搜索、恢复自动跟随、未读保留和明确已读、移动布局。使用临时数据，截图留在临时诊断目录，结束后关闭自建进程。包合并测试只使用本地合成 ZIP，覆盖跨平台合并、通用插件内容去重、冲突与损坏拒绝，并已纳入 Linux/Windows Workflow。
 
 Hub RC 发布仓库准备测试使用一次性密钥与合成包，不读取正式发布私钥：
 
 ```sh
-uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters
+uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/agent-pulse-adapters
 # 可选：先构建默认 Hub 镜像，再验证签名仓库覆盖、容器健康及自动公钥发现。
-uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters \
+uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/agent-pulse-adapters \
   --docker-base agent-pulse-hub:default-check --docker-smoke
 ```
 
@@ -63,17 +63,17 @@ uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/a
 
 ## 常规可靠性测试
 
-`bash scripts/check.sh` 包括 Go 竞态检测、本地网络集成、TypeScript 类型检查、映射样例和 Web 构建。Relay 离线队列、双向连接和适配包经中继下载在 Go 集成测试中验证；同机隔离状态目录模拟多个主机，不能替代物理多机部署验收。
+`bash scripts/check/check.sh` 包括 Go 竞态检测、本地网络集成、TypeScript 类型检查、映射样例和 Web 构建。Relay 离线队列、双向连接和适配包经中继下载在 Go 集成测试中验证；同机隔离状态目录模拟多个主机，不能替代物理多机部署验收。
 
-Windows 联调先用 `scripts/build.ps1 -DevelopmentTools` 生成 `bin/dev/` 测试服务 和 `scripts/check.ps1 -Tray -Integration`。Rust 中的真实服务测试默认忽略，`-Integration` 显式启用并验证 Windows Hub/Relay、客户端离线已读和重启恢复。Windows 安装器测试在普通 Go 检查中运行。
+Windows 联调先用 `scripts/build/build.ps1 -DevelopmentTools` 生成 `bin/dev/` 测试服务 和 `scripts/check/check.ps1 -Tray -Integration`。Rust 中的真实服务测试默认忽略，`-Integration` 显式启用并验证 Windows Hub/Relay、客户端离线已读和重启恢复。Windows 安装器测试在普通 Go 检查中运行。
 
-默认 `scripts/build.ps1` 只提供用户 Tray，`scripts/build.ps1 -Demo` 提供前台演示。关闭其他 Tray 实例后执行 `uv run --offline --no-project python tests/e2e/windows_desktop.py`，验证发布程序多尺寸图标资源、发布参数拒绝、中文空格便携目录和不同启动工作目录、跨安装路径且不同配置的单实例拦截、内置 Bridge 启动和父进程结束后的清理；测试不操作桌面界面。加入 `--with-demo` 时，检查发布/演示二进制的 GUI/控制台子系统和演示专属文案隔离，另在测试专属隐藏控制台验证默认不打开设置、前台日志、真实 Ctrl+C 正常退出、不读取指定生产配置且不产生生产状态。须先构建 `-Demo`。Rust 单元测试在临时目录创建真实 `.lnk` 验证自启动维护，不向系统启动文件夹写入，不写注册表；禁用状态解析单独验证。原生菜单、悬浮拖拽、窗口滚动缩放和真实登录启动仍需单独验收。
+默认 `scripts/build/build.ps1` 只提供用户 Tray，`scripts/build/build.ps1 -Demo` 提供前台演示。关闭其他 Tray 实例后执行 `uv run --offline --no-project python tests/e2e/windows_desktop.py`，验证发布程序多尺寸图标资源、发布参数拒绝、中文空格便携目录和不同启动工作目录、跨安装路径且不同配置的单实例拦截、内置 Bridge 启动和父进程结束后的清理；测试不操作桌面界面。加入 `--with-demo` 时，检查发布/演示二进制的 GUI/控制台子系统和演示专属文案隔离，另在测试专属隐藏控制台验证默认不打开设置、前台日志、真实 Ctrl+C 正常退出、不读取指定生产配置且不产生生产状态。须先构建 `-Demo`。Rust 单元测试在临时目录创建真实 `.lnk` 验证自启动维护，不向系统启动文件夹写入，不写注册表；禁用状态解析单独验证。原生菜单、悬浮拖拽、窗口滚动缩放和真实登录启动仍需单独验收。
 
 Windows 与 Debian 的双来源联调使用 `uv run --offline --no-project python tests/e2e/windows_wsl.py`；前提是已构建 Windows 程序、测试标签的 Docker 镜像和 Linux Bridge，准备命令见 [Windows 开发](../../docs/windows-development.md#debian-与容器)。脚本清理自己创建的临时容器、文件与进程，不使用真实 Agent 或手机配置。
 
 ## ZCode Windows 桌面
 
-需先退出其他 Tray，构建 `scripts/build.ps1 -DevelopmentTools` 和 `scripts/package-adapters.ps1 -NativeOnly`，已安装并登录 ZCode 3.17.2。以下测试会临时管理指定的 ZCode 用户钩子配置，必须先获用户授权；不用于无人知情的常规 CI。
+需先退出其他 Tray，构建 `scripts/build/build.ps1 -DevelopmentTools` 和 `scripts/build/package-adapters.ps1 -NativeOnly`，已安装并登录 ZCode 3.17.2。以下测试会临时管理指定的 ZCode 用户钩子配置，必须先获用户授权；不用于无人知情的常规 CI。
 
 ```powershell
 # 此命令保持运行；就绪后按下一段操作桌面。
@@ -87,15 +87,15 @@ uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py stop --d
 
 默认配置为用户目录下的 `.zcode/cli/config.json`，可用 `--zcode-config` 指定其他测试配置；原配置备份保存在该忽略目录。`stop` 或一小时超时会停止自建进程并移除测试钩子，保留其他配置和钩子。整个测试目录含私人配置备份，不能提交或公开分发。
 
-## Antigravity ACP
+## Antigravity 普通启动与 ACP 过滤
 
 ```sh
 uv run --offline --no-project python tests/e2e/antigravity_acp.py
-# 两条真实请求：创建会话后结束 ACP 进程，再加载原会话继续。
-uv run --offline --no-project python tests/e2e/antigravity_acp.py --resume
 ```
 
-需要已登录的 agy 1.5.3；默认一条真实模型请求，`--resume` 共两条。脚本使用默认登录目录，不读取认证文件、不自动批准工具。专用临时项目通过签名包安装 hooks，经主会话包装器调用 ACP，核对开始、活动、完成、未读及实际运行版本；不保存模型回复正文。续接测试使用 `--pulse-main-session` 指定原主会话，检查跨进程恢复后仍只有同一主会话且仅最新完成提醒有效。真实子代理和非正常退出另行验收。
+默认执行真实 ACP 初始化和专用空会话创建，不发送 prompt。另向本机入口发送明确标注的合成进程探针，核对实际 ACP 进程的识别和 `filtered` 回执；它不代替原生 hook 实测。脚本按 ACP 会话精确核对回执，并比较 ACP 前后运行记录，不因普通任务留下的回执文件或 Hub 无事件就声称完整过滤已验收。空会话没有产生原生 hook 时明确报告部分验证。
+
+需要验收普通 CLI 的完整真实任务时，先取得账号/模型授权并准备由宿主正常确认可信的专用项目，再显式使用 `--model 已授权模型 --workspace /专用测试工作区`。它直接执行原生 `agy --model ... --print ...`，不包装、不绑定，不批准工具。模型完成、原生 hook、Hub 入库分别核对。本机回执旁观器只透传事件和 PID 并记录安全字段，不生成原生事件；它仅用于测试，不是部署组件。配置和数据库均隔离；源代码及假宿主进程测试不能替代此实测。
 
 ## 真实手机渠道
 

@@ -338,10 +338,6 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 				compatibilityErr = errors.New("没有适用于当前平台的包")
 				continue
 			}
-			if compare(BridgeVersion, candidate.MinBridge) < 0 {
-				compatibilityErr = errors.New("目标包需要更新的 Bridge 版本")
-				continue
-			}
 			v, detectErr := Detect(ctx, candidate.Manifest)
 			if detectErr != nil {
 				compatibilityErr = detectErr
@@ -369,6 +365,11 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 			if state.Rejected[p.SHA256] == "" {
 				old.Error = ""
 				state.Installed[id] = old
+				// 包版本相同不代表宿主配置仍有效：重新启用、路径变更或用户删除钩子时修复配置。
+				if err := ensureInstalledConfig(c, configPath, p, &state); err != nil {
+					old.Error = err.Error()
+					state.Installed[id] = old
+				}
 			}
 			continue
 		}
@@ -516,23 +517,6 @@ func Dispatch(ctx context.Context, c config.Bridge, id, hook string, input []byt
 	}
 	_ = AtomicJSON(filepath.Join(c.Adapters.Directory, "runtime", id+".json"), Runtime{Version: p.Version, At: time.Now().UTC()})
 	return output.Bytes(), nil
-}
-
-func Launch(ctx context.Context, c config.Bridge, id string, args []string) error {
-	state, err := loadState(c.Adapters.Directory)
-	if err != nil {
-		return err
-	}
-	installed, ok := state.Installed[id]
-	if !ok || installed.Package.Kind != "executable" {
-		return errors.New("没有可启动的适配包")
-	}
-	p := installed.Package
-	cmd := hostCommand(ctx, filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry)), append([]string{"run"}, args...)...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func cloneState(s State) State {

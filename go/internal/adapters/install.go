@@ -236,3 +236,52 @@ export default { ...plugin, setup(ctx) {
 	}
 	return os.Remove(journal)
 }
+
+// 已授权 managed 范围内核对当前配置，不重新下载或更改同版本包；无变更时不写文件。
+func ensureInstalledConfig(c config.Bridge, configPath string, p Package, state *State) error {
+	path := c.Adapters.Managed[p.ID]
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	next, err := hookConfig(c, configPath, p, raw)
+	if err != nil {
+		return err
+	}
+	if string(raw) == string(next) {
+		return nil
+	}
+	before := cloneState(*state)
+	return install(c, configPath, p, before, *state)
+}
+
+// 向导结束前核对实际宿主文件，而不是把安装状态文件当成已启用证明。
+func verifySetupHooks(c config.Bridge, configPath, id string) error {
+	state, err := loadState(c.Adapters.Directory)
+	if err != nil {
+		return err
+	}
+	p := state.Installed[id].Package
+	raw, err := os.ReadFile(c.Adapters.Managed[id])
+	if err != nil {
+		return err
+	}
+	next, err := hookConfig(c, configPath, p, raw)
+	if err != nil {
+		return err
+	}
+	if string(raw) != string(next) {
+		return errors.New("实际宿主配置中缺少当前钩子")
+	}
+	if p.ConfigStyle == "process-hooks" {
+		var root struct {
+			Hooks struct {
+				Enabled bool `json:"enabled"`
+			} `json:"hooks"`
+		}
+		if json.Unmarshal(raw, &root) != nil || !root.Hooks.Enabled {
+			return errors.New("宿主钩子总开关已关闭；保留原选择，请在宿主中明确开启后重新验证")
+		}
+	}
+	return nil
+}

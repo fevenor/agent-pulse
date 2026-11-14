@@ -21,7 +21,7 @@
 
 推送 `v<工程版本>-rc.<序号>` 标签触发 `release-draft.yml`，复用同一提交的 Linux 与 Windows 工作流；只有两类检查及产物构建均成功才创建 GitHub Release 草稿。草稿保持预发布标记，不自动转正、不更新稳定镜像别名。已被人工发布或改为其他状态的 Release 不由重跑覆盖。
 
-草稿附 Windows 单入口便携包、五包未签名仓库、Linux 发布工具、构建清单、摘要和中文试运行说明。私有配置和发布私钥不进入 CI 或附件；没有长期密钥时不生成替代公钥，不把基础 Hub 镜像冒充完整签名 RC。发布者可沿用现有 Hub/已签名仓库试运行客户端，或在 Linux 本机使用已有长期密钥签名，再按下文准备完整 Hub 镜像。草稿仅发布固定 SHA/RC 标签，人工运行数日后的发布与稳定版本推广由发布者单独决定。
+草稿附 Windows 单入口便携包、五包未签名仓库、Linux 两架构 Bridge 预构建与安装脚本、发布工具、构建清单、摘要和中文试运行说明。私有配置和发布私钥不进入 CI 或附件；没有长期密钥时不生成替代公钥，不把基础 Hub 镜像冒充完整签名 RC。发布者可沿用现有 Hub/已签名仓库试运行客户端，或在 Linux 本机使用已有长期密钥签名，再按下文准备完整 Hub 镜像。Bridge 由同一 Linux 工作流预先构建，草稿生成只核验并复制产物；安装器从公开 Release 自动下载，不要求目标用户编译。旧草稿不会因本地修改自动补齐附件。草稿仅发布固定 SHA/RC 标签，人工运行数日后的发布与稳定版本推广由发布者单独决定。
 
 ## 准备普通用户 Hub RC 镜像
 
@@ -30,7 +30,7 @@
 在源码根目录合并平台包并使用递增序号生成索引：
 
 ```sh
-uv run --offline --no-project python scripts/merge_adapter_repositories.py \
+uv run --offline --no-project python scripts/release/merge_adapter_repositories.py \
   ./dist/repository-linux ./dist/repository-windows \
   --output ./dist/repository-combined --sequence 1
 ./bin/agent-pulse-adapters keygen --private /安全目录/publisher.key --public /安全目录/publisher.pub
@@ -41,7 +41,7 @@ uv run --offline --no-project python scripts/merge_adapter_repositories.py \
 后续发布将序号递增。首次发布可在同一安全目录创建密钥；已经有正式公钥的部署必须继续使用原密钥。然后使用签名仓库、公钥与匹配提交构建的 `hub-base` 镜像准备独立 Docker 构建目录：
 
 ```sh
-uv run --offline --no-project python scripts/prepare-hub-release.py \
+uv run --offline --no-project python scripts/release/prepare-hub-release.py \
   --repository ./dist/repository-combined --public /安全目录/publisher.pub \
   --base-image ghcr.io/fevenor/agent-pulse/hub-base:rc版本 \
   --output ./dist/hub-release --tool ./bin/agent-pulse-adapters

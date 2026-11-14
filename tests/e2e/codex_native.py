@@ -1,6 +1,7 @@
 """用本地 Responses 模拟服务验证 Codex 原生 hook，不调用在线模型。通过 uv run 执行。"""
 import http.server
 import json
+import os
 import shutil
 import socket
 from pathlib import Path
@@ -33,6 +34,12 @@ class Mock(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         requests_received.append(self.path)
         self.rfile.read(int(self.headers.get("content-length", "0")))
+        # 隔离名称索引替身：真实 Stop hook 读取新名称，不声称执行了交互 /rename。
+        hooks = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
+        if hooks:
+            session_id = hooks[0]["session_id"]
+            rows = [{"id": session_id, "thread_name": title} for title in ["本地原名称", "本地更新后的会话名称"]]
+            (root / ".codex/session_index.jsonl").write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Connection", "close")
@@ -135,14 +142,20 @@ adapters:
     start("bridge", [binary / "agent-pulse-bridge", "serve", "--config", root / "bridge.yaml"])
     wait(lambda: " dispatch " in (root / ".codex/hooks.json").read_text())
     # --ignore-user-config 不等于项目可信；projects 使用 TOML 内联表避免带引号的点分键被误解析。
-    result = subprocess.run(args,cwd=root,stdin=subprocess.DEVNULL,stdout=output,stderr=log,timeout=35)
+    result = subprocess.run(args,cwd=root,env={**os.environ,"CODEX_HOME":str(root / ".codex")},stdin=subprocess.DEVNULL,stdout=output,stderr=log,timeout=35)
     output.flush()
     messages = [json.loads(line) for line in (root / "exec.jsonl").read_text().splitlines() if line.startswith("{")]
     events = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
     finished = result.returncode==0 and any(message.get("type")=="turn.completed" for message in messages)
     history = wait(lambda: (lambda items: items if {"session.started", "session.resumed", "turn.completed", "session.closed"}.issubset({item["kind"] for item in items}) else None)(request(hub_url + "/api/v1/events")))
     runtime = json.loads((root / "adapters/runtime/codex.json").read_text())
-    evidence = {"finished":finished,"model":"本地 Responses 模拟，不调用在线服务", "local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
+    completed = next(item for item in history if item["kind"] == "turn.completed")
+    if completed.get("session_title") != "本地更新后的会话名称":
+        raise RuntimeError("真实 Stop hook 没有读取测试索引中的最新名称")
+    snapshot = request(hub_url + "/api/v1/snapshot")
+    if len(snapshot["sessions"]) != 1 or snapshot["sessions"][0]["title"] != completed["session_title"]:
+        raise RuntimeError("名称更新必须定位同一后台会话")
+    evidence = {"finished":finished,"model":"本地 Responses 模拟，不调用在线服务", "title_source":"隔离索引替身，真实 hook 读取；不是交互 /rename 验收", "local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
     (root / "evidence.json").write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
     print(json.dumps(evidence,ensure_ascii=False,indent=2))
     if not finished or not {"SessionStart","Stop"}.issubset({e["hook_event_name"] for e in events}):

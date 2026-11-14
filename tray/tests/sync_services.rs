@@ -28,7 +28,7 @@ impl Service {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("请先运行 scripts/build.ps1 -DevelopmentTools");
+            .expect("请先运行 scripts/build/build.ps1 -DevelopmentTools");
         Self { child, exe, config }
     }
     fn stop(&mut self) {

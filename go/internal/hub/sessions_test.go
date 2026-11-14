@@ -107,3 +107,115 @@ func TestUnsequencedHistoryAndClockRollbackPreserveOrderingContract(t *testing.T
 		t.Fatal("无序号实时事件应按到达顺序处理，不得因来源时钟回拨吞掉进展")
 	}
 }
+
+func TestRenameKeepsIdentityStateUnreadAndRejectsOlderName(t *testing.T) {
+	h := testHub(t)
+	ctx := context.Background()
+	start := testEvent("start-name", "session.started", 1)
+	start.SessionTitle = "原名称"
+	if _, err := h.Accept(ctx, start); err != nil {
+		t.Fatal(err)
+	}
+	waiting := testEvent("waiting-name", "approval.required", 2)
+	waiting.SessionTitle = "旧任务携带的标题"
+	if _, err := h.Accept(ctx, waiting); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := h.Snapshot(ctx)
+	override := "interrupted"
+	if err := h.ManageSession(ctx, protocol.SessionChange{SessionKey: protocol.SessionKey{SourceID: waiting.SourceID, Agent: waiting.Agent, SessionID: waiting.SessionID}, LastEventID: waiting.EventID, OverrideState: &override}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ = h.Snapshot(ctx)
+	rename := testEvent("rename-latest", "session.renamed", 30)
+	rename.SessionTitle = "改名后的最新名称"
+	if _, err := h.Accept(ctx, rename); err != nil {
+		t.Fatal(err)
+	}
+	older := rename
+	older.EventID, older.Sequence, older.SessionTitle = "rename-old", 20, "较旧名称"
+	if _, err := h.Accept(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := h.Snapshot(ctx)
+	if len(after.Sessions) != 1 || after.Sessions[0].Title != rename.SessionTitle || after.Sessions[0].State != before.Sessions[0].State || after.Sessions[0].OverrideState != override || after.Sessions[0].LastEventID != waiting.EventID || after.Sessions[0].NameSequence != 30 {
+		t.Fatal("改名应只更新同一会话名称，不改变活动与人工状态", after)
+	}
+	if len(after.Unread) != len(before.Unread) || after.Unread[0].Valid != before.Unread[0].Valid || after.Unread[0].Read != before.Unread[0].Read {
+		t.Fatal("改名不应产生或清除提醒", after.Unread)
+	}
+	late := testEvent("late-status-name", "activity.observed", 3)
+	late.SessionTitle = "任务补报中的旧标题"
+	if _, err := h.Accept(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = h.Snapshot(ctx)
+	if after.Sessions[0].Title != rename.SessionTitle {
+		t.Fatal("任务中的旧标题不能覆盖改名")
+	}
+	unknown := testEvent("unknown-name", "session.renamed", 1)
+	unknown.SessionID = "未观察到的会话"
+	if _, err := h.Accept(ctx, unknown); err != nil {
+		t.Fatal(err)
+	}
+	unnamed := testEvent("unnamed", "session.started", 1)
+	unnamed.SessionID, unnamed.Project = "不应显示的后台ID", "项目名"
+	if _, err := h.Accept(ctx, unnamed); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = h.Snapshot(ctx)
+	if len(after.Sessions) != 2 {
+		t.Fatal("改名不能创建未观察的会话", after.Sessions)
+	}
+	for _, session := range after.Sessions {
+		if session.SessionID == unnamed.SessionID && session.Title != "" {
+			t.Fatal("无原生名称时不得把项目或会话ID当标题")
+		}
+	}
+}
+
+func TestUnsequencedNamesCannotRollbackKnownNativeRename(t *testing.T) {
+	h := testHub(t)
+	ctx := context.Background()
+	start := testEvent("unordered-start", "session.started", 0)
+	start.SessionTitle = "原名称"
+	if _, err := h.Accept(ctx, start); err != nil {
+		t.Fatal(err)
+	}
+	live := testEvent("unordered-live", "activity.observed", 0)
+	live.SessionTitle = "下一次事件中的新名称"
+	if _, err := h.Accept(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := h.Snapshot(ctx)
+	if s.Sessions[0].Title != live.SessionTitle {
+		t.Fatal("无原生序号来源应在下一次事件更新名称")
+	}
+	rename := testEvent("ordered-rename", "session.renamed", 30)
+	rename.SessionTitle = "最新原生改名"
+	if _, err := h.Accept(ctx, rename); err != nil {
+		t.Fatal(err)
+	}
+	live.EventID, live.SessionTitle = "late-unordered", "旧无序号载荷"
+	if _, err := h.Accept(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	older := testEvent("late-unordered-rename", "session.renamed", 0)
+	older.SessionTitle = "旧无序号改名"
+	if _, err := h.Accept(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = h.Snapshot(ctx)
+	if s.Sessions[0].Title != rename.SessionTitle || s.Sessions[0].LastEventID != live.EventID {
+		t.Fatal("缺少序号不能回滚已知新名，但仍处理实时状态", s)
+	}
+	latest := testEvent("ordered-latest", "activity.observed", 31)
+	latest.SessionTitle = "后续有序事件的名称"
+	if _, err := h.Accept(ctx, latest); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = h.Snapshot(ctx)
+	if s.Sessions[0].Title != latest.SessionTitle || s.Sessions[0].NameSequence != 31 {
+		t.Fatal("较新原生序号应允许更新名称", s)
+	}
+}

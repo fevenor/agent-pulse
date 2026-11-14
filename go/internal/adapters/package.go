@@ -31,7 +31,6 @@ type Manifest struct {
 	Version     string            `json:"version"`
 	Format      int               `json:"format"`
 	Protocol    int               `json:"protocol"`
-	MinBridge   string            `json:"min_bridge"`
 	Platform    string            `json:"platform"`
 	Kind        string            `json:"kind"`
 	Entry       string            `json:"entry"`
@@ -66,7 +65,7 @@ func (m Manifest) Validate() error {
 	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" {
 		return errors.New("不支持的宿主配置格式")
 	}
-	for _, value := range []string{m.Version, m.MinBridge, m.AgentMin, m.AgentMax} {
+	for _, value := range []string{m.Version, m.AgentMin, m.AgentMax} {
 		if value != "" {
 			if _, ok := version(value); !ok {
 				return errors.New("包与兼容版本必须为数字版本号")
@@ -79,8 +78,8 @@ func (m Manifest) Validate() error {
 	if !fs.ValidPath(m.Entry) || m.Entry == "." || strings.Contains(m.Entry, "\\") || filepath.IsAbs(m.Entry) {
 		return errors.New("入口路径无效")
 	}
-	if m.Platform == "" || m.MinBridge == "" || m.Command == "" || strings.ContainsAny(m.Command, "/\\ \t\n") {
-		return errors.New("适配包兼容性或探测命令缺失")
+	if m.Platform == "" || m.Command == "" || strings.ContainsAny(m.Command, "/\\ \t\n") {
+		return errors.New("适配包平台或探测命令缺失")
 	}
 	for event := range m.Hooks {
 		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,63}$`).MatchString(event) {

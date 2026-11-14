@@ -2,7 +2,7 @@
 param([string]$Repository = 'dist/repository-windows', [uint64]$Sequence = 1, [switch]$NativeOnly)
 $ErrorActionPreference = 'Stop'
 if ($Sequence -lt 1) { throw '发布序号必须大于零' }
-$projectRoot = Split-Path $PSScriptRoot -Parent
+$projectRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 & (Join-Path $PSScriptRoot 'build.ps1') -DevelopmentTools
 $repositoryPath = [IO.Path]::GetFullPath($Repository)
 New-Item -ItemType Directory -Force $repositoryPath | Out-Null
@@ -14,7 +14,6 @@ foreach ($adapter in @('zcode')) {
     $manifest = Get-Content -Raw (Join-Path $projectRoot "adapters/$adapter/manifest.json") | ConvertFrom-Json
     $manifest.platform = 'windows/amd64'
     $manifest.entry = 'adapter.exe'
-    if ([version]$manifest.min_bridge -lt [version]'0.3.0') { $manifest.min_bridge = '0.3.0' }
     $manifestPath = Join-Path $projectRoot "dist/adapter-build-windows/$adapter-manifest.json"
     [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 12))
     $packagePath = Join-Path $repositoryPath "$adapter.json"

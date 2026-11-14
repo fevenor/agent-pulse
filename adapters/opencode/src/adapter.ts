@@ -21,12 +21,13 @@ export type PulseEvent = {
 };
 
 export const eventTypes = [
-  "session.created", "session.deleted", "session.execution.started",
+  "session.created", "session.deleted", "session.renamed", "session.execution.started",
   "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted",
   "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
 ] satisfies NativeEvent["type"][];
 
 const kinds: Record<string, [string, string]> = {
+  "session.renamed": ["session.renamed", "会话名称已更新"],
   "session.created": ["session.started", "会话已创建"],
   "session.deleted": ["session.closed", "会话已删除"],
   "session.execution.started": ["session.resumed", "开始处理"],
@@ -51,6 +52,7 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
   const mapping = kinds[event.type];
   const id = sessionID(event);
   if (!mapping || !session || session.parentID || !id || session.id !== id || !("created" in event) || typeof event.created !== "number") return;
+  const nativeTitle = event.type === "session.renamed" ? event.data.title : session.title;
   let body = mapping[1];
   if (event.type === "permission.asked") body = `需要批准：${event.data.action}`;
   if (event.type === "form.created") body = event.data.form.title;
@@ -63,8 +65,8 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
     scope: "main",
     kind: mapping[0],
     occurred_at: new Date(event.created).toISOString(),
-    title: `${mapping[1]}：${session.title || "OpenCode"}`.slice(0, 240),
-    session_title: (session.title || "").slice(0, 240),
+    title: `${mapping[1]}：${nativeTitle || "OpenCode"}`.slice(0, 240),
+    session_title: (nativeTitle || "").slice(0, 240),
     body: body.slice(0, 4000),
     project: session.location.directory ?? "",
     ...("durable" in event ? { sequence: event.durable.seq } : {}),
@@ -83,11 +85,11 @@ export async function emit(url: string, event: PulseEvent, signal?: AbortSignal)
   const timeout = AbortSignal.timeout(200);
   const response = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(event), signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+    body: JSON.stringify({ ...event, process_id: process.pid }), signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     redirect: "error",
   });
   const receipt = await response.json() as { event_id?: string; accepted?: string };
-  if (response.status !== 202 || receipt.event_id !== event.event_id || receipt.accepted !== "memory") {
+  if (response.status !== 202 || receipt.event_id !== event.event_id || (receipt.accepted !== "memory" && receipt.accepted !== "filtered")) {
     throw new Error("Bridge 未确认接收");
   }
 }

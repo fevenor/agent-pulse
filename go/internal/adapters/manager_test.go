@@ -71,7 +71,7 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 		write(t, filepath.Join(dir, entry), body)
 		// Windows 不同版本复用同一合法辅助程序，用普通数据文件区分包摘要。
 		write(t, filepath.Join(dir, "测试版本.txt"), v+"\n")
-		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: entry, Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: configStyle, Hooks: map[string]string{"Stop": ""}})
+		p, err := BuildPackage(dir, repo, Manifest{ID: "sample", Version: v, Format: 1, Protocol: 1, Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: entry, Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.9.9", ConfigStyle: configStyle, Hooks: map[string]string{"Stop": ""}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +106,48 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 			t.Fatal("用户配置丢失")
 		}
 	}
+	// 同包再次启用必须修复当前授权路径；保留用户配置，不能用版本相同误报成功。
+	c := hosts[0]
+	path := c.Adapters.Managed["sample"]
+	write(t, path, `{"theme":"light","mcp":{"keep":true}}`)
+	if err := Sync(context.Background(), c, filepath.Join(root, "bridge.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	repaired, _ := os.ReadFile(path)
+	if !strings.Contains(string(repaired), "dispatch") || !strings.Contains(string(repaired), "light") || !strings.Contains(string(repaired), "mcp") {
+		t.Fatal("同版本没有修复宿主钩子", string(repaired))
+	}
+	info, _ := os.Stat(path)
+	if err := Sync(context.Background(), c, filepath.Join(root, "bridge.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, _ := os.Stat(path)
+	if !afterInfo.ModTime().Equal(info.ModTime()) {
+		t.Fatal("配置无变化时不应重复写入")
+	}
+	newPath := filepath.Join(root, "新的配置.json")
+	c.Adapters.Managed["sample"] = newPath
+	if err := Sync(context.Background(), c, filepath.Join(root, "bridge.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	moved, _ := os.ReadFile(newPath)
+	if !strings.Contains(string(moved), "dispatch") {
+		t.Fatal("新授权路径未安装钩子")
+	}
+	write(t, newPath, `{"hooks":[]}`)
+	if err := Sync(context.Background(), c, filepath.Join(root, "bridge.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	invalidState, _ := loadState(c.Adapters.Directory)
+	if invalidState.Installed["sample"].Error == "" {
+		t.Fatal("无效配置不应报告接入成功")
+	}
+	invalid, _ := os.ReadFile(newPath)
+	if string(invalid) != `{"hooks":[]}` {
+		t.Fatal("不应覆盖无效配置")
+	}
+	c.Adapters.Managed["sample"] = path
+	write(t, path, string(repaired))
 	original, _ := os.ReadFile(filepath.Join(repo, "index.json"))
 	publish(2, p2)
 	if err := Sync(context.Background(), hosts[0], filepath.Join(root, "bridge.yaml")); err != nil {
@@ -151,7 +193,7 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	c := hosts[0]
+	c = hosts[0]
 	before, _ := loadState(c.Adapters.Directory)
 	raw, _ := os.ReadFile(c.Adapters.Managed["sample"])
 	next := []byte(`{"interrupted":true}`)
@@ -187,17 +229,6 @@ func TestSignedUpdatesTwoHostsRollbackAndRecovery(t *testing.T) {
 	state, _ = loadState(c.Adapters.Directory)
 	if state.Installed["sample"].Error != "" {
 		t.Fatal("旧包错误影响当前版本", state)
-	}
-	incompatible.MinBridge = "99.0.0"
-	if err := SignIndex(repo, priv, Index{Sequence: 5, Packages: []Package{incompatible}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Sync(context.Background(), c, "bridge.yaml"); err != nil {
-		t.Fatal(err)
-	}
-	state, _ = loadState(c.Adapters.Directory)
-	if state.Installed["sample"].Package.Version != "1.0.0" || !strings.Contains(state.Installed["sample"].Error, "Bridge") {
-		t.Fatal("不兼容的通用运行能力应保留旧包并说明原因", state)
 	}
 	// 次版本变化继续安装，但警告不能冒充安装失败；补丁变化不再被硬锁。
 	minorPackage := build("1.2.0", "#!/bin/sh\nprintf '{}'\n")

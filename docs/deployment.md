@@ -7,13 +7,13 @@
 | 组件 | 部署位置 | 所需环境 | 配置与持久数据 |
 | --- | --- | --- | --- |
 | Hub（会话中心） | 一台可信内网服务器 | Docker Engine 和 Compose 插件 | Hub 镜像自带默认配置与该 RC 的签名适配仓库；独立数据卷保存 SQLite |
-| Bridge（本机接入） | 每台运行 Agent 的 Linux 主机或 Windows 环境 | Linux 用户 systemd；Go 1.25 用于源码构建 | `bridge.yaml`；适配包与安装状态目录；事件队列只在内存 |
+| Bridge（本机接入） | 每台运行 Agent 的 Linux 主机或 Windows 环境 | Linux 用户 systemd、Bash、curl；安装预构建无需编译器 | `bridge.yaml`；适配包与安装状态目录；事件队列只在内存 |
 | Relay（公网中继，可选） | 公网服务器 | Docker/Compose、域名及支持 WebSocket 的 HTTPS 代理 | `relay.runtime.yaml`；独立数据卷保存待转交事件 |
 | Tray（桌面通知） | Windows 桌面 | 已构建的 Windows 便携包 | 程序旁 `tray.yaml` 和 `data/`；可托管本机 Bridge |
 
 开始前确定：Hub 内网地址、目标架构、运行的 Agent 及版本、是否需要 Relay、手机渠道请求格式。Bridge setup 会为每个接入环境生成稳定主机指纹，默认采用系统主机名显示；需要跨主机统一命名时在 Hub 管理页修改。已有服务先检查并备份配置和数据，避免重复创建 Hub、重新生成签名私钥或覆盖 Agent 配置。获取源码、提交或推送等 Git 操作按使用者授权范围执行。
 
-部署 Hub/Relay 已发布镜像不需要 Go、Node.js 或 Rust。构建 Linux Bridge 只需要 Go；构建适配包需要 Go 和 Volta 管理的 Node.js/pnpm。`scripts/package-adapters.sh` 当前产出 Linux amd64 适配包，不能直接用于 arm64；其他架构的构建边界见 [适配器文档](adapters.md)。
+部署 Hub/Relay 已发布镜像不需要 Go、Node.js 或 Rust。用户安装 Bridge 只需要 Bash、curl 和常用系统工具，不需要编译器。构建维护者使用 Go；构建适配包使用 Go 和 Volta 管理的 Node.js/pnpm。`scripts/build/package-adapters.sh` 当前产出 Linux amd64 适配包，不能直接用于 arm64；其他架构的构建边界见 [适配器文档](adapters.md)。
 
 ## 1. 部署 Hub
 
@@ -38,16 +38,31 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 ## 2. 在 Linux 主机安装 Bridge
 
-在该主机安装 Bridge。当前尚无 RC 安装包时，从源码构建：
+用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。默认选择最新稳定发布；指定 `--version` 可安装已公开的预发布版本。
+
+公开 Release 附件齐备后，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
-bash scripts/build.sh
-bash scripts/install-bridge.sh
+set -o pipefail
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  https://github.com/fevenor/agent-pulse/releases/latest/download/install-bridge.sh \
+  | bash -s -- --setup
 ```
 
-安装后推荐执行 `agent-pulse-bridge setup`。按提示填写 Hub 地址，再逐项选择启用、禁用或跳过的受支持 Agent。setup 会创建稳定随机主机指纹、默认采用系统主机名作为显示名，并列出本次修改的 Agent 配置文件。允许配置页面上的 Hub 地址为可信内网 HTTP；公网部署应使用 HTTPS 和访问控制。Relay 和适配包发布公钥均由 Bridge 直连 Hub 获取，公钥首次固定后若发生变化会停止同步并要求核验。
+若已取得安装脚本，也可执行 `bash scripts/install/bridge.sh --version "v已公开版本" --setup`。不带 `--setup` 只安装二进制和用户服务定义，不自动启用服务或修改 Agent 配置；已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
 
-setup 只保证完成配置修改，不保证运行中的 Agent 立即生效。完成后按提示重启或重新加载对应 Agent；Codex 还可能要求用户确认 hook 信任。Agent 配置文件无法解析或含不支持的 JSONC 时，Bridge 会拒绝覆盖，应先备份并整理为标准 JSON。
+当前 RC 若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
+
+```sh
+bash scripts/install/bridge.sh --version "v已构建版本" \
+  --file "/维护者提供的二进制路径" --sha256 "对应64位摘要"
+```
+
+该入口只复制预构建，仍校验摘要和架构；不要求目标用户安装 Go。Linux arm64 Bridge 的存在不表示当前 amd64 命令适配包可直接用于 arm64，受支持的适配包范围仍以清单为准。
+
+一键安装时使用 `--setup` 会自动进入配置；若选择只安装，则手动执行 `agent-pulse-bridge setup`。按提示填写 Hub 地址，再逐项选择启用、禁用或跳过的受支持 Agent。setup 会创建稳定随机主机指纹、默认采用系统主机名作为显示名，并列出本次修改的 Agent 配置文件。允许配置页面上的 Hub 地址为可信内网 HTTP；公网部署应使用 HTTPS 和访问控制。Relay 和适配包发布公钥均由 Bridge 直连 Hub 获取，公钥首次固定后若发生变化会停止同步并要求核验。
+
+配置开始前先说明接下来的操作；逐项显示 Agent 名称、版本、自动识别的配置路径与当前状态，结束后给出结果清单，再提示以后可用 setup 修改。OpenCode 优先沿用已有 opencode.json，其次采用 opencode.jsonc，已有 Bridge 中的明确路径始终优先；不要求用户额外手填路径。仅本次启用且配置完成的 Codex CLI 需要在 `/hooks` 审核并信任钩子，不给其他正常接入增加额外授权提示。Antigravity 与其他 CLI 一样直接启动；ACP 调用和子代理运行不发送给用户。配置文件无法解析或含不支持的 JSONC 时，Bridge 仍拒绝覆盖，错误会说明接入未完成。
 
 对于需要脚本化部署的高级使用者，可手工配置 `~/.config/agent-pulse/bridge.yaml`，其中 `source_id` 应沿用 setup 已生成的值：
 
@@ -66,7 +81,7 @@ adapters:
     opencode: "/home/your-user/.config/opencode/opencode.json"
 ```
 
-`managed` 决定安装器可改写的文件范围，不应列入未安装的宿主。各宿主受支持版本见适配器 `manifest.json`；超出范围时查看同步结果，不绕过兼容检查。
+`managed` 决定安装器可改写的文件范围，不应列入未安装的宿主。各宿主受支持版本见适配器 `manifest.json`；超出范围时查看同步结果，不绕过 Agent 主版本政策和包完整性校验。
 若 Agent 在用户目录安装，创建 `~/.config/agent-pulse/environment`，写入实际 PATH，不能依赖 systemd 读取 shell 启动配置：
 
 ```dotenv
@@ -88,13 +103,7 @@ curl --fail http://127.0.0.1:18702/healthz
 
 若配置 token 或 Relay token，可以使用权限为 600、版本控制外的 Bridge YAML 保存。若使用 `${env:变量名}`，这些变量必须同时在 systemd 服务及各 Agent 的 hook 进程环境中存在；仅放在 systemd 的 EnvironmentFile 会导致交互式 Agent hook 加载配置失败。
 
-安装后仍需宿主加载：OpenCode 重启或重新加载；Codex 在 `/hooks` 或桌面设置的 Hooks 页面审核新 hook，重启 daemon 本身不代表已信任；Qoder 保持正常项目/命令信任流程。Antigravity 必须通过主会话包装入口启动，例如 ACP：
-
-```sh
-"$HOME/.local/bin/agent-pulse-bridge" run-adapter \
-  --config "$HOME/.config/agent-pulse/bridge.yaml" --adapter antigravity -- \
-  acp --stdio --process-per-session
-```
+配置完成后可以正常启动所选 Agent。Codex CLI 需先在 `/hooks` 审核钩子，重启 daemon 本身不代表已信任；Qoder 原有的项目/命令信任流程保持不变，不是安装脚本新增的授权步骤。若旧进程仍未加载新配置，按下文故障排查处理，不将所有 Agent 的手工重启写成安装必选操作。Antigravity 保持原来的 `agy` 启动命令；`agy acp` 的运行事件会被过滤。
 
 Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客户端](windows-client.md)，不要把上述 Linux systemd 步骤照搬到 Windows。
 
@@ -139,4 +148,4 @@ AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 | Relay 健康但 `hub_connected: false` | Hub 中继地址和 token、HTTPS/WebSocket 代理、出站网络 |
 | 只有 App 收件、无系统通知 | 渠道/设备长度限制、App 前后台和系统权限，不能只看 HTTP 状态 |
 
-查看 `journalctl --user -u agent-pulse-bridge` 或 Compose 日志时不要公开密钥、完整渠道 URL 和原始事件正文。升级前记录镜像版本并备份配置、适配包和 SQLite；数据库使用在线备份能力或停服务复制数据库及 WAL，不只复制正在写入的主文件。回退镜像前核对数据库兼容性，必要时恢复匹配备份；不要运行 `down -v` 删除数据卷。Bridge 停止会丢失内存中尚未发送的事件，应先确认队列清空。
+查看 `journalctl --user -u agent-pulse-bridge` 或 Compose 日志时不要公开密钥、完整渠道 URL 和原始事件正文。升级前记录镜像版本并备份配置、适配包和 SQLite；数据库使用在线备份能力或停服务复制数据库及 WAL，不只复制正在写入的主文件。当前开发阶段不保证不同结构间的数据互用；结构变化时经明确授权重建，备份只用于对应结构的恢复；不要运行 `down -v` 删除数据卷。Bridge 停止会丢失内存中尚未发送的事件，应先确认队列清空。

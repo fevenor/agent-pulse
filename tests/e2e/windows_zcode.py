@@ -150,7 +150,7 @@ def verify(directory):
         kinds.update(e["kind"] for e in events)
     assert {"session.started", "session.resumed", "turn.completed"} <= kinds, kinds
     runtime = read(directory / "adapters/runtime/zcode.json")
-    assert runtime["version"] == "0.1.0"
+    assert runtime["version"] == read(ROOT / "adapters/zcode/manifest.json")["version"]
     tray = read(directory / "data/state.json")
     assert any(e["agent"] == "zcode" for e in tray["snapshot"]["unread"]), "Tray 未接收到事件"
     result = {"source": "ZCode 原生钩子", "model": "GLM-5.3-Flash（由桌面确认）",

@@ -20,7 +20,7 @@ AgentPulse 使用 Rust + GPUI，Windows 用户只启动一个 Tray 程序。Hub�
 
 悬浮图标默认关闭，可在托盘菜单开启。图标置顶，拖到工作区四边后吸附，移开约 650 毫秒后收起并保留约 8 个逻辑像素；悬停约 150 毫秒后展开，动画约 180 毫秒。点击图标打开小窗，小窗打开时保持图标展开。“设置”可隐藏图标或重置位置。偏好保存在便携数据目录，异常屏幕布局会限制到可用工作区。
 
-选择具体会话才打开可复用的大详情窗口。事件按时间倒序每批加载 30 条，显示本地时间、类型、标题和未读/已读/普通记录；最新一条与未读事件默认展开，已读事件默认收起；可以同时展开多条，底部可加载更早事件。这不是完整 Agent 对话。只有详情位于前台、未最小化且展开内容进入滚动可视范围时才累计阅读时间，累计可见 3 秒后自动标记已读；后台、折叠及分页外事件不计时。自动已读不会收起当前正文，重新打开详情时才重新应用默认展开规则。“本会话全部已读”是独立动作。
+选择具体会话才打开可复用的大详情窗口。事件按时间倒序每批加载 30 条，显示本地时间、类型、标题和未读/已读/普通记录；最新一条与未读事件默认展开，已读事件默认收起；可以同时展开多条，底部可加载更早事件。折叠后只显示时间、事件类型和阅读状态；展开才显示事件标题与非空正文，记录高度随内容变化，不预留空正文高度。这不是完整 Agent 对话。只有详情位于前台、未最小化且展开内容进入滚动可视范围时才累计阅读时间，累计可见 3 秒后自动标记已读；后台、折叠及分页外事件不计时。自动已读不会收起当前正文，重新打开详情时才重新应用默认展开规则。“本会话全部已读”是独立动作。
 
 设置和详情保留 Windows 原生标题栏及唯一一组窗口按钮，不重复绘制页面关闭按钮。详情允许调整大小和最大化，最小尺寸为 520×360 个逻辑像素；长消息在内部滚动，底部历史加载操作保持可见。设置允许调整大小，最小为 400×320，取消最大化。悬浮图标、会话小窗和提醒卡片继续无框且尺寸由内容规则控制。
 
@@ -32,7 +32,7 @@ AgentPulse 使用 Rust + GPUI，Windows 用户只启动一个 Tray 程序。Hub�
 
 移动、备份时保留整个程序目录；升级时只替换可执行文件，保留 `tray.yaml` 和 `data/`。配置含令牌、状态含提醒正文，应保存在本人可控制的位置。从旧版本升级时，先退出程序并备份旧配置与 `%LOCALAPPDATA%/AgentPulse/`，将原 `state.json`、`desktop.json` 复制到便携目录的 `data/` 后再启动；旧文件不会自动删除或覆盖，不能遗漏尚未同步的已读记录。
 
-Tray 配置只需填写 Hub 地址；Hub 令牌仅在服务要求鉴权时填写。需要采集本机 Agent 时，在设置页点击“配置并启用本机 Agent”。向导会打开单独的控制台，扫描当前 Windows 用户已安装且受支持的 Agent，并逐个询问启用、禁用或跳过；只有明确选择的 Agent 配置会被修改。完成后的报告保留在控制台，按 Enter 返回设置；随后退出并重新启动 Tray，内置 Bridge 才会启动。修改后的 Agent 配置可能还需由 Agent 重启或重新加载；Codex 等宿主也可能要求用户确认项目或命令信任。
+Tray 配置只需填写 Hub 地址；Hub 令牌仅在服务要求鉴权时填写。需要采集本机 Agent 时，在设置页点击“配置并启用本机 Agent”。向导会打开单独的控制台，扫描当前 Windows 用户已安装且受支持的 Agent，并逐个询问启用、禁用或跳过；只有明确选择的 Agent 配置会被修改。完成后的报告保留在控制台，按 Enter 返回设置；随后退出并重新启动 Tray，内置 Bridge 才会启动。向导按实际结果显示来源名称、版本和配置路径，不给当前 ZCode 接入添加额外授权提示；缺少原生运行回执时，再按故障排查检查宿主是否加载配置。
 
 首次配置时，Tray 会在便携目录 `data/bridge.yaml` 创建并复用稳定主机指纹，主机可读名称默认采用 Windows 主机名，Hub 地址和已有令牌从 `tray.yaml` 取得。已有 `data/bridge.yaml` 或用户显式配置的 `bridge_config` 均不会被首次配置覆盖。内置程序按版本释放到 `data/internal/`，通过 Windows Job Object 随 Tray 退出清理，不接管独立 Bridge。只查看远端会话时无需运行向导。
 
@@ -42,9 +42,9 @@ Bridge 仍使用内存待发队列，退出会丢失尚未交付的事件；已�
 
 人工修正为结束/中断使先前等待提醒失效，但保留未读事实，不伪造完成事件或手机通知。管理动作须收到 Hub 的 HTTP 200 才确认，离线不排队；会话已变化时拒绝旧版本操作，刷新后再处理。离线已读继续支持持久暂存。
 
-Bridge 主机指纹在首次 setup 时生成并保存在配置中，Tray 客户端指纹独立生成并保存在状态文件中；软件不提供修改指纹的功能。二者均支持配置 `host_name`，省略时采用系统主机名。Hub 主机管理页可集中覆盖显示名，所有 Tray 同步展示该名称，清空覆盖名称后回退为设备配置的名称。归档主机的会话和时间线在 Tray 中隐藏，Hub 保留历史；Bridge 再次上线会自动解除归档。原生标题通过事件的 `session_title` 提供，缺省使用项目或会话标识，普通通知标题不再覆盖会话标题。
+Bridge 主机指纹在首次 setup 时生成并保存在配置中，Tray 客户端指纹独立生成并保存在状态文件中；软件不提供修改指纹的功能。二者均支持配置 `host_name`，省略时采用系统主机名。Hub 主机管理页可集中覆盖显示名，所有 Tray 同步展示该名称，清空覆盖名称后回退为设备配置的名称。归档主机的会话和时间线在 Tray 中隐藏，Hub 保留历史；Bridge 再次上线会自动解除归档。原生标题通过事件的 `session_title` 提供，缺省显示“未命名会话”，项目单独展示；会话 ID 只用于后台，本项目别名仅作备注，普通通知标题不覆盖会话名称。
 
-升级时先备份 Hub 数据库并更新 Hub、Relay，再更新 Bridge/Tray 和 OpenCode 适配包。主机管理需要当前 Hub；数据库版本为 5，旧程序不能直接读取新库。回退须使用升级前备份，不能仅换回旧可执行程序。
+本项目组件统一使用当前协议和存储结构。调整结构前先备份，开发阶段不迁移旧库；实际重建或部署须经用户授权。对应结构的备份用于恢复，不能自动清空正式数据。
 
 ## 中继发现与主机偏好
 
@@ -109,20 +109,20 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ```powershell
 # 默认仅构建用户入口；内部 Bridge 不作为顶层程序分发
-./scripts/build.ps1
+./scripts/build/build.ps1
 ./bin/agent-pulse-tray.exe --config config/tray.local.yaml --show
 
 # 显式生成开发测试工具到 bin/dev
-./scripts/build.ps1 -DevelopmentTools
-./scripts/check.ps1 -Tray -Integration
+./scripts/build/build.ps1 -DevelopmentTools
+./scripts/check/check.ps1 -Tray -Integration
 
 # 前台控制台演示，Ctrl+C 退出
-./scripts/build.ps1 -Demo
+./scripts/build/build.ps1 -Demo
 ./bin/dev/agent-pulse-tray-demo.exe --demo
 # 仅验收时显式打开演示设置
 ./bin/dev/agent-pulse-tray-demo.exe --demo --settings
 
-./scripts/package-windows.ps1
+./scripts/build/package-windows.ps1
 ```
 
 演示由 `dev-demo` 编译开关和 `preview` 开发配置生成，与正式版一样默认驻留托盘。通过托盘“设置”或 `--settings` 打开演示操作入口。使用内存样例，不读取生产配置、不创建生产状态、不连接服务或启动 Bridge，不登记自启动，窗口命令输出到当前控制台。发布版编译排除演示代码和数据，`--demo` 返回非零退出码；发布配置启用演示开关会编译失败。
@@ -133,7 +133,7 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ## Windows 适配包
 
-`scripts/package-adapters.ps1` 生成 `dist/repository-windows/` 的 ZCode 一个 Windows amd64 原生包及未签名索引；OpenCode 通用包由 Linux 构建，不代表本轮支持 Windows OpenCode 宿主。发布者仍需签名后分发。ZCode 0.1.x 包需要 Bridge 0.5.0（Tray 0.5.0 已内置）。发布含 ZCode 的索引前，所有消费该索引的 Bridge 均须升级到 0.5.0，旧版不识别新增的进程钩子配置格式。先更新 Hub/Relay，再更新 Bridge/Tray，最后发布新索引。
+`scripts/build/package-adapters.ps1` 生成 `dist/repository-windows/` 的 ZCode 一个 Windows amd64 原生包及未签名索引；OpenCode 通用包由 Linux 构建，不代表本轮支持 Windows OpenCode 宿主。发布者仍需签名后分发。当前候选的组件和适配包按同一现行结构构建，不维护旧接收器最低版本门槛。
 
 安装器使用系统锁、临时文件同步替换与不可变包目录，保留用户其他配置，更新不覆盖正在执行的包。ZCode 3.17.2 已通过无项目任务、GLM-5.3-Flash 与内置 Bridge 的实际链路测试，接入方法及异常退出限制见 [适配器说明](adapters.md)。Windows Codex CLI 和 ChatGPT Windows 桌面端不属于本轮 RC，后续规划单独核实能力；Qoder、Antigravity、OpenCode 的 Windows 终端接入不在当前范围，通用转换测试存在不等于承诺这些宿主已经接入。
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 构建独立适配包和未签名目标索引；发布者随后本地签名。
 set -euo pipefail
-project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 repository="${1:-$project_root/dist/repository}"
 sequence="${2:-1}"
 mkdir -p "$repository" "$project_root/dist/adapter-build"
-bash "$project_root/scripts/build.sh"
+bash "$project_root/scripts/build/build.sh"
 for adapter_id in codex antigravity qoderclicn; do
   package_dir="$project_root/dist/adapter-build/$adapter_id"
   mkdir -p "$package_dir"

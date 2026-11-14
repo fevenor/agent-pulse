@@ -11,7 +11,7 @@
 ```sh
 pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
 pnpm --dir web/hub build
-bash scripts/build.sh
+bash scripts/build/build.sh
 ```
 
 产物在 `bin/`。普通构建使用现有 Go 缓存；受限环境可显式设置 `GOMODCACHE` 和 `GOCACHE` 为可写目录。下载依赖需要网络，HTTP/WebSocket 集成测试需要允许本地回环监听。任何命令都不暂存或提交代码。
@@ -137,7 +137,7 @@ GitHub 自动双架构构建、容器恢复验证及拉取已发布 Relay 镜像
 
 ```sh
 pnpm --dir web/hub build
-bash scripts/package-adapters.sh
+bash scripts/build/package-adapters.sh
 # 按来源接入说明签名并发布适配包。
 docker compose -f deploy/compose/hub.yaml up -d --build
 # 公网机器配置 AGENT_PULSE_RELAY_TOKEN 后执行：
@@ -146,9 +146,9 @@ docker compose -f deploy/compose/relay.yaml up -d --build
 
 Hub 用 `HUB_BIND_IP` 指定可信内网 IP；默认只绑定回环。编辑各自的 `*.runtime.yaml` 配置渠道和中继。Hub/Relay 镜像均以非 root 用户运行，SQLite 放在独立数据卷中；适配包目录只读挂载。Relay 端口仅绑定宿主回环，由 [Nginx 示例](../deploy/proxy/relay.nginx.conf) 终结 TLS。代理应覆盖 `X-Forwarded-Proto` 并正确转发 WebSocket，不将 token 写入日志。
 
-本机 Bridge 的用户级安装脚本为 `bash scripts/install-bridge.sh`，不会覆盖已有 Bridge YAML，不自动启用服务。填写配置后执行脚本提示的 `systemctl --user` 命令。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
+Bridge 用户安装入口为 `bash scripts/install/bridge.sh --setup`，自动下载并校验当前 Linux 架构的预构建二进制，不调用 Go 或构建脚本；Release 附件缺失则明确失败。只安装时不加 `--setup`，保留已有 Bridge YAML 和用户服务。开发者测试已构建文件可显式使用 `--version 版本 --file 文件 --sha256 摘要`，目标使用者无需编译。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
 
-`bash scripts/build-targets.sh` 交叉编译 Linux amd64/arm64 和 Windows amd64 程序，以及 Windows arm64 Bridge/测试客户端；交叉编译不等于目标环境验收。Windows 安装器和 Tray 不在这个脚本的交付范围。
+`bash scripts/build/build-targets.sh` 交叉编译 Linux amd64/arm64 和 Windows amd64 程序，以及 Windows arm64 Bridge/测试客户端；交叉编译不等于目标环境验收。Windows 安装器和 Tray 不在这个脚本的交付范围。
 
 Dockerfile 使用构建主机上的 Go 工具链交叉编译，无需在构建阶段运行 arm64 程序。可分别用 `docker build --platform linux/arm64 --target hub -f deploy/docker/Dockerfile -t agent-pulse-hub:arm64 .` 和对应的 `--target relay` 构建 arm64 镜像；amd64 使用 `--platform linux/amd64`。镜像构建不等于 arm64 真机运行。
 
@@ -166,11 +166,11 @@ Dockerfile 使用构建主机上的 Go 工具链交叉编译，无需在构建�
 ```sh
 pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
 pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
-bash scripts/check.sh
-bash scripts/build.sh
+bash scripts/check/check.sh
+bash scripts/build/build.sh
 pnpm --dir adapters/opencode smoke
 ```
 
 最后一个命令需要 OpenCode 2.0.20。脚本在临时目录使用隔离配置启动三个进程，验证原生创建/输入等待事件、已读和 Hub 强制终止恢复，不调用模型。打印证据目录后关闭进程；测试日志不等于真实模型完成、实际子代理执行或手机送达验证。
 
-独立包 loader 验证：先运行 `bash scripts/package-adapters.sh`，再执行 `AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke`。qoderclicn + DeepSeek-Flash + 本地推送的真实流程见 [qoderclicn 说明](../adapters/qoderclicn/README.md)。测试不自动改动日常 Agent 配置。
+独立包 loader 验证：先运行 `bash scripts/build/package-adapters.sh`，再执行 `AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke`。qoderclicn + DeepSeek-Flash + 本地推送的真实流程见 [qoderclicn 说明](../adapters/qoderclicn/README.md)。测试不自动改动日常 Agent 配置。

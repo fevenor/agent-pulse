@@ -36,6 +36,12 @@ type Event struct {
 	SessionTitle string    `json:"session_title,omitempty"`
 }
 
+// LocalEvent 只在本机 Bridge 入口使用，进程信息不会转发到 Hub/Relay 或出现在界面。
+type LocalEvent struct {
+	Event
+	ProcessID int `json:"process_id,omitempty"`
+}
+
 func NewID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -74,7 +80,7 @@ func (e Event) Validate() error {
 }
 
 var states = map[string]string{
-	"session.started": "running", "session.resumed": "running", "activity.observed": "running",
+	"session.renamed": "", "session.started": "running", "session.resumed": "running", "activity.observed": "running",
 	"turn.completed": "idle", "task.completed": "idle", "input.required": "waiting", "approval.required": "waiting",
 	"run.failed": "failed", "run.interrupted": "interrupted", "session.closed": "closed", "observation.lost": "unknown",
 }
@@ -105,6 +111,7 @@ type Session struct {
 	LastKind     string    `json:"last_kind,omitempty"`
 	LastSequence int64     `json:"last_sequence,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	NameSequence int64     `json:"name_sequence"`
 }
 
 type EventView struct {

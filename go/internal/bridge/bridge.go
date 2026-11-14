@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"agent-pulse/internal/adapters"
 	"agent-pulse/internal/config"
 	"agent-pulse/internal/transport"
 	"agent-pulse/protocol"
@@ -46,10 +47,11 @@ func (b *Bridge) Handler() http.Handler {
 		transport.JSON(w, 200, map[string]any{"status": "ok", "pending": len(b.queue), "bytes": b.bytes, "rejected": b.rejected, "failed": b.failed, "last_failed_event_id": b.lastFailedID})
 	})
 	mux.HandleFunc("POST /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
-		var e protocol.Event
-		if !transport.Decode(w, r, &e) {
+		var input protocol.LocalEvent
+		if !transport.Decode(w, r, &input) {
 			return
 		}
+		e := input.Event
 		if e.SourceID == "" {
 			e.SourceID = b.config.SourceID
 		}
@@ -59,6 +61,10 @@ func (b *Bridge) Handler() http.Handler {
 		}
 		if err := e.Validate(); err != nil {
 			transport.Error(w, 400, err.Error())
+			return
+		}
+		if adapters.FromACP(b.config, input.ProcessID) {
+			transport.JSON(w, 202, protocol.Receipt{EventID: e.EventID, Accepted: "filtered"})
 			return
 		}
 		status, duplicate := b.enqueue(e)
@@ -207,11 +213,11 @@ func Emit(ctx context.Context, address string, e protocol.Event) error {
 		e.OccurredAt = time.Now().UTC()
 	}
 	var receipt protocol.Receipt
-	status, err := transport.Request(ctx, transport.Client(200*time.Millisecond), "http://"+address, "", http.MethodPost, "/api/v1/events", e, &receipt)
+	status, err := transport.Request(ctx, transport.Client(200*time.Millisecond), "http://"+address, "", http.MethodPost, "/api/v1/events", protocol.LocalEvent{Event: e, ProcessID: os.Getpid()}, &receipt)
 	if err != nil {
 		return err
 	}
-	if status != 202 || receipt.Accepted != "memory" || receipt.EventID != e.EventID {
+	if status != 202 || (receipt.Accepted != "memory" && receipt.Accepted != "filtered") || receipt.EventID != e.EventID {
 		return fmt.Errorf("本地确认格式错误")
 	}
 	return nil

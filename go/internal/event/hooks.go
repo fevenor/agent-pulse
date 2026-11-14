@@ -4,7 +4,6 @@ package event
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,24 +37,7 @@ type Hook struct {
 	ParentID string `json:"parentConversationId"`
 }
 
-// 主会话绑定由用户显式启动的 agy 包装器创建。缺少绑定时忽略，不能把字段缺失当主代理。
-func antigravityMain(h Hook, hook string, binding string) bool {
-	if binding == "" || h.ConversationID == "" || h.ParentID != "" {
-		return false
-	}
-	if hook == "SessionStart" {
-		f, err := os.OpenFile(binding, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err == nil {
-			_, err = f.WriteString(h.ConversationID)
-			_ = f.Close()
-			return err == nil
-		}
-	}
-	raw, err := os.ReadFile(binding)
-	return err == nil && string(raw) == h.ConversationID
-}
-
-func Convert(agent, source, hook string, raw []byte, now time.Time, binding string) (*protocol.Event, error) {
+func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.Event, error) {
 	var h Hook
 	if len(raw) > protocol.MaxHookBytes || json.Unmarshal(raw, &h) != nil {
 		return nil, errors.New("hook JSON 无效")
@@ -116,7 +98,10 @@ func Convert(agent, source, hook string, raw []byte, now time.Time, binding stri
 			}
 		}
 	case "antigravity":
-		if !antigravityMain(h, hook, binding) {
+		if h.ConversationID == "" {
+			return nil, errors.New("缺少会话标识")
+		}
+		if h.ParentID != "" || h.ParentSession != "" {
 			return nil, nil
 		}
 		h.SessionID = h.ConversationID
@@ -169,6 +154,24 @@ func Convert(agent, source, hook string, raw []byte, now time.Time, binding stri
 	e := &protocol.Event{EventID: id, SourceID: source, Agent: agent, SessionID: h.SessionID, Kind: kind, OccurredAt: now.UTC(), Scope: "main", Title: agent + " · " + title(kind), Body: "", Project: filepath.Base(h.CWD)}
 	if e.Project == "." || h.CWD == "" {
 		e.Project = ""
+	}
+	switch agent {
+	case "zcode":
+		name, internal := zcodeSessionMetadata(h.SessionID)
+		if internal {
+			return nil, nil
+		}
+		e.SessionTitle = name
+	case "codex":
+		e.SessionTitle = codexSessionTitle(h.SessionID)
+	case "qoderclicn":
+		e.SessionTitle = qoderSessionTitle(h.SessionID, h.CWD, h.Transcript)
+	case "antigravity":
+		name, internal := antigravitySessionMetadata(h.SessionID)
+		if internal {
+			return nil, nil
+		}
+		e.SessionTitle = name
 	}
 	if err := e.Validate(); err != nil {
 		return nil, err

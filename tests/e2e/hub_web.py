@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 root = Path(__file__).resolve().parents[2]
 temp = Path(tempfile.mkdtemp(prefix="agent-pulse-web-"))
 browser_session = "pulse-web-" + uuid.uuid4().hex[:10]
+browser_opened = False
 with socket.socket() as listener:
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
@@ -87,15 +88,16 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         event("windows-test", "main", "session.started", 1, "归档测试会话")
         event("linux-test", "waiting", "input.required", 1, "待输入会话")
         browser("open", base)
+        browser_opened = True
         wait_for("document.body.textContent.includes('实时连接正常')")
         counts(2, 1)
         manage("linux-test", "main", alias="便于识别的别名", override_state="closed")
         manage("windows-test", "main", archived=True)
         counts(0, 1)
-        wait_for(f"{row('便于识别的别名')}?.textContent.includes('人工修正 · 来源：运行中')")
-        wait_for(f"{row('便于识别的别名')}?.textContent.includes('原标题：来源原始标题')")
+        wait_for(f"{row('来源原始标题')}?.textContent.includes('人工修正 · 来源：运行中')")
+        wait_for(f"{row('来源原始标题')}?.textContent.includes('备注：便于识别的别名')")
         wait_for(f"{row('归档测试会话')}?.textContent.includes('已归档')")
-        wait_for(f"{row('便于识别的别名')}?.textContent.includes('开发主机') && {row('归档测试会话')}?.textContent.includes('桌面主机')")
+        wait_for(f"{row('来源原始标题')}?.textContent.includes('开发主机') && {row('归档测试会话')}?.textContent.includes('桌面主机')")
 
         browser("select", '[aria-label="筛选会话状态"]', "closed")
         wait_for("document.querySelectorAll('tbody tr').length===1")
@@ -114,12 +116,20 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
 
         manage("linux-test", "main", override_state="")
         counts(1, 1)
-        wait_for(f"!{row('便于识别的别名')}?.textContent.includes('人工修正')")
+        wait_for(f"!{row('来源原始标题')}?.textContent.includes('人工修正')")
         manage("linux-test", "main", override_state="interrupted")
         counts(0, 1)
         event("linux-test", "main", "activity.observed", 2, "来源更新标题")
         counts(1, 1)
-        wait_for(f"{row('便于识别的别名')}?.textContent.includes('原标题：来源更新标题')")
+        wait_for(f"{row('来源更新标题')}?.textContent.includes('备注：便于识别的别名')")
+        before_rename = next(s for s in api('snapshot')['sessions'] if s['source_id'] == 'linux-test' and s['session_id'] == 'main')
+        event('linux-test', 'main', 'session.renamed', 30, 'Agent 中改名后的最新名称')
+        wait_for(f"{row('Agent 中改名后的最新名称')}?.textContent.includes('备注：便于识别的别名')")
+        after_rename = next(s for s in api('snapshot')['sessions'] if s['source_id'] == 'linux-test' and s['session_id'] == 'main')
+        assert before_rename['state'] == after_rename['state'] and before_rename['last_event_id'] == after_rename['last_event_id']
+        assert len(api('snapshot')['sessions']) == 3
+        event('linux-test', 'main', 'activity.observed', 3, '迟到事件携带的旧标题')
+        wait_for(f"Boolean({row('Agent 中改名后的最新名称')})")
 
         # 归档不清除未读，只从活跃计数排除；明确已读仍须 Hub 确认。
         manage("linux-test", "waiting", archived=True)
@@ -132,11 +142,15 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         browser("click", "nav button:first-child")
         event("unlabelled-test", "fallback", "session.started", 1, "未命名来源会话")
         wait_for(f"{row('未命名来源会话')}?.textContent.includes('unlabelled-test')")
+        event("unlabelled-test", "backend-only-session-id", "session.started", 1, "")
+        wait_for(f"Boolean({row('未命名会话')})")
+        wait_for("!document.body.textContent.includes('backend-only-session-id')")
+        counts(3, 0)
         # 中央改名应更新普通会话展示；主机归档仅对桌面历史隐藏，管理页面仍可追溯。
         api("hosts/linux-test", {"display_name": "统一维护的主机名"}, "PATCH")
-        wait_for(f"{row('便于识别的别名')}?.textContent.includes('统一维护的主机名')")
+        wait_for(f"{row('Agent 中改名后的最新名称')}?.textContent.includes('统一维护的主机名')")
         api("hosts/linux-test", {"archived": True}, "PATCH")
-        counts(1, 0)
+        counts(2, 0)
         assert all(e["source_id"] != "linux-test" for e in api("events"))
         assert any(e["source_id"] == "linux-test" for e in api("events?include_archived=true"))
         browser("click", "nav button:nth-child(4)")
@@ -144,7 +158,7 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         browser("click", "nav button:nth-child(7)")
         wait_for("document.querySelector('tbody')?.textContent.includes('统一维护的主机名')")
         api("hosts/linux-test", {"archived": False}, "PATCH")
-        counts(2, 0)
+        counts(3, 0)
         # 删除仅限本测试生成的数据，验证页面和历史不会重新出现旧主机。
         api("hosts/windows-test", method="DELETE")
         browser("click", "nav button:nth-child(4)")
@@ -160,14 +174,15 @@ with (temp / "hub.log").open("w", encoding="utf-8") as log:
         errors = browser("errors").strip()
         if errors and errors != "✓ No errors":
             raise RuntimeError(f"浏览器存在错误：{temp}")
-        result = {"result": "通过", "checks": ["别名与来源事实", "人工状态与计数", "归档筛选", "主机与环境搜索",
+        result = {"result": "通过", "checks": ["备注不覆盖原生名称", "同 ID 改名及旧名称过滤", "无名称不显示后台 ID", "人工状态与计数", "归档筛选", "主机与环境搜索",
                   "恢复自动与新活动", "归档未读保留", "明确已读", "未命名来源回退", "主机集中改名", "主机归档与管理页历史", "永久删除清理", "移动布局", "无页面错误"]}
         (temp / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False))
         print(f"诊断目录：{temp}")
     finally:
         try:
-            browser("close")
+            if browser_opened:
+                browser("close")
         finally:
             hub.terminate()
             try:

@@ -6,7 +6,7 @@ export interface Snapshot { run_id: string; version: number; sessions: Session[]
 export interface Adapter { id: string; target: string; installed: string; running: string; agent_version: string; error?: string; warning?: string }
 export interface Host { source_id: string; items: Adapter[]; error?: string; updated_at: string }
 export interface HostInfo { source_id: string; name: string; default_name?: string; environment: string; archived: boolean; last_seen?: string; online: boolean; role?: string }
-export interface Push { event_id: string; channel: string; status: string; attempts: number; next_at: string }
+export interface Push { event_id: string; channel: string; status: string; attempts: number; next_at: string; http_status: number; business_status: number | null; failure_reason: string }
 
 let token = "";
 export function setToken(value: string) { token = value.trim(); }
@@ -19,4 +19,10 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
   });
   if (!response.ok) throw new Error(response.status === 401 ? "需要有效的共享令牌" : `读取失败（HTTP ${response.status}），请检查 Hub 连接`);
   return response.json() as Promise<T>;
+}
+
+// 会话 ID 只参与后台定位；本项目备注不覆盖 Agent 最新名称。
+export function displaySessionTitle(session: Session): string {
+  const title = session.title.trim();
+  return title && title !== session.session_id && title !== `${session.agent} · ${session.session_id}` ? title : "未命名会话";
 }

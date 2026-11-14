@@ -31,9 +31,9 @@ volta fetch node@24.14.1 pnpm@10.33.2
 从仓库根目录执行：
 
 ```powershell
-./scripts/build.ps1 -DevelopmentTools
-./scripts/check.ps1 -Tray -Integration
-./scripts/build.ps1 -Demo
+./scripts/build/build.ps1 -DevelopmentTools
+./scripts/check/check.ps1 -Tray -Integration
+./scripts/build/build.ps1 -Demo
 ./bin/dev/agent-pulse-tray-demo.exe --demo
 uv run --offline --no-project python tests/e2e/windows_desktop.py
 ```
@@ -43,7 +43,7 @@ uv run --offline --no-project python tests/e2e/windows_desktop.py
 Rust 补充静态检查：
 
 ```powershell
-. ./scripts/windows-tools.ps1
+. ./scripts/build/windows-tools.ps1
 Initialize-CppTools
 Push-Location tray
 try { cargo clippy --release --locked --all-targets -- -D warnings } finally { Pop-Location }
@@ -114,4 +114,4 @@ uv run --offline --no-project python tests/e2e/windows_wsl.py
 
 详情快捷偏好、唤醒退出、通知分流及悬浮入口的剩余原生检查在 RC 发布后长期运行中补验，不作本轮发布阻断，不能因此改写已有未验收结论。
 
-发布构建使用 `scripts/package-windows.ps1`；包只用于可解压运行，不隐式注册自启动或部署公网服务。自动化测试与原生验收分别记录。Git 读操作设置 `GIT_OPTIONAL_LOCKS=0`；暂存、提交、推送和其他 Git 写操作继续按用户单独授权范围执行。
+发布构建使用 `scripts/build/package-windows.ps1`；包只用于可解压运行，不隐式注册自启动或部署公网服务。自动化测试与原生验收分别记录。Git 读操作设置 `GIT_OPTIONAL_LOCKS=0`；暂存、提交、推送和其他 Git 写操作继续按用户单独授权范围执行。

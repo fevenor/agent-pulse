@@ -1,7 +1,7 @@
 # 默认仅构建 Windows 用户入口；测试服务通过 -DevelopmentTools 单独生成。
 param([switch]$DevelopmentTools, [switch]$Demo, [switch]$Tray)
 $ErrorActionPreference = 'Stop'
-$projectRoot = Split-Path $PSScriptRoot -Parent
+$projectRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 function Invoke-Checked {
     param([string]$Tool, [string[]]$Arguments)
     & $Tool @Arguments

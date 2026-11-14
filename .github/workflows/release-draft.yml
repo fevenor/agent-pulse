@@ -53,8 +53,8 @@ jobs:
           GOTOOLCHAIN: local
           GOPROXY: https://proxy.golang.org
         run: |
-          uv run --offline --no-project python scripts/test_rc_draft.py
-          uv run --offline --no-project python scripts/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft
+          uv run --offline --no-project python scripts/check/test_rc_draft.py
+          uv run --offline --no-project python scripts/release/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft
       - uses: actions/upload-artifact@v7
         with:
           name: RC 草稿发布结果

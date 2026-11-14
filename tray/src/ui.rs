@@ -745,7 +745,7 @@ impl Render for Surface {
                 .into_any_element();
         };
         let key = session.key();
-        let mut body = div().p_5().flex().flex_col().gap_3();
+        let mut body = div().p_5().flex().flex_col().gap_3().h_auto();
         body = body
             .child(
                 div()
@@ -791,6 +791,13 @@ impl Render for Surface {
                     },
                 ),
             );
+        if !session.alias.is_empty() {
+            body = body.child(
+                div()
+                    .text_color(rgb(t.muted))
+                    .child(format!("备注：{}", session.alias)),
+            );
+        }
         let host = session.source_id.clone();
         let mute_enabled = data.preferences.muted_sources.contains(&host);
         let wake_enabled = data.preferences.awake_sources.contains(&host);
@@ -948,6 +955,10 @@ impl Render for Surface {
                 }
             );
             let mut entry = div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .h_auto()
                 .border_l_2()
                 .border_color(rgb(if unread { t.blue } else { t.line }))
                 .pl_3()
@@ -984,15 +995,17 @@ impl Render for Surface {
                 .top_0()
                 .left_0()
                 .size_full();
-                entry = entry.child(
+                // 可见性探针不参与内容尺寸计算；空正文不创建容器或额外间距。
+                let mut content = div().flex().flex_col().flex_shrink_0().h_auto().child(
                     div()
                         .relative()
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(event.title))
-                        .child(div().mt_2().child(event.body))
                         .child(visible_title),
                 );
-            } else {
-                entry = entry.child(div().text_color(rgb(t.muted)).child(event.title));
+                if !event.body.is_empty() {
+                    content = content.child(div().mt_2().child(event.body));
+                }
+                entry = entry.child(content);
             }
             body = body.child(entry);
         }

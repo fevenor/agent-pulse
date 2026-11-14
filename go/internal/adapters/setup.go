@@ -53,6 +53,7 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(out, "\n开始配置 Agent 接入。请选择要启用的 Agent；已有其他设置会保留。")
 	reader := bufio.NewReader(in)
 	if newConfig {
 		defaultURL := c.HubURL
@@ -90,12 +91,15 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 		if err := writeSetupConfig(absolute, c, nil, newConfig); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "未检测到已安装的支持 Agent；已保存 Hub 地址和主机指纹，可安装 Agent 后重新运行 setup。")
+		fmt.Fprintln(out, "未检测到受支持的 Agent。Hub 地址与本机标识已保存。")
+		fmt.Fprintln(out, "安装 Agent 后，可运行 agent-pulse-bridge setup 添加接入。")
 		return nil
 	}
 	changed := map[string]string{}
 	modified := map[string]bool{}
 	hookPaths := map[string][]byte{}
+	paths := map[string]string{}
+	results := map[string]string{}
 	for _, agent := range agents {
 		current := c.Adapters.Managed[agent.ID]
 		if current == "" {
@@ -109,8 +113,10 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 		if !agent.Detected {
 			versionText = "未检测到或版本无法识别"
 		}
-		fmt.Fprintf(out, "\n%s（%s，版本 %s）\n配置文件：%s\n当前状态：%s\n", agent.Name, agent.ID, versionText, current, state)
-		fmt.Fprint(out, "请选择 [e]启用 [d]禁用 [s]跳过：")
+		paths[agent.ID] = current
+		results[agent.ID] = state + "（未更改）"
+		fmt.Fprintf(out, "\n%s\n版本：%s\n配置路径：%s\n当前接入状态：%s\n", agent.Name, versionText, current, state)
+		fmt.Fprint(out, "请选择：[e] 启用接入  [d] 停用接入  [s] 保持不变：")
 		choice, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
@@ -126,7 +132,7 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 			if path == "" {
 				path = agent.ConfigPath
 			}
-			fmt.Fprintf(out, "配置路径（直接回车使用 %s）：", path)
+			fmt.Fprintf(out, "配置路径已自动识别（回车确认，或输入其他路径）：%s\n> ", path)
 			input, readErr := reader.ReadString('\n')
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
 				return readErr
@@ -139,6 +145,8 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 				return err
 			}
 			c.Adapters.Managed[agent.ID] = path
+			paths[agent.ID] = path
+			results[agent.ID] = "已选择启用，等待安装接入配置"
 			changed[agent.ID] = path
 			modified[agent.ID] = true
 			if raw, readErr := os.ReadFile(path); readErr == nil {
@@ -158,15 +166,17 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 					return readErr
 				}
 				if err := Disable(c, agent.ID, absolute); err != nil {
-					fmt.Fprintf(out, "禁用 %s 失败：%v\n", agent.Name, err)
+					results[agent.ID] = "停用失败：" + err.Error()
+					fmt.Fprintf(out, "%s 停用失败：%v\n", agent.Name, err)
 					continue
 				}
 				fmt.Fprintf(out, "已移除 %s 的 AgentPulse 钩子，保留其他配置。\n", agent.Name)
 			}
 			delete(c.Adapters.Managed, agent.ID)
+			results[agent.ID] = "已停用接入"
 			modified[agent.ID] = true
 		default:
-			fmt.Fprintln(out, "已跳过。")
+			fmt.Fprintln(out, "保持原有设置。")
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
@@ -176,29 +186,40 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 		return err
 	}
 	fmt.Fprintf(out, "\n已更新 Bridge 配置：%s\n", absolute)
-	for id, path := range changed {
-		fmt.Fprintf(out, "- 已授权 %s：%s\n", id, path)
-	}
+
 	if len(changed) > 0 {
 		resolved, resolveErr := clientconfig.Resolve(ctx, c, absolute)
 		if resolveErr != nil {
-			fmt.Fprintf(out, "Bridge 钩子授权已更新；Hub 配置读取失败，适配包尚未同步：%v\n", resolveErr)
+			for id := range changed {
+				results[id] = "配置已保存，但无法连接 Hub，接入尚未完成"
+			}
+			fmt.Fprintf(out, "无法从 Hub 获取接入信息：%v\n", resolveErr)
 		} else if resolved.Adapters.PublicKey == "" {
-			fmt.Fprintln(out, "Bridge 钩子授权已更新；Hub 尚未提供适配包发布公钥，无法验证并同步适配包。请在 Hub 配置 adapter_public_key 后重试。")
+			for id := range changed {
+				results[id] = "配置已保存，但 Hub 未提供发布公钥，接入尚未完成"
+			}
+			fmt.Fprintln(out, "Hub 尚未提供适配包发布公钥，请先联系 Hub 部署者补齐。")
 		} else {
 			// setup 只同步本次明确选择的宿主，避免顺带修改其他已授权 Agent。
 			resolved.Adapters.Managed = changed
 			if syncErr := Sync(ctx, resolved, absolute); syncErr != nil {
-				fmt.Fprintf(out, "Bridge 钩子授权已更新；适配包同步失败：%v\n", syncErr)
+				for id := range changed {
+					results[id] = "适配包安装失败：" + syncErr.Error()
+				}
+				fmt.Fprintf(out, "接入配置安装失败：%v\n", syncErr)
 			} else {
 				for _, status := range ReportState(resolved, nil).Items {
 					if _, ok := changed[status.ID]; ok {
 						if status.Installed != "" && status.Error == "" {
-							fmt.Fprintf(out, "适配包已就绪：%s %s\n", status.ID, status.Installed)
+							if err := verifySetupHooks(resolved, absolute, status.ID); err != nil {
+								results[status.ID] = "接入配置未完成：" + err.Error()
+							} else {
+								results[status.ID] = "接入配置已完成"
+							}
 						} else if status.Error != "" {
-							fmt.Fprintf(out, "适配包未就绪：%s，%s\n", status.ID, status.Error)
+							results[status.ID] = "接入配置未完成：" + status.Error
 						} else {
-							fmt.Fprintf(out, "适配包未发布或未安装：%s\n", status.ID)
+							results[status.ID] = "Hub 尚未提供适用的适配包，接入配置未完成"
 						}
 					}
 				}
@@ -212,13 +233,50 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 			changedOnDisk = false
 		}
 		if changedOnDisk {
-			fmt.Fprintf(out, "已修改 Agent 配置文件：%s\n", path)
+			fmt.Fprintf(out, "已保存 Agent 配置文件：%s\n", path)
 		}
 	}
-	if len(modified) > 0 {
-		fmt.Fprintln(out, "请重启或重新加载对应 Agent；此操作只修改配置，不保证运行中的 Agent 立即生效。Codex 等宿主可能还需要用户确认项目或命令信任。")
+	printSetupSummary(out, agents, paths, results, absolute, changed["codex"] != "" && results["codex"] == "接入配置已完成")
+	for id := range changed {
+		if results[id] != "接入配置已完成" {
+			return errors.New("部分 Agent 接入配置未完成，请按上面的结果排查后重新运行 setup")
+		}
+	}
+	for _, result := range results {
+		if strings.HasPrefix(result, "停用失败：") {
+			return errors.New("部分 Agent 停用失败，原有设置已保留")
+		}
 	}
 	return nil
+}
+
+// 配置结果按扫描顺序显示名称、宿主版本和实际路径，不用内部适配器标识代替名称。
+func printSetupSummary(out io.Writer, agents []setupAgent, paths, results map[string]string, configPath string, codexEnabled bool) {
+	fmt.Fprintln(out, "\nAgent 接入配置结果：")
+	for _, agent := range agents {
+		versionText := agent.Version
+		if versionText == "" {
+			versionText = "未检测到或版本无法识别"
+		}
+		fmt.Fprintf(out, "\n%s\n  版本：%s\n  配置路径：%s\n  结果：%s\n", agent.Name, versionText, paths[agent.ID], results[agent.ID])
+	}
+	fmt.Fprintf(out, "\n本次配置操作已结束。Bridge 配置文件：%s\n", configPath)
+	if codexEnabled {
+		fmt.Fprintln(out, "Codex CLI：请在 /hooks 中确认 AgentPulse 钩子已审核并信任；已信任的无需重复操作。")
+	}
+	fmt.Fprintln(out, "以后需要添加、停用 Agent 或调整配置路径，可运行 agent-pulse-bridge setup 修改。")
+}
+
+// OpenCode 优先沿用已有标准 JSON，其次沿用 JSONC；明确的 managed 路径仍优先。
+func defaultOpenCodeConfigPath(home string) string {
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		jsonc := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+		if _, err := os.Stat(jsonc); err == nil {
+			return jsonc
+		}
+	}
+	return path
 }
 
 // 按当前平台的确认范围列出来源，避免 Windows 扫描无计划的终端产品。
@@ -230,7 +288,7 @@ func setupAgentCatalog(home, platform string) []setupAgent {
 		{ID: "codex", Name: "Codex CLI", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
 		{ID: "antigravity", Name: "Antigravity CLI", Command: "agy", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "agy"}},
 		{ID: "qoderclicn", Name: "Qoder 中国版 CLI", Command: "qoderclicn", ConfigPath: filepath.Join(home, ".qoder-cn", "settings.json"), Manifest: Manifest{ID: "qoderclicn", Command: "qoderclicn"}},
-		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: filepath.Join(home, ".config", "opencode", "opencode.json"), Manifest: Manifest{ID: "opencode", Command: "opencode"}},
+		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: defaultOpenCodeConfigPath(home), Manifest: Manifest{ID: "opencode", Command: "opencode"}},
 	}
 }
 

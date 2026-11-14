@@ -70,7 +70,7 @@ func Open(c config.Hub) (*Hub, error) {
 	if h.ttl <= 0 {
 		h.ttl = 24 * time.Hour
 	}
-	if err = h.migrate(); err != nil {
+	if err = h.initializeDatabase(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -87,84 +87,75 @@ func (h *Hub) Close() error {
 	return h.db.Close()
 }
 
-func (h *Hub) migrate() error {
+// 开发期只创建和读取当前结构，不识别、迁移或转换旧数据库。
+// 已有结构不匹配时事务回滚并要求显式重建，不自动清空用户数据。
+func (h *Hub) initializeDatabase() error {
 	if _, err := h.db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;`); err != nil {
 		return err
 	}
-	var version int
-	if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	tx, err := h.db.Begin()
+	if err != nil {
 		return err
 	}
-	if version > 5 {
-		return fmt.Errorf("数据库版本较新，当前程序不能读取")
-	}
-	if version == 0 {
-		tx, err := h.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		_, err = tx.Exec(`
-CREATE TABLE events (
- position INTEGER PRIMARY KEY AUTOINCREMENT,
- event_id TEXT NOT NULL UNIQUE, source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL,
+	defer tx.Rollback()
+	if _, err = tx.Exec(`
+CREATE TABLE IF NOT EXISTS events (
+ position INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
+ source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL,
  payload BLOB NOT NULL, notify INTEGER NOT NULL, valid INTEGER NOT NULL, received_at TEXT NOT NULL
 );
-CREATE INDEX events_session ON events(source_id,agent,session_id);
-CREATE TABLE sessions (
+CREATE INDEX IF NOT EXISTS events_session ON events(source_id,agent,session_id);
+CREATE TABLE IF NOT EXISTS sessions (
  source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL, state TEXT NOT NULL,
  title TEXT NOT NULL, project TEXT NOT NULL, last_event_id TEXT NOT NULL, last_sequence INTEGER NOT NULL,
- updated_at TEXT NOT NULL, PRIMARY KEY(source_id,agent,session_id)
+ updated_at TEXT NOT NULL, name_sequence INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(source_id,agent,session_id)
 );
-CREATE TABLE reads (event_id TEXT PRIMARY KEY, read_at TEXT NOT NULL);
-CREATE TABLE push_jobs (
+CREATE TABLE IF NOT EXISTS reads (event_id TEXT PRIMARY KEY, read_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS push_jobs (
  event_id TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
- attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT NOT NULL, PRIMARY KEY(event_id,channel)
+ attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT NOT NULL,
+ http_status INTEGER NOT NULL DEFAULT 0, business_status INTEGER, failure_reason TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(event_id,channel)
 );
-PRAGMA user_version=1;`)
+CREATE TABLE IF NOT EXISTS adapter_hosts (source_id TEXT PRIMARY KEY, report BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS session_management (
+ source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL,
+ alias TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
+ override_state TEXT NOT NULL DEFAULT '', override_at TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(source_id,agent,session_id)
+);
+CREATE TABLE IF NOT EXISTS hosts (
+ source_id TEXT PRIMARY KEY, default_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '',
+ environment TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0, last_seen TEXT NOT NULL DEFAULT '',
+ role TEXT NOT NULL DEFAULT 'bridge'
+);
+CREATE TABLE IF NOT EXISTS deleted_hosts (source_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
+`); err != nil {
+		return err
+	}
+	for _, query := range []string{
+		`SELECT name_sequence FROM sessions LIMIT 0`,
+		`SELECT role FROM hosts LIMIT 0`,
+		`SELECT http_status,business_status,failure_reason FROM push_jobs LIMIT 0`,
+	} {
+		rows, err := tx.Query(query)
 		if err != nil {
-			return err
+			return errors.New("数据库不符合当前开发结构，请先备份并显式重建数据库")
 		}
-		if err = tx.Commit(); err != nil {
-			return err
-		}
-	}
-	if version < 2 {
-		if _, err := h.db.Exec(`BEGIN; CREATE TABLE IF NOT EXISTS adapter_hosts(source_id TEXT PRIMARY KEY,report BLOB NOT NULL); PRAGMA user_version=2; COMMIT;`); err != nil {
+		if err := rows.Close(); err != nil {
 			return err
 		}
 	}
-	if version < 3 {
-		if _, err := h.db.Exec(`BEGIN; CREATE TABLE session_management(source_id TEXT NOT NULL, agent TEXT NOT NULL, session_id TEXT NOT NULL, alias TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0, override_state TEXT NOT NULL DEFAULT '', override_at TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(source_id,agent,session_id)); PRAGMA user_version=3; COMMIT;`); err != nil {
+	for id, label := range h.config.Sources {
+		if _, err = tx.Exec(`INSERT OR IGNORE INTO hosts(source_id,default_name,environment) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM deleted_hosts WHERE source_id=?)`, id, label.Name, label.Environment, id); err != nil {
 			return err
 		}
 	}
-	if version < 4 {
-		tx, err := h.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if _, err = tx.Exec(`CREATE TABLE hosts(source_id TEXT PRIMARY KEY, default_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '', environment TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0, last_seen TEXT NOT NULL DEFAULT ''); CREATE TABLE deleted_hosts(source_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL); PRAGMA user_version=4;`); err != nil {
-			return err
-		}
-		for id, label := range h.config.Sources {
-			if _, err = tx.Exec(`INSERT OR IGNORE INTO hosts(source_id,default_name,environment) VALUES(?,?,?)`, id, label.Name, label.Environment); err != nil {
-				return err
-			}
-		}
-		if err = tx.Commit(); err != nil {
-			return err
-		}
+	// 崩溃前的发送可能已经到达手机；当前格式重启后仍不能盲目补发。
+	if _, err = tx.Exec(`UPDATE push_jobs SET status='unknown' WHERE status='sending'`); err != nil {
+		return err
 	}
-	if version < 5 {
-		if _, err := h.db.Exec(`BEGIN; ALTER TABLE hosts ADD COLUMN role TEXT NOT NULL DEFAULT 'bridge'; PRAGMA user_version=5; COMMIT;`); err != nil {
-			return err
-		}
-	}
-	// 崩溃前开始发送的请求可能已送达，恢复时不能盲目重发。
-	_, err := h.db.Exec(`UPDATE push_jobs SET status='unknown' WHERE status='sending'`)
-	return err
+	return tx.Commit()
 }
 
 func timestamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }
@@ -219,8 +210,8 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	var seq int64
-	err = tx.QueryRowContext(ctx, `SELECT last_sequence FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&seq)
+	var seq, nameSequence int64
+	err = tx.QueryRowContext(ctx, `SELECT last_sequence,name_sequence FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&seq, &nameSequence)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -230,12 +221,15 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		apply = false
 	}
 	now := timestamp(time.Now())
-	title := e.SessionTitle
-	if title == "" {
-		title = e.Project
-	}
-	if title == "" {
-		title = e.Agent + " · " + e.SessionID
+	title := strings.TrimSpace(e.SessionTitle)
+	// 改名只更新已存在会话的名称，独立排序，不产生运行状态、已读或通知变化。
+	if e.Kind == "session.renamed" && !e.Historical && err == nil && (e.Sequence == 0 && nameSequence == 0 || e.Sequence > nameSequence) {
+		if e.Sequence > nameSequence {
+			nameSequence = e.Sequence
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET title=?,name_sequence=? WHERE source_id=? AND agent=? AND session_id=?`, title, nameSequence, e.SourceID, e.Agent, e.SessionID); err != nil {
+			return false, err
+		}
 	}
 
 	if apply {
@@ -247,9 +241,19 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		if _, err = tx.ExecContext(ctx, `UPDATE events SET valid=0 WHERE source_id=? AND agent=? AND session_id=? AND valid=1 AND (? <> 'session.closed' OR json_extract(payload,'$.kind') IN ('input.required','approval.required'))`, e.SourceID, e.Agent, e.SessionID, e.Kind); err != nil {
 			return false, err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,agent,session_id) DO UPDATE SET state=excluded.state,title=CASE WHEN ? <> '' THEN excluded.title ELSE sessions.title END,project=excluded.project,last_event_id=excluded.last_event_id,last_sequence=excluded.last_sequence,updated_at=excluded.updated_at`, e.SourceID, e.Agent, e.SessionID, e.State(), title, e.Project, e.EventID, seq, now, e.SessionTitle)
+		_, err = tx.ExecContext(ctx, `INSERT INTO sessions(source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id,agent,session_id) DO UPDATE SET state=excluded.state,project=excluded.project,last_event_id=excluded.last_event_id,last_sequence=excluded.last_sequence,updated_at=excluded.updated_at`, e.SourceID, e.Agent, e.SessionID, e.State(), title, e.Project, e.EventID, seq, now)
 		if err != nil {
 			return false, err
+		}
+
+		// 无改名事件的来源在下一次真实事件携带最新名称；旧原生序号不回滚名称。
+		if title != "" && (e.Sequence == 0 && nameSequence == 0 || e.Sequence > nameSequence) {
+			if e.Sequence > nameSequence {
+				nameSequence = e.Sequence
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE sessions SET title=?,name_sequence=? WHERE source_id=? AND agent=? AND session_id=?`, title, nameSequence, e.SourceID, e.Agent, e.SessionID); err != nil {
+				return false, err
+			}
 		}
 
 		if _, err = tx.ExecContext(ctx, `UPDATE session_management SET override_state='',override_at='',revision=revision+1 WHERE source_id=? AND agent=? AND session_id=? AND override_state<>''`, e.SourceID, e.Agent, e.SessionID); err != nil {
@@ -359,14 +363,14 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	if deletedRowsErr != nil {
 		return s, deletedRowsErr
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at,COALESCE((SELECT json_extract(payload,'$.kind') FROM events WHERE event_id=sessions.last_event_id),'') FROM sessions ORDER BY source_id,agent,session_id`)
+	rows, err := h.db.QueryContext(ctx, `SELECT source_id,agent,session_id,state,title,project,last_event_id,last_sequence,updated_at,name_sequence,COALESCE((SELECT json_extract(payload,'$.kind') FROM events WHERE event_id=sessions.last_event_id),'') FROM sessions ORDER BY source_id,agent,session_id`)
 	if err != nil {
 		return s, err
 	}
 	for rows.Next() {
 		var v protocol.Session
 		var at string
-		if err = rows.Scan(&v.SourceID, &v.Agent, &v.SessionID, &v.State, &v.Title, &v.Project, &v.LastEventID, &v.LastSequence, &at, &v.LastKind); err != nil {
+		if err = rows.Scan(&v.SourceID, &v.Agent, &v.SessionID, &v.State, &v.Title, &v.Project, &v.LastEventID, &v.LastSequence, &at, &v.NameSequence, &v.LastKind); err != nil {
 			break
 		}
 		v.UpdatedAt, err = time.Parse(time.RFC3339Nano, at)

@@ -2,7 +2,6 @@ package event
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +29,7 @@ func TestNativeHookSemantics(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent+tt.hook, func(t *testing.T) {
-			e, err := Convert(tt.agent, "host", tt.hook, []byte(tt.json), time.Now(), "")
+			e, err := Convert(tt.agent, "host", tt.hook, []byte(tt.json), time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +48,7 @@ func TestNativeHookSemantics(t *testing.T) {
 
 func TestLongNativeReplyIsDiscardedBeforeSending(t *testing.T) {
 	raw, _ := json.Marshal(map[string]string{"session_id": "s", "hook_event_name": "Stop", "responseText": strings.Repeat("私有回复", 20000)})
-	e, err := Convert("zcode", "host", "Stop", raw, time.Now(), "")
+	e, err := Convert("zcode", "host", "Stop", raw, time.Now())
 	if err != nil || e == nil || e.Kind != "turn.completed" || e.Body != "" {
 		t.Fatal("长回复导致完成事件丢失", err)
 	}
@@ -58,36 +57,32 @@ func TestLongNativeReplyIsDiscardedBeforeSending(t *testing.T) {
 		t.Fatal("上传了原始回复")
 	}
 }
-func TestAntigravityBindingAndUnknownStop(t *testing.T) {
-	binding := filepath.Join(t.TempDir(), "session")
+func TestAntigravityDirectStartMultipleSessionsAndUnknownStop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	now := time.Now()
-	e, err := Convert("antigravity", "host", "SessionStart", []byte(`{"conversationId":"main"}`), now, binding)
-	if err != nil || e == nil {
-		t.Fatal(e, err)
+	for _, id := range []string{"first", "second", "resumed"} {
+		e, err := Convert("antigravity", "host", "SessionStart", []byte(`{"conversationId":"`+id+`"}`), now)
+		if err != nil || e == nil || e.SessionID != id {
+			t.Fatal("直接启动与新会话不应依赖包装或旧绑定", e, err)
+		}
 	}
-	for _, hook := range []string{"SessionStart", "Stop"} {
-		e, err = Convert("antigravity", "host", hook, []byte(`{"conversationId":"child","terminationReason":"model_stop"}`), now, binding)
+	for _, payload := range []string{`{"conversationId":"child","parentConversationId":"main"}`, `{"conversationId":"child","agent_id":"child"}`} {
+		e, err := Convert("antigravity", "host", "Stop", []byte(payload), now)
 		if err != nil || e != nil {
-			t.Fatal("子会话误报", e, err)
+			t.Fatal("明确子代理必须过滤", e, err)
 		}
 	}
 	for _, tt := range []struct{ payload, want string }{
+		{`{"conversationId":"main","terminationReason":"model_stop"}`, "turn.completed"},
 		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL","fullyIdle":true}`, "turn.completed"},
 		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL","fullyIdle":false}`, "observation.lost"},
-		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL"}`, "observation.lost"},
 		{`{"conversationId":"main","terminationReason":"model_stop","fullyIdle":false}`, "activity.observed"},
+		{`{"conversationId":"main","terminationReason":"new_reason"}`, "observation.lost"},
 	} {
-		e, err = Convert("antigravity", "host", "Stop", []byte(tt.payload), now, binding)
+		e, err := Convert("antigravity", "host", "Stop", []byte(tt.payload), now)
 		if err != nil || e == nil || e.Kind != tt.want {
-			t.Fatal(tt.payload, e, err)
+			t.Fatal(e, err)
 		}
-	}
-	e, err = Convert("antigravity", "host", "Stop", []byte(`{"conversationId":"main","terminationReason":"new_unknown_reason"}`), now, binding)
-	if err != nil || e == nil || e.Kind != "observation.lost" {
-		t.Fatal(e, err)
-	}
-	e, err = Convert("antigravity", "host", "Stop", []byte(`{"conversationId":"main","terminationReason":"model_stop"}`), now, "")
-	if err != nil || e != nil {
-		t.Fatal("未绑定不能假定主会话", e, err)
 	}
 }

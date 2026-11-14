@@ -1,7 +1,9 @@
 package adapters
 
 import (
+	"agent-pulse/internal/config"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -53,5 +55,39 @@ func TestProcessHooksRejectInvalidShape(t *testing.T) {
 		if _, err := processHookConfig(root, "bridge.exe", "config.json", Package{}); err == nil {
 			t.Fatal("接受了无效用户配置", input)
 		}
+	}
+}
+
+func TestSetupVerifiesActualHooksAndRespectsDisabledSwitch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "zcode.json")
+	bridgePath := filepath.Join(root, "bridge.yaml")
+	p := Package{Manifest: Manifest{ID: "zcode", Kind: "executable", ConfigStyle: "process-hooks", Hooks: map[string]string{"Stop": ""}}}
+	c := config.Bridge{Adapters: config.AdapterUpdates{Directory: root, Managed: map[string]string{"zcode": path}}}
+	state := State{Installed: map[string]Installed{"zcode": {Package: p}}, Rejected: map[string]string{}}
+	if err := AtomicJSON(filepath.Join(root, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		raw    string
+		wantOK bool
+	}{{`{}`, true}, {`{"hooks":{"enabled":false}}`, false}} {
+		next, err := hookConfig(c, bridgePath, p, []byte(tc.raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, next, 0600); err != nil {
+			t.Fatal(err)
+		}
+		err = verifySetupHooks(c, bridgePath, "zcode")
+		if (err == nil) != tc.wantOK {
+			t.Fatal(tc.raw, err)
+		}
+	}
+	if err := os.WriteFile(path, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if verifySetupHooks(c, bridgePath, "zcode") == nil {
+		t.Fatal("只凭安装记录不能报告实际钩子存在")
 	}
 }

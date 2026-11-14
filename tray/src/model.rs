@@ -69,10 +69,13 @@ impl Session {
         }
     }
     pub fn display_title(&self) -> &str {
-        if self.alias.is_empty() {
-            &self.title
+        if self.title.trim().is_empty()
+            || self.title == self.session_id
+            || self.title == format!("{} · {}", self.agent, self.session_id)
+        {
+            "未命名会话"
         } else {
-            &self.alias
+            &self.title
         }
     }
     pub fn effective_state(&self) -> &str {
@@ -107,6 +110,7 @@ impl Event {
 }
 pub fn event_label(kind: &str) -> &'static str {
     match kind {
+        "session.renamed" => "会话改名",
         "session.started" => "会话开始",
         "session.resumed" => "继续执行",
         "session.closed" => "会话结束",
@@ -314,6 +318,21 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_names_never_fall_back_to_ids_or_override_native_names_with_aliases() {
+        let mut session = Session {
+            agent: "codex".into(),
+            session_id: "backend-only-id".into(),
+            alias: "本地备注".into(),
+            ..Default::default()
+        };
+        assert_eq!(session.display_title(), "未命名会话");
+        session.title = "codex · backend-only-id".into();
+        assert_eq!(session.display_title(), "未命名会话");
+        session.title = "Agent 中的新名称".into();
+        assert_eq!(session.display_title(), "Agent 中的新名称");
+    }
+
     fn event(id: &str) -> Event {
         Event {
             event_id: id.into(),

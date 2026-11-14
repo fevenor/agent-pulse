@@ -2,7 +2,7 @@
 param([switch]$GoOnly, [switch]$Tray, [switch]$Integration)
 $ErrorActionPreference = 'Stop'
 if ($Integration -and -not $Tray) { throw '-Integration 需要同时指定 -Tray' }
-$projectRoot = Split-Path $PSScriptRoot -Parent
+$projectRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 function Invoke-Checked {
     param([string]$Tool, [string[]]$Arguments)
     & $Tool @Arguments
@@ -38,12 +38,13 @@ try {
                     Invoke-Checked volta ($versionArgs + @('pnpm', 'check'))
                     Invoke-Checked volta ($versionArgs + @('pnpm', 'test'))
                 }
+                if ($project -eq 'web/hub') { Invoke-Checked volta ($versionArgs + @('pnpm', 'test')) }
                 Invoke-Checked volta ($versionArgs + @('pnpm', 'build'))
             } finally { Pop-Location }
         }
     }
     if ($Tray) {
-        . (Join-Path $PSScriptRoot 'windows-tools.ps1')
+        . (Join-Path $projectRoot 'scripts/build/windows-tools.ps1')
         Initialize-CppTools
         Push-Location (Join-Path $projectRoot 'tray')
         try {

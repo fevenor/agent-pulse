@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,7 +24,7 @@ func (h *Hub) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/push-jobs", func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		rows, err := h.db.QueryContext(r.Context(), `SELECT event_id,channel,status,attempts,next_at FROM push_jobs ORDER BY next_at DESC LIMIT 200`)
+		rows, err := h.db.QueryContext(r.Context(), `SELECT event_id,channel,status,attempts,next_at,http_status,business_status,failure_reason FROM push_jobs ORDER BY next_at DESC LIMIT 200`)
 		if err != nil {
 			transport.Error(w, 503, "推送记录读取失败")
 			return
@@ -32,12 +33,18 @@ func (h *Hub) Handler(token string) http.Handler {
 		items := []map[string]any{}
 		for rows.Next() {
 			var id, channel, status, next string
-			var attempts int
-			if rows.Scan(&id, &channel, &status, &attempts, &next) != nil {
+			var attempts, httpStatus int
+			var businessStatus sql.NullInt64
+			var reason string
+			if rows.Scan(&id, &channel, &status, &attempts, &next, &httpStatus, &businessStatus, &reason) != nil {
 				transport.Error(w, 503, "推送记录读取失败")
 				return
 			}
-			items = append(items, map[string]any{"event_id": id, "channel": channel, "status": status, "attempts": attempts, "next_at": next})
+			var code any
+			if businessStatus.Valid {
+				code = businessStatus.Int64
+			}
+			items = append(items, map[string]any{"event_id": id, "channel": channel, "status": status, "attempts": attempts, "next_at": next, "http_status": httpStatus, "business_status": code, "failure_reason": reason})
 		}
 		if rows.Err() != nil {
 			transport.Error(w, 503, "推送记录读取失败")

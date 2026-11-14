@@ -9,7 +9,7 @@ Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客�
 开始使用需要一台运行 Hub 的服务器，以及至少一台安装了受支持 Agent 的主机。当前项目尚未发布 RC，公开下载包尚未提供；以下说明描述发布后的用户流程，完整部署步骤和验收标准见[部署指南](docs/deployment.md)。
 
 1. **部署 Hub**：RC 发布后从项目发布页获取已包含默认配置、管理网页与签名适配包的 Hub 容器镜像，在可信网络中启动。普通用户无需挂载仓库或配置适配公钥。Hub 保存会话、已读状态和主机名称；新主机首次连接后默认以系统主机名显示。之后可在 Hub 管理页面统一修改名称，所有 Tray 会在同步后看到新名称。
-2. **连接 Agent 主机**：在运行 Agent 的主机安装 Bridge，并运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。适配包由正式发布流程提供时无需自行构建；当前尚未发布 RC。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
+2. **连接 Agent 主机**：从 GitHub 发布页下载安装脚本 `install-bridge.sh`，在运行 Agent 的主机执行 `bash install-bridge.sh --setup`；安装器按平台下载预构建并校验，普通用户不需要源码目录、Go、Node.js 或 Rust。也可只安装后再运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。适配包由正式发布流程提供时无需自行构建；当前尚未发布 RC。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
 3. **使用 Windows Tray**：RC 发布后下载并解压 Windows 便携包，在程序旁的配置文件中填写 Hub 地址后启动。Tray 默认只需 Hub 地址；有 Relay 时会从 Hub 自动发现配置。会话详情可调整当前主机的静默和任务期间保持唤醒设置。
 4. **按需部署 Relay**：只有需要跨公网或备用连接时才部署。将 Relay 地址与令牌配置到 Hub；Bridge 从 Hub 获取配置，Tray 也会自动同步。公网连接必须使用 HTTPS/WSS。
 
@@ -19,6 +19,7 @@ Hub 和 Bridge 示例配置可从 [`config/`](config/) 目录查看。Agent 执�
 
 ## 参考文档
 
+- [脚本分类](scripts/README.md)：构建、安装、检查和发布入口。
 - [部署指南](docs/deployment.md)：面向使用者的安装、配置、验收和故障处理。
 - [Windows 客户端](docs/windows-client.md)：Tray 的运行与便携配置。
 - [适配器说明](docs/adapters.md)：受支持的 Agent、钩子与签名包更新。
@@ -43,7 +44,10 @@ web/hub/                      Vue 3 + TypeScript + Vite 管理界面
 adapters/                     来源清单、说明及 OpenCode 插件源码
 tray/                         Rust + GPUI 原生桌面客户端
 deploy/                       Docker、Compose、代理与 systemd 示例
-scripts/                      按需添加的开发/安装脚本
+scripts/build/                开发与发布构建、跨平台打包
+scripts/install/              用户预构建安装入口，不调用编译器
+scripts/check/                开发检查与脚本回归
+scripts/release/              发布维护、仓库合并与草稿生成
 tests/                        契约、集成和端到端验证
 docs/                         需求、设计与进度
 ```
@@ -57,7 +61,7 @@ Go 1.25 或更新的兼容版本，在仓库根目录构建：
 ```sh
 pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
 pnpm --dir web/hub build
-bash scripts/build.sh
+bash scripts/build/build.sh
 ./bin/agent-pulse-hub --config config/hub.example.yaml
 ```
 
@@ -78,7 +82,7 @@ bash scripts/build.sh
 ```sh
 pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
 pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
-bash scripts/check.sh
+bash scripts/check/check.sh
 ```
 
 Linux 服务端开发先准备 Go；Web/TypeScript 使用 Volta + pnpm。Tray 沿用已确认的 Rust + GPUI；出现无法合理解决的关键桌面障碍时才评估 Go + Walk，不采用浏览器或 WebView 页面方案。Windows 原生交互必须在真实桌面验证。

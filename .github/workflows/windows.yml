@@ -65,18 +65,19 @@ jobs:
             windows-rust-${{ hashFiles('tray/rust-toolchain.toml', 'tray/Cargo.lock') }}-
       - name: 构建客户端和联调服务
         shell: pwsh
-        run: ./scripts/build.ps1 -DevelopmentTools
+        run: ./scripts/build/build.ps1 -DevelopmentTools
       - name: 检查与本地服务回归
         shell: pwsh
         run: |
-          ./scripts/check.ps1 -Tray -Integration
-          uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+          ./scripts/check/check.ps1 -Tray -Integration
+          uv run --offline --no-project python scripts/check/test_script_layout.py
+          uv run --offline --no-project python scripts/check/test_merge_adapter_repositories.py
           if ($LASTEXITCODE -ne 0) { throw '适配包合并检查失败' }
       - name: 构建演示并检查开发配置
         shell: pwsh
         run: |
-          ./scripts/build.ps1 -Demo
-          . ./scripts/windows-tools.ps1
+          ./scripts/build/build.ps1 -Demo
+          . ./scripts/build/windows-tools.ps1
           Initialize-CppTools
           Push-Location tray
           try {
@@ -86,12 +87,12 @@ jobs:
       - name: 打包便携程序与适配包
         shell: pwsh
         run: |
-          ./scripts/package-adapters.ps1 -NativeOnly
+          ./scripts/build/package-adapters.ps1 -NativeOnly
           uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==1; assert {x['id'] for x in p}=={'zcode'}; assert all(x['platform']=='windows/amd64' for x in p)"
           if ($LASTEXITCODE -ne 0) { throw 'Windows 命令适配包清单检查失败' }
-          uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
+          uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
           if ($LASTEXITCODE -ne 0) { throw 'Hub 镜像准备流程测试失败' }
-          ./scripts/package-windows.ps1
+          ./scripts/build/package-windows.ps1
           uv run --offline --no-project python -c "import runpy; runpy.run_path('tests/e2e/windows_desktop.py')['binary_boundary_check']()"
           if ($LASTEXITCODE -ne 0) { throw '发布与演示隔离检查失败' }
           uv run --offline --no-project python -c "import zipfile; z=zipfile.ZipFile('dist/windows-amd64.zip'); assert z.testzip() is None; assert sorted(z.namelist()) == sorted(['agent-pulse-tray.exe', 'bridge.example.yaml', 'tray.example.yaml', '使用说明.md'])"

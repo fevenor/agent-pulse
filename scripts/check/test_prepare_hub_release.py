@@ -12,8 +12,8 @@ from unittest.mock import patch
 from pathlib import Path
 from urllib.request import urlopen
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "prepare-hub-release.py"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "release" / "prepare-hub-release.py"
 spec = importlib.util.spec_from_file_location("prepare_hub_release", SCRIPT)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -125,7 +125,7 @@ def main():
         (source / "adapter").write_text("synthetic executable entry\n", encoding="utf-8")
         manifest = {
             "id": "fixture", "version": "1.0.0", "format": 1, "protocol": 1,
-            "min_bridge": "0.5.0", "platform": "linux/amd64", "kind": "executable",
+            "platform": "linux/amd64", "kind": "executable",
             "entry": "adapter", "command": "fixture", "agent_min": "1.0.0",
             "agent_max": "1.0.0", "config_style": "hooks", "hooks": {"SessionStart": ""},
         }

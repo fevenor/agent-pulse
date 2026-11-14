@@ -42,20 +42,28 @@ jobs:
           volta install pnpm@10.33.2
           pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
           pnpm --dir web/hub install --frozen-lockfile --ignore-scripts
-      - name: 后端、适配器和页面检查
-        run: bash scripts/check.sh
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
+      - name: 后端、适配器和页面检查
+        run: bash scripts/check/check.sh
       - name: 跨平台适配包合并检查
-        run: uv run --offline --no-project python scripts/test_merge_adapter_repositories.py
+        run: uv run --offline --no-project python scripts/check/test_merge_adapter_repositories.py
       - name: 构建发布工具并验证 Hub 镜像准备流程
         run: |
           mkdir -p bin
           (cd go && go build -trimpath -buildvcs=false -o ../bin/agent-pulse-adapters ./cmd/agent-pulse-adapters)
-          uv run --offline --no-project python scripts/test_prepare_hub_release.py ./bin/agent-pulse-adapters
+          uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/agent-pulse-adapters
+      - name: 构建两架构 Linux Bridge 发布物
+        run: bash scripts/build/package-bridge.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-bridge
+          path: dist/bridge-linux/*
+          if-no-files-found: error
+          retention-days: 14
       - name: 构建 Linux 与通用适配包
-        run: bash scripts/package-adapters.sh ./dist/repository 1
+        run: bash scripts/build/package-adapters.sh ./dist/repository 1
       - uses: actions/upload-artifact@v7
         with:
           name: linux-adapters
@@ -81,7 +89,7 @@ jobs:
               --relay-image "agent-pulse-relay:test-$arch" \
               > "dist/verification/containers-$arch.json"
           done
-          uv run --offline --no-project python scripts/test_prepare_hub_release.py \
+          uv run --offline --no-project python scripts/check/test_prepare_hub_release.py \
             ./bin/agent-pulse-adapters --docker-base agent-pulse-hub:test-amd64 \
             --docker-tag agent-pulse-hub:release-overlay-test --docker-smoke
       - uses: actions/upload-artifact@v7

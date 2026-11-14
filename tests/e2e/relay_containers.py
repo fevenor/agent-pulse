@@ -120,7 +120,7 @@ def main():
             evidence["checks"].append("公网入口拒绝未鉴权请求，Hub 离线查询返回 503")
             event = {"event_id": name, "source_id": "container-test", "agent": "test", "session_id": name,
                      "kind": "turn.completed", "scope": "main", "title": "容器恢复测试",
-                     "body": "测试数据", "occurred_at": datetime.now(timezone.utc).isoformat()}
+                     "body": "测试数据", "session_title": "原会话名称", "sequence": 1, "occurred_at": datetime.now(timezone.utc).isoformat()}
             code, receipt = request(relay_url, "/api/v1/events", event)
             assert code == 202 and receipt["accepted"] == "durable"
             assert request(relay_url, "/api/v1/events", event)[1]["duplicate"]
@@ -137,13 +137,24 @@ def main():
             assert len(request(relay_url, "/api/v1/snapshot")[1]["unread"]) == 1
             assert "<html" in request(hub_url, "/")[1]
             evidence["checks"].append("Hub 主动重连，Relay 补发、查询转发及 Hub 页面正常")
+            before_rename = request(relay_url, "/api/v1/snapshot")[1]
+            renamed = {**event, "event_id": name + "-rename", "kind": "session.renamed", "sequence": 30, "session_title": "最新用户名称"}
+            assert request(relay_url, "/api/v1/events", renamed)[0] == 202
+            wait(lambda: request(relay_url, "/api/v1/snapshot")[1]["sessions"][0]["title"] == "最新用户名称")
+            after_rename = request(relay_url, "/api/v1/snapshot")[1]
+            assert len(after_rename["sessions"]) == 1
+            assert after_rename["sessions"][0]["last_event_id"] == before_rename["sessions"][0]["last_event_id"]
+            assert after_rename["sessions"][0]["state"] == before_rename["sessions"][0]["state"]
+            assert after_rename["unread"] == before_rename["unread"]
+            evidence["checks"].append("改名经 Relay 到达同一会话，不改变状态、最近事件或未读")
             assert request(relay_url, "/api/v1/read", {"event_ids": [name]})[0] == 200
             docker("kill", name + "-hub")
             docker("start", name + "-hub")
             wait(lambda: request(hub_url, "/healthz")[0] == 200)
             wait(lambda: request(relay_url, "/api/v1/snapshot")[0] == 200)
             assert request(relay_url, "/api/v1/snapshot")[1]["unread"] == []
-            assert len(request(hub_url, "/api/v1/events")[1]) == 1
+            assert len(request(hub_url, "/api/v1/events")[1]) == 2
+            assert request(hub_url, "/api/v1/snapshot")[1]["sessions"][0]["title"] == "最新用户名称"
             evidence["checks"].append("经 Relay 标记已读，Hub 崩溃重启后历史和已读保持")
         finally:
             for container in reversed(containers):

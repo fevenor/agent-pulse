@@ -47,3 +47,30 @@ test("本地地址限制", () => {
     assert.throws(() => bridgeURL(url));
   }
 });
+
+test("原生改名保持会话 ID，生成不改变运行状态的名称事件", () => {
+  const renamed = { ...completed, id: "rename-event", type: "session.renamed", data: { sessionID: "main", title: "新会话名" }, durable: { aggregateID: "main", seq: 13, version: 1 } } as NativeEvent;
+  const e = convert(renamed, { ...session, title: "新会话名" }, "linux")!;
+  assert.equal(e.kind, "session.renamed");
+  assert.equal(e.session_id, "main");
+  assert.equal(e.session_title, "新会话名");
+  assert.equal(e.sequence, 13);
+  assert.deepEqual(e, convert(renamed, { ...session, title: "稍后再次改名" }, "linux"));
+  assert.equal(convert(renamed, { ...session, parentID: "parent" }, "linux"), undefined);
+});
+
+test("本机进程信息仅在发送边界附加，过滤确认不是发送失败", async () => {
+  const { emit } = await import("../src/adapter.ts");
+  const original = globalThis.fetch;
+  const e = convert(completed, session, "linux")!;
+  let posted: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_url, options) => {
+    posted = JSON.parse(String(options?.body));
+    return new Response(JSON.stringify({ event_id: e.event_id, accepted: "filtered" }), { status: 202 });
+  }) as typeof fetch;
+  try {
+    await emit("http://127.0.0.1/api/v1/events", e);
+    assert.equal(posted?.process_id, process.pid);
+    assert.equal("process_id" in e, false, "转换后的公共事件不能被发送过程改写");
+  } finally { globalThis.fetch = original; }
+});

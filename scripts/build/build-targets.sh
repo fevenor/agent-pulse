@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 交叉编译只能证明编译通过，不能代替目标机器运行验收。
 set -euo pipefail
-project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$project_root/go"
 for target in linux/amd64 linux/arm64 windows/amd64; do
   target_os="${target%/*}"

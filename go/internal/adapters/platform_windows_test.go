@@ -219,8 +219,8 @@ func TestWindowsSyncPreservesDeferredSourcesWithoutInstalling(t *testing.T) {
 		t.Fatal(err)
 	}
 	packages := []Package{
-		{Manifest: Manifest{ID: "codex", Version: "0.2.1", Format: 1, Protocol: 1, MinBridge: "0.5.0", Platform: "windows/amd64", Kind: "executable", Entry: "adapter.exe", Command: "must-not-run", ConfigStyle: "hooks"}, SHA256: strings.Repeat("a", 64), Size: 1},
-		{Manifest: Manifest{ID: "opencode", Version: "0.3.0", Format: 1, Protocol: 1, MinBridge: "0.5.0", Platform: "any", Kind: "opencode-plugin", Entry: "index.js", Command: "must-not-run"}, SHA256: strings.Repeat("b", 64), Size: 1},
+		{Manifest: Manifest{ID: "codex", Version: "0.2.1", Format: 1, Protocol: 1, Platform: "windows/amd64", Kind: "executable", Entry: "adapter.exe", Command: "must-not-run", ConfigStyle: "hooks"}, SHA256: strings.Repeat("a", 64), Size: 1},
+		{Manifest: Manifest{ID: "opencode", Version: "0.3.0", Format: 1, Protocol: 1, Platform: "any", Kind: "opencode-plugin", Entry: "index.js", Command: "must-not-run"}, SHA256: strings.Repeat("b", 64), Size: 1},
 	}
 	// 签名流程验证真实包文件，使用合法辅助 EXE 而非伪装可执行文件；本测试不启动它。
 	own, err := os.Executable()

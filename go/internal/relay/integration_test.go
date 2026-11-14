@@ -112,7 +112,7 @@ func TestAdapterUpdateThroughRelay(t *testing.T) {
 	source := filepath.Join(root, "source")
 	_ = os.MkdirAll(source, 0700)
 	_ = os.WriteFile(filepath.Join(source, "adapter"), []byte("#!/bin/sh\nprintf '{}'\n"), 0700)
-	m := adapters.Manifest{ID: "relay-test", Version: "1.0.0", Format: 1, Protocol: 1, MinBridge: "0.2.0", Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: "adapter", Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.0.0", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}}
+	m := adapters.Manifest{ID: "relay-test", Version: "1.0.0", Format: 1, Protocol: 1, Platform: runtime.GOOS + "/" + runtime.GOARCH, Kind: "executable", Entry: "adapter", Command: "test-agent", AgentMin: "1.0.0", AgentMax: "1.0.0", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}}
 	p, err := adapters.BuildPackage(source, repo, m)
 	if err != nil {
 		t.Fatal(err)

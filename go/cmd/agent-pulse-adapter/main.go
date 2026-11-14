@@ -1,15 +1,11 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"agent-pulse/internal/event"
@@ -26,9 +22,6 @@ func main() {
 	}
 }
 func run() error {
-	if adapterID == "antigravity" && len(os.Args) > 1 && os.Args[1] == "run" {
-		return launch()
-	}
 	fs := flag.NewFlagSet("adapter", flag.ContinueOnError)
 	hook := fs.String("hook", "", "原生 hook 名")
 	source := fs.String("source", "", "主机 ID")
@@ -39,7 +32,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	result, err := event.Convert(adapterID, *source, *hook, raw, time.Now(), os.Getenv("AGENT_PULSE_ANTIGRAVITY_SESSION"))
+	result, err := event.Convert(adapterID, *source, *hook, raw, time.Now())
 	if err != nil {
 		return err
 	}
@@ -53,32 +46,4 @@ func run() error {
 		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(protocol.AdapterResult{Event: result, Reply: reply})
-}
-func launch() error {
-	dir, err := os.MkdirTemp("", "agent-pulse-agy-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	args := os.Args[2:]
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	binding := filepath.Join(dir, "main-session")
-	// ACP 加载旧会话时可能不再触发 SessionStart，由调用者明确提供原主会话。
-	if len(args) > 0 && args[0] == "--pulse-main-session" {
-		if len(args) < 3 || args[1] == "" || len(args[1]) > 256 || strings.ContainsAny(args[1], "\x00\r\n\t ") || strings.HasPrefix(args[1], "-") {
-			return fmt.Errorf("--pulse-main-session 需要原主会话 ID 及宿主参数")
-		}
-		if err := os.WriteFile(binding, []byte(args[1]), 0600); err != nil {
-			return err
-		}
-		args = args[2:]
-	}
-	cmd := exec.CommandContext(context.Background(), "agy", args...)
-	cmd.Env = append(os.Environ(), "AGENT_PULSE_ANTIGRAVITY_SESSION="+binding)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }

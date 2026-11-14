@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,6 +76,8 @@ func TestSetupListsDetectedAndPreviouslyManagedAgentsOnly(t *testing.T) {
 
 func TestSetupExamplePromptsHubAndPreservesEnvironmentReferences(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramFiles", t.TempDir())
 	for _, tc := range []struct {
 		name, source, input, wantSource, wantHub string
 		wantPrompt                               bool
@@ -211,5 +216,137 @@ func TestSetupScopeChangePreservesOtherManagedEntries(t *testing.T) {
 		if result.Adapters.Managed[id] != want {
 			t.Fatalf("其他来源登记被清除或改写：来源=%s，收到=%q", id, result.Adapters.Managed[id])
 		}
+	}
+}
+
+func TestSetupAutomaticallyReusesOpenCodeConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		files    []string
+		wantFile string
+	}{
+		{"尚无配置", nil, "opencode.json"},
+		{"已有JSON", []string{"opencode.json"}, "opencode.json"},
+		{"已有JSONC", []string{"opencode.jsonc"}, "opencode.jsonc"},
+		{"两者均在", []string{"opencode.json", "opencode.jsonc"}, "opencode.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			directory := filepath.Join(home, ".config", "opencode")
+			if err := os.MkdirAll(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range tc.files {
+				if err := os.WriteFile(filepath.Join(directory, name), []byte(`{"provider":"保留原设置"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := filepath.Join(directory, tc.wantFile)
+			if got := defaultOpenCodeConfigPath(home); got != want {
+				t.Fatalf("未沿用已有配置：%s，预期 %s", got, want)
+			}
+			for _, agent := range setupAgentCatalog(home, "linux") {
+				if agent.ID == "opencode" && agent.ConfigPath != want {
+					t.Fatal("扫描目录未使用自动识别路径")
+				}
+			}
+		})
+	}
+}
+
+func TestSetupSummaryListsNamesVersionsPathsAndOnlyRemindsEnabledCodex(t *testing.T) {
+	agents := []setupAgent{
+		{ID: "codex", Name: "Codex CLI", Version: "0.167.2"},
+		{ID: "opencode", Name: "OpenCode", Version: "2.0.20"},
+	}
+	paths := map[string]string{"codex": "用户目录/codex.json", "opencode": "用户目录/opencode.jsonc"}
+	results := map[string]string{"codex": "接入配置已完成", "opencode": "接入配置已完成"}
+	for _, enabled := range []bool{false, true} {
+		var output bytes.Buffer
+		printSetupSummary(&output, agents, paths, results, "用户目录/bridge.yaml", enabled)
+		text := output.String()
+		for _, expected := range []string{"Codex CLI", "0.167.2", paths["codex"], "OpenCode", "2.0.20", paths["opencode"]} {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("配置结果缺少名称、版本或路径 %q：%s", expected, text)
+			}
+		}
+		if strings.Contains(text, "请在 /hooks") != enabled {
+			t.Fatal("Codex 额外提醒不符合本次启用状态")
+		}
+		if strings.Contains(text, "请重启") || strings.Contains(text, "OpenCode 请") {
+			t.Fatal("不应要求所有 Agent 做额外授权或手填 OpenCode 路径")
+		}
+		if strings.Index(text, "本次配置操作已结束") > strings.Index(text, "以后需要") {
+			t.Fatal("应在配置结束后提示 setup 的维护用途")
+		}
+	}
+}
+
+func TestSetupAnnouncesConfigurationBeforePromptsAndFinishesWithMaintenanceHint(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramFiles", t.TempDir())
+	path := filepath.Join(t.TempDir(), "bridge.yaml")
+	var output bytes.Buffer
+	if err := SetupInteractive(context.Background(), path, strings.NewReader("\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if strings.Index(text, "开始配置 Agent 接入") >= strings.Index(text, "Hub 地址（") {
+		t.Fatal("配置开始说明必须在交互输入前")
+	}
+	if strings.Index(text, "已保存") < 0 || strings.Index(text, "安装 Agent 后") < 0 || strings.Index(text, "已保存") > strings.Index(text, "安装 Agent 后") {
+		t.Fatal("未检测到 Agent 时也应先保存，再说明以后如何配置")
+	}
+}
+
+func TestSetupIncompleteConfigurationReturnsErrorWithoutSuccessOrTrustHint(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("此回归只用 Linux 隔离命令检查配置提示，不模拟 Windows 宿主")
+	}
+	home := t.TempDir()
+	tools := filepath.Join(home, "tools")
+	if err := os.MkdirAll(tools, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// 只提供版本回执，不启动真实宿主或调用模型。
+	fake := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.167.2\\n'; else exit 1; fi\n"
+	if err := os.WriteFile(filepath.Join(tools, "codex"), []byte(fake), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", tools)
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer hub.Close()
+	path := filepath.Join(home, "bridge.yaml")
+	raw := "source_id: setup-test\nhub_url: " + hub.URL + "\nadapters:\n  directory: " + filepath.Join(home, "adapters") + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := SetupInteractive(context.Background(), path, strings.NewReader("e\n\n"), &output)
+	if err == nil {
+		t.Fatal("Hub 没有发布公钥时不应返回成功，让安装器误报完成")
+	}
+	text := output.String()
+	if !strings.Contains(text, "接入尚未完成") || !strings.Contains(text, "Codex CLI") || !strings.Contains(text, "0.167.2") {
+		t.Fatalf("应明确列出未完成的 Agent 与版本：%s", text)
+	}
+	if strings.Contains(text, "请在 /hooks") || strings.Contains(text, "接入配置已完成") {
+		t.Fatal("未安装成功不应提示已经完成或要求审核不存在的钩子")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatal("失败前不应创建 Agent 钩子")
+	}
+}
+
+func TestSetupDoesNotRequireSpecialAntigravityLauncher(t *testing.T) {
+	var out bytes.Buffer
+	printSetupSummary(&out, []setupAgent{{ID: "antigravity", Name: "Antigravity CLI", Version: "1.5.9"}}, map[string]string{"antigravity": "/配置/hooks.json"}, map[string]string{"antigravity": "接入配置已完成"}, "/配置/bridge.yaml", false)
+	if strings.Contains(out.String(), "run-adapter") || strings.Contains(out.String(), "包装") || strings.Contains(out.String(), "不会采集") {
+		t.Fatal("配置后必须允许正常直接启动", out.String())
 	}
 }

@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,45 @@ func TestChannelCharacterLimits(t *testing.T) {
 					t.Fatal("原始事件被修改")
 				}
 			})
+		}
+	}
+}
+
+type fixtureTransport func(*http.Request) (*http.Response, error)
+
+func (f fixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestMeowEmptyBodyUsesTitleAtSendBoundaryAndReportsBusinessFailure(t *testing.T) {
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	e := protocol.Event{Title: "Codex 本轮完成", Body: ""}
+	for _, tc := range []struct{ host, expected string }{{"api.chuckfang.com", e.Title}, {"other.example.invalid", ""}} {
+		http.DefaultTransport = fixtureTransport(func(r *http.Request) (*http.Response, error) {
+			var fields map[string]string
+			if json.NewDecoder(r.Body).Decode(&fields) != nil || fields["msg"] != tc.expected {
+				t.Fatal("发送边界正文错误", fields)
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"status":400,"msg":"msg不能为空，秘密文本不应回显"}`)), Header: make(http.Header)}, nil
+		})
+		got := SendResult(context.Background(), config.Channel{URL: "https://" + tc.host + "/test", Method: "POST", Format: "json", Fields: map[string]string{"msg": "${body}"}, TimeoutSeconds: 1}, e)
+		if tc.host == "api.chuckfang.com" && (got.Status != "failed" || got.HTTPStatus != 200 || got.BusinessStatus == nil || *got.BusinessStatus != 400 || got.Reason != "手机接口拒绝空消息正文") {
+			t.Fatal("必须区分HTTP接受与业务失败，不显示原始响应", got)
+		}
+		if e.Body != "" {
+			t.Fatal("发送不能修改原始事件正文")
+		}
+	}
+}
+
+func TestProviderFailureClassificationNeverIncludesRawSecrets(t *testing.T) {
+	for _, tc := range []struct{ body, reason string }{
+		{`{"status":404,"msg":"发送失败，该昵称没有注册，一天之内累计3次输错对方昵称您的IP将被封禁"}`, "手机推送目标不存在或未注册"},
+		{`{"status":403,"msg":"IP已封禁 secret=https://private.example/key"}`, "手机接口拒绝来源 IP"},
+		{`{"status":401,"msg":"key无效，不能显示actual-secret"}`, "手机接口拒绝渠道密钥"},
+	} {
+		got := chuckfangResponse(strings.NewReader(tc.body))
+		if got.Status != "failed" || got.Reason != tc.reason {
+			t.Fatal(got)
 		}
 	}
 }

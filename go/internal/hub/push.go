@@ -48,15 +48,16 @@ func (h *Hub) pushOne(ctx context.Context) {
 	if !ok {
 		return
 	}
-	status := notify.Send(ctx, ch, e)
+	result := notify.SendResult(ctx, ch, e)
+	status := result.Status
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// attempts 在发送前递增；结果写入失败保留 sending，重启转为 unknown。
-	_, err := h.db.ExecContext(ctx, `UPDATE push_jobs SET status=CASE WHEN ?='retry' AND attempts<3 THEN 'pending' WHEN ?='retry' THEN 'failed' ELSE ? END,next_at=? WHERE event_id=? AND channel=?`, status, status, status, timestamp(time.Now().Add(10*time.Second)), e.EventID, ch.Name)
+	_, err := h.db.ExecContext(ctx, `UPDATE push_jobs SET status=CASE WHEN ?='retry' AND attempts<3 THEN 'pending' WHEN ?='retry' THEN 'failed' ELSE ? END,next_at=?,http_status=?,business_status=?,failure_reason=? WHERE event_id=? AND channel=?`, status, status, status, timestamp(time.Now().Add(10*time.Second)), result.HTTPStatus, result.BusinessStatus, result.Reason, e.EventID, ch.Name)
 	if err != nil {
 		slog.Error("推送结果未保存", "event_id", e.EventID)
 	} else {
-		slog.Info("推送处理完成", "event_id", e.EventID, "channel", ch.Name, "result", status)
+		slog.Info("推送处理完成", "event_id", e.EventID, "channel", ch.Name, "result", status, "http_status", result.HTTPStatus, "reason", result.Reason)
 	}
 }
 

@@ -10,7 +10,7 @@
 | ZCode | Windows 原生 process 钩子 | SessionStart、UserPromptSubmit、正常 Stop；过滤带子代理身份的输入；工具等待、工具错误及非正常退出不推断为主任务状态 |
 | Codex | 命令 hook | 会话开始/恢复/关闭、用户提交、本轮结束、用户中断；不接收 SubagentStart/Stop。没有可靠归属信息的工具权限/输入 hook 暂不转换，不能据此宣称已覆盖等待状态 |
 | qoderclicn | 命令 hook | 会话、轮次结束、StopFailure、权限请求、问答工具和 MCP 输入提示；包含子代理 ID/type 的事件忽略；工具错误不等于主任务失败 |
-| Antigravity CLI | 命令 hook + 主会话启动包装器 | 主会话开始、模型调用前活动、问答/权限等待、Stop 原因；公开字段没有主子关系，所以必须通过包装器绑定主会话，未绑定事件忽略 |
+| Antigravity CLI | 原生命令 hook | 普通直接启动采集会话开始、模型活动、问答/权限等待和 Stop 原因；共用本机入口过滤 ACP，明确父/内部会话字段另行过滤，不要求绑定 |
 
 Hook 只返回被动响应，不修改批准决定、注入提示词或要求 Agent 继续执行。命令转换最多运行 150 ms，之后本地递交最多等待 200 ms；异常只发诊断，不让通知故障阻塞 Agent。只传事件类型、会话 ID 和项目名，不上传提示词、工具参数、原始错误或完整回复。
 
@@ -20,7 +20,7 @@ Hook 只返回被动响应，不修改批准决定、注入提示词或要求 Ag
 
 ## 宿主版本政策
 
-`x.y.z` 分别表示主、次、补丁版本。同一已验 `x.y` 下补丁变化默认支持；同一主版本内次版本变化允许继续使用但不承诺兼容；主版本变化需重新测试后纳入支持，不要求每个补丁版本重复验收。该政策与已验版本证据分开记录。Bridge 按清单 `agent_min`/`agent_max` 的主次版本线选择：补丁差异不阻断，同主版本内超出已验次版本线仍安装并报告警告，主版本超出声明则拒绝。Hub 将警告与安装失败分开显示；签名、协议、平台和最低 Bridge 版本要求保持原校验，不因宿主政策放宽。
+`x.y.z` 分别表示主、次、补丁版本。同一已验 `x.y` 下补丁变化默认支持；同一主版本内次版本变化允许继续使用但不承诺兼容；主版本变化需重新测试后纳入支持，不要求每个补丁版本重复验收。该政策与已验版本证据分开记录。Bridge 按清单 `agent_min`/`agent_max` 的主次版本线选择：补丁差异不阻断，同主版本内超出已验次版本线仍安装并报告警告，主版本超出声明则拒绝。Hub 将警告与安装失败分开显示；签名、当前格式和平台保持原校验，不因宿主政策放宽；本项目不维护旧接收器最低版本门槛。
 
 ## 发布者：构建与签名
 
@@ -28,23 +28,23 @@ Hook 只返回被动响应，不修改批准决定、注入提示词或要求 Ag
 
 ```sh
 pnpm --dir adapters/opencode install --frozen-lockfile --ignore-scripts
-bash scripts/package-adapters.sh ./dist/repository 1
+bash scripts/build/package-adapters.sh ./dist/repository 1
 ./bin/agent-pulse-adapters keygen --private /安全目录/publisher.key --public /安全目录/publisher.pub
 ./bin/agent-pulse-adapters publish --repository ./dist/repository --private /安全目录/publisher.key --index ./dist/repository/index-input.json
 ```
 
-`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 命令包，要求 Bridge 0.3.0 或更新兼容版本。OpenCode 0.3.x 包提供可选原生会话标题，最低 Bridge 0.4.0；先更新 Hub/Relay，再更新 Bridge 与插件，避免旧服务严格校验拒绝新字段。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
+`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 ZCode 包。候选统一使用当前格式，不设置旧接收器版本门槛。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
 
-ZCode 0.1.x 使用 `process-hooks` 配置格式，最低 Bridge 0.5.0。**在公用索引加入 ZCode 前，先将读取该索引的所有 Bridge（含 Linux）升级到 0.5.0**；旧版会拒绝不认识的配置格式，不能只靠平台过滤避免此问题。已有安装不会因新索引失败而删除。
+ZCode 使用 `process-hooks` 配置格式；当前候选的 Bridge 已实现该格式。结构变更按同一现行构建更新，不提供旧接收器兼容。
 
 每次发布递增 `sequence`。`packages` 是本次可用的版本集合，同一来源默认选择当前平台的最高兼容版本。集中回滚时，在新的更高序号索引里为该来源选择已有旧包，不复用旧序号。保留多个版本可供单机 `pins` 固定使用。相同版本不得更改内容，修改必须发布新版本。
 
 同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
 
-Windows 侧执行 `./scripts/package-adapters.ps1`，只生成 ZCode 一个 Windows 原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。通用 OpenCode 包统一采用 Linux 仓库中的一次构建，当前支持 Linux 宿主。Windows Workflow 按相同单包清单验收，Linux Workflow 仍提供原有 Linux 来源及通用插件。
+Windows 侧执行 `./scripts/build/package-adapters.ps1`，只生成 ZCode 一个 Windows 原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。通用 OpenCode 包统一采用 Linux 仓库中的一次构建，当前支持 Linux 宿主。Windows Workflow 按相同单包清单验收，Linux Workflow 仍提供原有 Linux 来源及通用插件。
 
 ```sh
-uv run --offline --no-project python scripts/merge_adapter_repositories.py \
+uv run --offline --no-project python scripts/release/merge_adapter_repositories.py \
   ./dist/repository ./dist/repository-windows --output ./dist/repository-combined --sequence 2
 ./bin/agent-pulse-adapters publish --repository ./dist/repository-combined \
   --private /安全目录/publisher.key --index ./dist/repository-combined/index-input.json
@@ -54,11 +54,11 @@ uv run --offline --no-project python scripts/merge_adapter_repositories.py \
 
 同一插件在不同平台重复打包时，pnpm 路径长度处理可能使 bundle 的来源注释不同；合并器不会忽略这些内容差异。公用索引应使用上述单次通用构建方式，不通过放宽摘要检查或覆盖同版本包规避冲突。
 
-Hub 基础镜像由构建工作流发布为 `hub-base`，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/prepare-hub-release.py`，使用匹配的基础镜像生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像启动时 Hub 自动读取 `/repository/publisher.pub`；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载完整 RC 镜像后不需要挂载仓库或配置公钥。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
+Hub 基础镜像由构建工作流发布为 `hub-base`，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的基础镜像生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像启动时 Hub 自动读取 `/repository/publisher.pub`；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载完整 RC 镜像后不需要挂载仓库或配置公钥。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
 
 ## 主机：首次接入与自动更新
 
-普通使用者运行 `agent-pulse-bridge setup`，按提示填写 Hub 地址并逐项选择要启用的 Agent。Bridge 会创建稳定的随机主机指纹、以系统主机名作为默认显示名，并只修改用户明确选择的宿主配置。完成后列出实际修改的文件；Agent 可能需要重新加载，Codex 等宿主也可能要求用户确认信任。
+普通使用者运行 `agent-pulse-bridge setup`，按提示填写 Hub 地址并逐项选择要启用的 Agent。Bridge 会创建稳定的随机主机指纹、以系统主机名作为默认显示名，并只修改用户明确选择的宿主配置。配置开始前说明操作，结束后统一显示名称、宿主版本、实际配置路径及结果，再说明 setup 的维护用途。OpenCode 自动识别已有 JSON/JSONC，已有明确路径仍优先。额外的钩子授权提醒只针对本次启用且配置完成的 Codex CLI；旧进程未加载时再按故障排查处理。
 
 日常配置无需手动填写发布公钥。Bridge 首次通过配置的 Hub 地址直连获取公钥，并按 Hub 地址和本机指纹保存首次信任记录；之后若 Hub 返回不同公钥会停止自动更新并要求人工核验。首次信任不得经 Relay 建立。手动配置 `adapters.public_key` 仅用于管理员已通过独立渠道核验并固定公钥的部署。公网部署必须正确配置 HTTPS 和访问控制；可信个人内网可使用受控的 HTTP Hub。
 
@@ -91,7 +91,7 @@ Codex 和 qoderclicn 的宿主信任提示由用户在宿主中确认，安装�
 
 ZCode 已实测基线为 Windows amd64 的 3.17.2，主/次/补丁版本政策见上文。安装器从默认用户/系统安装位置或 PATH 定位 `ZCode.exe`，读取文件版本资源，避免为了探测版本启动桌面程序；非默认安装位置需将可执行文件所在目录加入 PATH。同一版本线的兼容承诺不表示每个补丁均有实测证据；已知事件结构不兼容情况需单列。
 
-Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 `zcode`，值为本机 `%USERPROFILE%/.zcode/cli/config.json` 的实际绝对路径；保留原有公钥、包目录及其他来源。不要把示例百分号变量直接写入 YAML 期待自动展开。经签名的 Windows ZCode 包安装后，设置页“钩子”可看到 AgentPulse 管理的三个事件。
+Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 `zcode`，值为本机 `%USERPROFILE%/.zcode/cli/config.json` 的实际绝对路径；保留原有公钥、包目录及其他来源。不要把示例百分号变量直接写入 YAML 期待自动展开。经签名的 Windows ZCode 包安装后，设置页“钩子”可看到 AgentPulse 管理的三个事件。同版本已安装也会核对当前授权文件并补回缺失钩子；配置无变化不重复写入。向导以实际文件及总开关核验结果报告完成，不只依赖安装记录。
 
 配置采用 `hooks.events` 中的 `type: process`，可执行路径和参数数组分开保存，避免 PowerShell/cmd 引号及编码转换。已有 `hooks.enabled: false` 会被尊重，需用户在 ZCode 中明确开启；没有该字段时安装器启用钩子。保留其他用户钩子、超时和错误策略，仅替换本软件同来源同配置的 dispatch 条目；升级内置 Bridge 的版本目录不会重复安装。
 
@@ -99,29 +99,24 @@ Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 
 
 原始钩子输入可能含完整回复，本机读取上限为 8 MiB；转换后仍只发送会话标识、事件类型和简短标题，网络事件上限保持 64 KiB，不上传模型正文。真实测试流程见 [端到端测试](../tests/e2e/README.md#zcode-windows-桌面)。
 
-## Antigravity 主会话入口
+## 正常启动与派生运行过滤
 
-公开 hook 没有主/子代理字段。通过稳定入口启动 CLI，在第一次 SessionStart 时绑定主会话，后续只处理该 ID。子会话即使继承了环境也无法改写绑定：
+安装 hook 后，各 Agent 保持原来的正常启动方式。例如直接运行 `agy` 或 `agy --print '你的任务'`，不经 Bridge 启动，不创建主会话绑定文件，不要求换命令。
 
-```sh
-./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- --print '你的任务'
-```
+ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）启动在本项目中视为子代理运行，不向用户推送。例如 `agy acp --stdio --process-per-session` 的事件会被过滤。实现位置不是需求约束：本项目在 Bridge 的共用本机入口检查已安装 Agent 的启动来源，命令 hook 和 OpenCode 插件共用同一检查，新来源使用现有清单的 `command` 即可接入。
 
-也可直接使用 `bin/agent-pulse-adapter-antigravity run -- ...` 做开发验证。临时绑定只保存会话 ID，不保存事件或文本；进程退出后删除。IDE 和远程守护进程需要另行取得主会话证据，当前不把它们当成已支持。
+启动进程信息只在本机判断运行方式，不进入 Hub/Relay 的事件、存储或界面。程序识别启动子命令/开关，不因提示词里出现 acp 文本而过滤。Linux 和 Windows 均查询本机进程祖先；Windows 对应系统 API 及共用入口已原生执行进程测试。该机制测试不等于各宿主完整 ACP 任务已经实测。
 
-ACP（Agent Client Protocol，编辑器通过标准输入输出调用 Agent 的协议）使用同一包装器：
+原生载荷中明确的子代理/父会话字段由各产品的薄适配转换过滤。Antigravity 的默认外部 hook 没有公开父/根字段；本地缓存按当前 ID 明确标记 `is_internal: true` 时也会过滤内部会话。缓存缺失或 false 不拿来证明主身份，也不以信息缺失阻断普通启动。缓存首次可用性及所有内部子代理覆盖不作未经实测的承诺。
 
-```sh
-./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- acp --stdio --process-per-session
-```
+### 会话身份与名称来源
 
-ACP 在新进程中 `session/load` 原会话时，可能没有新的 SessionStart。适配包 0.2.2 起，由调用者在启动时明确指定之前取得的主会话 ID：
+会话身份按来源、Agent 和原生会话 ID 定位，名称是可变属性。无名称时显示“未命名会话”，项目单独展示；本项目别名仅作备注，不覆盖 Agent 最新名称。名称只从宿主明确保存的字段获取，不使用摘要、提示词或 ID 生成。
 
-```sh
-./bin/agent-pulse-bridge run-adapter --config config/bridge.local.yaml --adapter antigravity -- \
-  --pulse-main-session 原主会话ID acp --stdio --process-per-session
-```
+- Codex CLI：每次真实 hook 按 ID 读取可选 `session_index.jsonl` 的 `thread_name`，见 [Codex 适配器](../adapters/codex/README.md#会话标题)。
+- Qoder 中国版 CLI：每次真实 hook 按 ID 读取会话文件中的 `custom-title.customTitle`，用户名优先；没有用户名时可使用宿主明确生成的 `ai-title.aiTitle`，见 [Qoder 适配器](../adapters/qoderclicn/README.md#会话名称读取)。
+- Antigravity CLI：每次真实 hook 按 ID 优先读取持久化注解 `annotations/<会话标识>.pbtxt` 的顶层 `title`；不可用时才回退 JSON 缓存 `summary.ID/Title`，不使用 `Preview`，见 [Antigravity 适配器](../adapters/antigravity/README.md#会话名称)。
+- OpenCode：接入原生 `session.renamed`；普通事件也携带原生名称，改名事件使用当时的原始新名称，网络重试或重放不因后续改名改变载荷。
+- ZCode Windows：每次原生 hook 按精确会话 ID 只读查询 `%USERPROFILE%/.zcode/cli/db/db.sqlite` 的 `session.title/title_source/parent_id`。默认占位名称不作为真实名称，显式父会话过滤。改名没有独立配置钩子，下一次真实事件同步新名称；缺库、未知结构或锁竞争不阻断事件，首次无名称显示未命名。Windows 3.18.2 的真实改名及下一轮事件已验证，详见开发记录。
 
-`--pulse-main-session` 必须位于宿主参数之前，由包装器消费，不传给 agy。之后 ACP 客户端对同一 ID 调用 `session/load`。绑定后的其他会话仍被过滤；不能用任意子会话 ID 冒充主会话，也不会自动把新出现的 ID 替换为主会话。此能力随独立适配包更新，不要求为此重新部署 Bridge。
-
-保持 agy 默认登录目录，由宿主自行使用已登录凭据。一个包装进程只绑定一个主会话，不用于同进程多主会话复用。agy 1.5.3 的正常 ACP Stop 实测为 `NO_TOOL_CALL`，仅在 `fullyIdle=true` 时转换为完成；旧版 `model_stop` 仍支持，显式未空闲时只记活动。未知原因保留为状态未知。ACP 的 `stopReason=end_turn` 属于协议响应，本适配器仍以原生 hook 为事件来源。
+不进行名称轮询；没有可接入改名事件的来源，等下一次真实事件读取名称。元数据不可用时不丢弃原事件，也不清除已知名称。已有非零名称序号时，旧序号和无序号载荷不能回滚新名称；普通无序号来源按到达顺序处理。服务、Bridge 和带名称能力的适配包均须更新，单独更新网页不能让旧包获取标题。正式发布与实际升级另行授权。
