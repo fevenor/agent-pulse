@@ -532,3 +532,5 @@ Antigravity 的普通任务与 ACP 分开验收：普通任务的真实事件入
 标签 v0.5.0-rc.2 固定于同一源码提交，[RC2 草稿工作流](https://github.com/fevenor/agent-pulse/actions/runs/43624936545) 的标签校验、Linux、Windows、草稿生成均成功。草稿保持预发布与未转正状态，附件包含便携包、五个未签名适配包、两架构 Linux Bridge、发布工具、安装脚本、构建清单、试运行说明和 SHA256 校验清单；没有使用正式私钥，没有更新稳定 latest 或替换生产服务。
 
 最终分发复核发现 GitHub 自动将中文文件名改为 default.json/default.md，而原校验清单仍记录中文名称。已通过草稿附件 API 将名称改为 candidate-manifest.json/trial-guide.md，并更新校验清单与试运行说明；原候选标签、源码提交和二进制保持。发布脚本改用稳定文件名，上传后核对实际名称和大小，新增回归后 RC 草稿共7项测试通过。后续普通双平台检查也执行该回归，避免只相信本地文件列表或工作流成功标记。
+
+分发流程修复提交 8bd3e5b4af162523b4e5f089bf200d7b167b6d90 的 [Linux 检查](https://github.com/fevenor/agent-pulse/actions/runs/43627685409) 与 [Windows 检查](https://github.com/fevenor/agent-pulse/actions/runs/43627685426) 均成功，包含新增的实际附件名称/大小回归。重新下载草稿全部9个附件，逐项 SHA256 通过；便携 ZIP 四文件清单、五包未签名仓库的包大小/摘要/ZIP 完整性通过，构建清单与候选提交一致。草稿依然为 v0.5.0-rc.2、预发布且未转正；候选标签未移动，发布流程修复单独保存在 main。最终本地工作区只留下已提交源码，运行与原始证据保留在忽略目录。
