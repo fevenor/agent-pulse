@@ -42,6 +42,14 @@ def require_draft(release, tag, commit):
         raise ValueError("已有草稿不是当前候选提交，不自动覆盖")
 
 
+def validate_uploaded_assets(release, paths):
+    """上传后核对 GitHub 实际保存的名称和大小，不把本地文件清单冒充分发结果。"""
+    expected = {p.name: p.stat().st_size for p in paths}
+    actual = {a["name"]: a["size"] for a in release.get("assets", [])}
+    if len(actual) != len(release.get("assets", [])) or actual != expected:
+        raise ValueError("GitHub 实际附件名称或大小与校验清单不符")
+
+
 def unique_file(directory, name):
     paths = list(directory.rglob(name))
     if len(paths) != 1:
@@ -138,7 +146,7 @@ def main():
                 "relay": image_root + "/relay:" + args.tag,
                 "signed_repository": False, "index_sequence_is_placeholder": True,
                 "bridge_assets": [{key: value for key, value in artifact.items() if key != "path"} for artifact in bridge_files]}
-    (assets / "候选构建清单.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notes = f"""# AgentPulse {args.tag} 试运行草稿
 
 本草稿由同一提交的 Linux 与 Windows 工作流成功后生成，等待发布者人工运行数日后再决定发布；不会自动转正，也不更新稳定 latest 镜像别名。
@@ -162,27 +170,28 @@ def main():
 - Hub 基础镜像：{manifest['hub_base']}。它不含正式签名仓库，不能冒充普通用户完整 RC。
 - Relay 镜像：{manifest['relay']}。
 
-可先沿用现有 Hub 与已签名适配仓库测试 Windows 客户端。若测试新适配包，在 Linux 发布机按 docs/images.md 使用既有长期密钥签名，再用 scripts/release/prepare-hub-release.py 附加仓库到此基础镜像；无需将私钥上传 GitHub。升级服务前备份数据库，先 Hub/Relay、后 Bridge/Tray，再下发包索引。
+本候选不承诺旧候选通讯/存储兼容，试运行应使用同一现行构建与隔离数据目录，保留已有数据备份，不清空日常数据。测试新适配包时，在 Linux 发布机按 docs/images.md 使用既有长期密钥签名，再用 scripts/release/prepare-hub-release.py 附加仓库到此基础镜像；无需将私钥上传 GitHub。升级服务前备份数据库，先 Hub/Relay、后 Bridge/Tray，再下发包索引。
 
 Windows 完整仓库准备目录仍有拒绝访问的验证边界，签名与完整镜像准备沿用 Linux 流程。草稿不是新的真实宿主或手机实收证明；运行期间保留实际事件、提醒和异常证据，公开反馈不包含私人配置、令牌或会话正文。
 
 来源提交：{args.commit}
 工作流：https://github.com/{args.repository}/actions/runs/{args.run_id}
 """
-    (assets / "试运行说明.md").write_text(notes, encoding="utf-8")
+    (assets / "trial-guide.md").write_text(notes, encoding="utf-8")
     checksums = [hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name for p in sorted(assets.iterdir())]
     (assets / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
-    fields = "isDraft,isPrerelease,tagName,targetCommitish,url"
+    fields = "isDraft,isPrerelease,tagName,targetCommitish,url,assets"
     existing = command("gh", "release", "view", args.tag, "--repo", args.repository, "--json", fields, allow_failure=True)
     if existing.returncode == 0:
         require_draft(json.loads(existing.stdout), args.tag, args.commit)
     else:
         command("gh", "release", "create", args.tag, "--repo", args.repository,
                 "--target", args.commit, "--draft", "--prerelease",
-                "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", assets / "试运行说明.md")
+                "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", assets / "trial-guide.md")
     command("gh", "release", "upload", args.tag, "--repo", args.repository, "--clobber", *sorted(assets.iterdir()))
     release = json.loads(command("gh", "release", "view", args.tag, "--repo", args.repository, "--json", fields).stdout)
     require_draft(release, args.tag, args.commit)
+    validate_uploaded_assets(release, list(assets.iterdir()))
     result = {**release, "commit": args.commit, "workflow_run_id": args.run_id,
               "assets": [p.name for p in sorted(assets.iterdir())], "signed_repository": False}
     (output / "release-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

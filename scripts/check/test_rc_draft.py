@@ -13,6 +13,19 @@ spec.loader.exec_module(module)
 
 
 class DraftTests(unittest.TestCase):
+    def test_uploaded_names_and_sizes_match_real_github_assets(self):
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            paths = [root / "candidate-manifest.json", root / "trial-guide.md"]
+            for path in paths:
+                path.write_bytes(b"test")
+            release = {"assets": [{"name": p.name, "size": 4} for p in paths]}
+            module.validate_uploaded_assets(release, paths)
+            for assets in ([{"name": "default.json", "size": 4}, {"name": "default.md", "size": 4}],
+                           [{"name": p.name, "size": 5} for p in paths], []):
+                with self.assertRaises(ValueError):
+                    module.validate_uploaded_assets({"assets": assets}, paths)
+
     def test_only_matching_rc_tag(self):
         module.validate_tag("v0.5.0-rc.1", "0.5.0")
         for tag in ("v0.5.0", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):

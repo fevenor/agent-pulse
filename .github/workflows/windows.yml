@@ -71,6 +71,8 @@ jobs:
         run: |
           ./scripts/check/check.ps1 -Tray -Integration
           uv run --offline --no-project python scripts/check/test_script_layout.py
+          uv run --offline --no-project python scripts/check/test_rc_draft.py
+          if ($LASTEXITCODE -ne 0) { throw 'RC 草稿附件回归失败' }
           uv run --offline --no-project python scripts/check/test_merge_adapter_repositories.py
           if ($LASTEXITCODE -ne 0) { throw '适配包合并检查失败' }
       - name: 构建演示并检查开发配置
