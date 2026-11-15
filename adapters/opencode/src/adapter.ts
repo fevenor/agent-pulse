@@ -23,6 +23,7 @@ export type PulseEvent = {
 export const eventTypes = [
   "session.created", "session.deleted", "session.renamed", "session.execution.started",
   "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted",
+  "session.text.ended",
   "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
 ] satisfies NativeEvent["type"][];
 
@@ -41,6 +42,60 @@ const kinds: Record<string, [string, string]> = {
   "form.cancelled": ["activity.observed", "输入请求已取消"],
 };
 
+const BODY_LIMIT = 32 << 10;
+export function visibleBody(value: string, limit = BODY_LIMIT): string {
+  const text = value.trim();
+  if (Buffer.byteLength(text) <= limit && Buffer.byteLength(JSON.stringify(text)) <= 56 << 10) return text;
+  const suffix = "\n\n[内容超过事件长度上限，已截断]";
+  let prefix = Buffer.from(text).subarray(0, limit - Buffer.byteLength(suffix));
+  // 不拆开 UTF-8 多字节字符。
+  while (prefix.length && (prefix[prefix.length - 1]! & 0xc0) === 0x80) prefix = prefix.subarray(0, prefix.length - 1);
+  while (prefix.length && Buffer.byteLength(prefix.toString()) > prefix.length) prefix = prefix.subarray(0, prefix.length - 1);
+  while (Buffer.byteLength(JSON.stringify(prefix.toString()+suffix)) > 56 << 10) {
+    prefix = prefix.subarray(0, Math.max(0, Math.floor(prefix.length * 0.9)));
+    while (prefix.length && Buffer.byteLength(prefix.toString()) > prefix.length) prefix=prefix.subarray(0,prefix.length-1);
+  }
+  return prefix.toString() + suffix;
+}
+
+// 只缓存原生 text.ended 的最后一个助手消息，不缓存 reasoning、用户输入或历史对话。
+export class FinalOutput {
+  private readonly sessions = new Map<string, { message: string; parts: Map<number, string> }>();
+  observe(event: NativeEvent): void {
+    const id = sessionID(event);
+    if (!id) return;
+    if (event.type === "session.execution.started" || event.type === "session.deleted") { this.sessions.delete(id); return; }
+    if (event.type !== "session.text.ended") return;
+    const { assistantMessageID, ordinal, text } = event.data;
+    let current = this.sessions.get(id);
+    if (!current || current.message !== assistantMessageID) current = { message: assistantMessageID, parts: new Map() };
+    if (current.parts.size >= 64 && !current.parts.has(ordinal)) return;
+        const used = [...current.parts].filter(([key]) => key !== ordinal).reduce((sum,[,part]) => sum + Buffer.byteLength(part) + 1, 0);
+    if (BODY_LIMIT - used < 100) return;
+    current.parts.set(ordinal, visibleBody(text, BODY_LIMIT - used));
+    this.sessions.set(id, current);
+    if (this.sessions.size > 128) this.sessions.delete(this.sessions.keys().next().value!);
+  }
+  take(id: string): string {
+    const current = this.sessions.get(id);this.sessions.delete(id);
+    return current ? visibleBody([...current.parts].sort(([a],[b]) => a-b).map(([,text]) => text).join("\n")) : "";
+  }
+}
+
+function formBody(form: Extract<NativeEvent,{type:"form.created"}>["data"]["form"]): string {
+  const lines = [form.title];
+  for (const field of form.fields) {
+    // 无当前表单答案，不能把依赖条件的隐藏/未来字段当作当前正在问的问题。
+    if (("hidden" in field && field.hidden) || ("when" in field && field.when?.length)) continue;
+    if (field.title) lines.push(field.title + (field.type === "multiselect" ? "（可多选）" : ""));
+    if (field.description) lines.push(field.description);
+    if ("options" in field && field.options) {
+      for (const [index, option] of field.options.entries()) lines.push(`${index + 1}. ${option.label}${option.description ? " — " + option.description : ""}`);
+    }
+  }
+  return visibleBody(lines.filter(Boolean).join("\n"));
+}
+
 export function sessionID(event: NativeEvent): string | undefined {
   if (event.type === "form.created") return event.data.form.sessionID;
   if ("data" in event && event.data && "sessionID" in event.data && typeof event.data.sessionID === "string") return event.data.sessionID;
@@ -48,14 +103,16 @@ export function sessionID(event: NativeEvent): string | undefined {
 }
 
 // 仅信任宿主提供的完整会话信息，不通过标题、日志文字猜测主/子关系。
-export function convert(event: NativeEvent, session: SessionInfo | undefined, source: string): PulseEvent | undefined {
+export function convert(event: NativeEvent, session: SessionInfo | undefined, source: string, finalOutput = ""): PulseEvent | undefined {
   const mapping = kinds[event.type];
   const id = sessionID(event);
   if (!mapping || !session || session.parentID || !id || session.id !== id || !("created" in event) || typeof event.created !== "number") return;
   const nativeTitle = event.type === "session.renamed" ? event.data.title : session.title;
   let body = mapping[1];
-  if (event.type === "permission.asked") body = `需要批准：${event.data.action}`;
-  if (event.type === "form.created") body = event.data.form.title;
+  if (event.type === "session.execution.succeeded") body = finalOutput || "本轮完成；原生正文未取得，请在 Agent 中查看。";
+  if (event.type === "session.execution.failed") body = `失败原因：${event.data.error.message}`;
+  if (event.type === "permission.asked") body = [`需要批准：${event.data.action}`, event.data.message || ""].filter(Boolean).join("\n");
+  if (event.type === "form.created") body = formBody(event.data.form);
   // 不推送原始错误、命令、权限资源列表，避免无意携带敏感上下文。
   return {
     event_id: createHash("sha256").update(JSON.stringify([source, "opencode", event.id])).digest("hex"),
@@ -67,7 +124,7 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
     occurred_at: new Date(event.created).toISOString(),
     title: `${mapping[1]}：${nativeTitle || "OpenCode"}`.slice(0, 240),
     session_title: (nativeTitle || "").slice(0, 240),
-    body: body.slice(0, 4000),
+    body: visibleBody(body),
     project: session.location.directory ?? "",
     ...("durable" in event ? { sequence: event.durable.seq } : {}),
   };

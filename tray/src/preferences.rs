@@ -240,6 +240,7 @@ mod tests {
         snapshot.sources.insert(
             "wsl".into(),
             crate::model::SourceLabel {
+                role: "bridge".into(),
                 name: "WSL".into(),
                 environment: String::new(),
                 archived: true,

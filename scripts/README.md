@@ -7,7 +7,7 @@
 | `build/` | 开发者或发布维护者；使用编译工具链构建、交叉编译和打包，不代表部署 | `build.sh`、`build.ps1`、`build-targets.sh`、`package-bridge.sh`、`package-adapters.*`、`package-windows.ps1` |
 | `install/` | 普通用户；下载或显式复制已核验预构建，不调用编译器 | `bridge.sh` |
 | `check/` | 开发者；常规检查与脚本回归，只在隔离目录验证安装 | `check.sh`、`check.ps1`、`test_*.py` |
-| `release/` | 发布维护者；合并仓库、准备完整 Hub 镜像上下文、核验 CI 产物并创建草稿 | `merge_adapter_repositories.py`、`prepare-hub-release.py`、`create_rc_draft.py` |
+| `release/` | 发布维护者；合并仓库、准备与发布完整 Hub 成品、核验 CI 产物并创建草稿 | `merge_adapter_repositories.py`、`prepare-hub-release.py`、`publish-hub-release.py`、`create_rc_draft.py` |
 
 ## 用户安装
 
@@ -22,6 +22,7 @@ Linux 使用 `bash scripts/install/bridge.sh --setup`。安装器自动识别 Li
 - 源码构建：`bash scripts/build/build.sh`；跨平台构建：`bash scripts/build/build-targets.sh`。
 - 常规检查：`bash scripts/check/check.sh`；Python 回归通过 `uv run --offline --no-project python scripts/check/test_install_bridge.py` 执行。
 - Linux Bridge 发布构建：维护者准备固定 Go 1.27.4 后执行 `bash scripts/build/package-bridge.sh`，产出两架构二进制、构建信息及 SHA-256 清单。该脚本不会安装到用户目录或上传。
+- 完整 Hub 发布使用 `publish-hub-release.py`：仅接受同候选 OCI 与已签名仓库，不读取私钥；需现有 GHCR 推送授权，发布后回读远端双架构索引。`prepare-hub-release.py` 本身不推送；本地构建或装载不能代表远端 Packages 已创建。
 - RC 草稿消费同一工作流的 `linux-bridge` 产物，不临时替用户构建；远端写操作仍由发布者授权执行。
 - Windows 构建、检查和便携打包分别见对应子目录，辅助工具 `windows-tools.ps1` 只属于开发构建。
 

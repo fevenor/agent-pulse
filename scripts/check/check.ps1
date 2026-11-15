@@ -25,6 +25,7 @@ try {
         Invoke-Checked go @('vet', './...')
     } finally { Pop-Location }
     Write-Output 'Windows 已执行普通 Go 测试和安装器测试；竞态检测请在 Linux 执行。'
+    Invoke-Checked uv @('run', '--offline', '--no-project', 'python', (Join-Path $projectRoot 'scripts/check/test_publish_hub_release.py'))
     if (-not $GoOnly) {
         $env:VOLTA_FEATURE_PNPM = '1'
         foreach ($project in @('adapters/opencode', 'web/hub')) {

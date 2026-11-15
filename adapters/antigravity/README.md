@@ -17,4 +17,8 @@
 
 当前配置 hook 包括会话开始、模型调用、工具调用和停止，没有可配置的改名事件；用户名称随下一次真实事件传递。只读取宿主文本序列化器输出的顶层标量，使用 Go 标准库解码引号及转义，不实现通用 protobuf 文本解析。注解限制 64 KiB，JSON 缓存限制 8 MiB；缺失、不可读、损坏、未知格式时不影响原事件投递，不将摘要、提示词或 ID 作为名称。
 
-当前范围只覆盖默认 CLI 应用目录。显式改变 `--gemini-dir` / `--app-data-dir` 的实例不猜测缓存路径，也不读取会话数据库、认证文件或模型回复。取证、隔离的“注解已改名但 JSON 缓存仍旧”转换回归及原生验证边界见 [开发记录](../../docs/development-status.md)。
+当前范围只覆盖默认 CLI 应用目录。显式改变 `--gemini-dir` / `--app-data-dir` 的实例不猜测缓存路径，也不读取会话数据库、认证文件或历史模型回复。取证、隔离的“注解已改名但 JSON 缓存仍旧”转换回归及原生验证边界见 [开发记录](../../docs/development-status.md)。
+
+## 原生事件正文
+
+Stop 的 finalModelOutput 提供本轮可见最终回答，error 提供失败原因；不采集 modelThinking/lastUserInput 或回读 transcript。ask_question 的 toolCall.args.questions 提供问题与字符串选项；ask_permission 仅采用工具名、command/path/description/reason 等可见摘要白名单，不序列化任意参数。内容缺失只保留状态，32 KiB上限及受限原因见[事件与内容覆盖](../../docs/event-coverage.md)。

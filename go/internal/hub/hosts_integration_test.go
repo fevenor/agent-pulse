@@ -194,3 +194,20 @@ func TestTwoTrayClientsObserveHostNamesAndTrayLifecycle(t *testing.T) {
 	}
 	_ = connect(protocol.Device{ID: "tray-one", Role: "tray", HostName: "已删除桌面"}, false)
 }
+
+func TestSnapshotPersistsBridgeAndTrayRolesWhenOffline(t *testing.T) {
+	h := testHub(t)
+	ctx := context.Background()
+	h.mu.Lock()
+	for _, device := range []protocol.Device{{ID: "bridge-host", Role: "bridge", HostName: "同名主机"}, {ID: "tray-device", Role: "tray", HostName: "同名主机"}} {
+		if err := h.registerPresenceLocked(ctx, device); err != nil {
+			h.mu.Unlock()
+			t.Fatal(err)
+		}
+	}
+	h.mu.Unlock()
+	snapshot, err := h.Snapshot(ctx)
+	if err != nil || snapshot.Sources["bridge-host"].Role != "bridge" || snapshot.Sources["tray-device"].Role != "tray" {
+		t.Fatal("离线来源丢失设备角色", snapshot.Sources, err)
+	}
+}

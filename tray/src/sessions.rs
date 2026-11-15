@@ -12,6 +12,12 @@ pub enum Request {
         before: i64,
         generation: u64,
     },
+    Latest {
+        key: SessionKey,
+        after: i64,
+        generation: u64,
+        run_id: String,
+    },
     Manage {
         session: Box<Session>,
         field: &'static str,
@@ -24,6 +30,12 @@ pub enum Reply {
         key: SessionKey,
         before: i64,
         generation: u64,
+        result: Result<Vec<Event>, String>,
+    },
+    Latest {
+        key: SessionKey,
+        generation: u64,
+        run_id: String,
         result: Result<Vec<Event>, String>,
     },
     Managed {
@@ -80,6 +92,44 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                         key,
                         before,
                         generation,
+                        result,
+                    });
+                }
+                Request::Latest {
+                    key,
+                    after,
+                    generation,
+                    run_id,
+                } => {
+                    let mut result = Err("新事件暂不可达，正在自动重试".into());
+                    for (base, token) in endpoints.iter().filter(|(b, _)| !b.is_empty()) {
+                        let mut url = url::Url::parse(&format!("{base}/api/v1/events")).unwrap();
+                        url.query_pairs_mut()
+                            .append_pair("source_id", &key.source_id)
+                            .append_pair("agent", &key.agent)
+                            .append_pair("session_id", &key.session_id)
+                            .append_pair("limit", "30")
+                            .append_pair("after", &after.to_string());
+                        result = client
+                            .get(url.as_str())
+                            .header("Authorization", format!("Bearer {token}"))
+                            .call()
+                            .map_err(|_| "新事件暂不可达，正在自动重试".into())
+                            .and_then(|mut r| {
+                                r.body_mut()
+                                    .with_config()
+                                    .limit(8 << 20)
+                                    .read_json::<Vec<Event>>()
+                                    .map_err(|_| "新事件格式无效".into())
+                            });
+                        if result.is_ok() {
+                            break;
+                        }
+                    }
+                    let _ = output.send_blocking(Reply::Latest {
+                        key,
+                        generation,
+                        run_id,
                         result,
                     });
                 }

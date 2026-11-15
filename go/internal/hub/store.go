@@ -316,14 +316,14 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	for id, label := range h.config.Sources {
 		s.Sources[id] = protocol.SourceLabel{Name: label.Name, Environment: label.Environment}
 	}
-	hostRows, err := h.db.QueryContext(ctx, `SELECT source_id,default_name,display_name,environment,archived FROM hosts`)
+	hostRows, err := h.db.QueryContext(ctx, `SELECT source_id,default_name,display_name,environment,archived,role FROM hosts`)
 	if err != nil {
 		return s, err
 	}
 	for hostRows.Next() {
-		var id, defaultName, displayName, environment string
+		var id, defaultName, displayName, environment, role string
 		var archived bool
-		if err = hostRows.Scan(&id, &defaultName, &displayName, &environment, &archived); err != nil {
+		if err = hostRows.Scan(&id, &defaultName, &displayName, &environment, &archived, &role); err != nil {
 			break
 		}
 		name := displayName
@@ -333,7 +333,7 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 		if name == "" {
 			name = id
 		}
-		s.Sources[id] = protocol.SourceLabel{Name: name, Environment: environment, Archived: archived}
+		s.Sources[id] = protocol.SourceLabel{Name: name, Environment: environment, Archived: archived, Role: role}
 	}
 	hostRowErr := hostRows.Err()
 	_ = hostRows.Close()

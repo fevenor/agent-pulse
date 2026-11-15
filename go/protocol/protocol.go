@@ -139,6 +139,7 @@ type Device struct {
 }
 
 type SourceLabel struct {
+	Role        string `json:"role"`
 	Name        string `json:"name"`
 	Environment string `json:"environment"`
 	Archived    bool   `json:"archived"`

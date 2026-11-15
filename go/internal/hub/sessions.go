@@ -24,6 +24,13 @@ func (h *Hub) SessionHistoryWithArchived(ctx context.Context, key protocol.Sessi
 	return h.eventsLocked(ctx, `WHERE e.source_id=? AND e.agent=? AND e.session_id=? AND (?=0 OR e.position<?) ORDER BY e.position DESC LIMIT ?`, []any{key.SourceID, key.Agent, key.SessionID, before, before, limit}, includeArchived)
 }
 
+// 新事件按持久化位置升序分批读取，避免断线期间超过一页时漏掉中间记录。
+func (h *Hub) SessionEventsAfter(ctx context.Context, key protocol.SessionKey, after int64, limit int) ([]protocol.EventView, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.eventsLocked(ctx, `WHERE e.source_id=? AND e.agent=? AND e.session_id=? AND e.position>? ORDER BY e.position ASC LIMIT ?`, []any{key.SourceID, key.Agent, key.SessionID, after, limit}, false)
+}
+
 func (h *Hub) ManageSession(ctx context.Context, req protocol.SessionChange) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

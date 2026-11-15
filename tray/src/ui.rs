@@ -26,6 +26,8 @@ pub struct Shared {
     pub read_requested: BTreeSet<String>,
     pub history_more: bool,
     pub loading: bool,
+    pub latest_loading: bool,
+    pub new_events: usize,
     pub generation: u64,
     pub message: String,
     pub management_busy: bool,
@@ -86,6 +88,23 @@ impl Shared {
         self.expanded_events = Self::timeline_expansion_defaults(&self.history, &unread);
     }
 
+    // 增量更新只新增记录及状态，不重置用户已展开的旧记录和阅读累计。
+    pub fn merge_latest(&mut self, events: Vec<Event>) -> usize {
+        let unread: BTreeSet<_> = self
+            .view
+            .state
+            .unread()
+            .into_iter()
+            .map(|e| e.event_id)
+            .collect();
+        merge_timeline(
+            &mut self.history,
+            &mut self.expanded_events,
+            &unread,
+            events,
+        )
+    }
+
     pub fn advance_read_visibility(&mut self, elapsed: std::time::Duration) -> Vec<String> {
         let visible = std::mem::take(&mut self.visible_events);
         let unread: BTreeSet<_> = self
@@ -129,6 +148,34 @@ impl Shared {
             .cloned()
     }
 }
+fn merge_timeline(
+    history: &mut Vec<Event>,
+    expanded: &mut BTreeSet<String>,
+    unread: &BTreeSet<String>,
+    events: Vec<Event>,
+) -> usize {
+    let mut existing: BTreeSet<_> = history.iter().map(|e| e.event_id.clone()).collect();
+    let mut count = 0;
+    for event in events {
+        if existing.insert(event.event_id.clone()) {
+            if unread.contains(&event.event_id) {
+                expanded.insert(event.event_id.clone());
+            }
+            history.push(event);
+            count += 1;
+        } else if let Some(old) = history.iter_mut().find(|e| e.event_id == event.event_id) {
+            *old = event;
+        }
+    }
+    history.sort_by_key(|e| std::cmp::Reverse(e.position));
+    if count > 0
+        && let Some(event) = history.first()
+    {
+        expanded.insert(event.event_id.clone());
+    }
+    count
+}
+
 fn advance_visible_reads(
     visible: BTreeSet<String>,
     unread: &BTreeSet<String>,
@@ -169,6 +216,9 @@ pub struct Surface {
     pub manage: bool,
     order: Vec<SessionKey>,
     order_filter: u8,
+    detail_scroll: ScrollHandle,
+    pending_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
+    pending_latest: bool,
 }
 #[derive(Clone, Copy)]
 struct Theme {
@@ -220,6 +270,32 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>, t: Theme) ->
         .child(label.into())
 }
 impl Surface {
+    pub fn reset_timeline_scroll(&mut self) {
+        self.detail_scroll.set_offset(point(px(0.), px(0.)));
+        self.pending_anchor.borrow_mut().take();
+        self.pending_latest = false;
+        self.shared.borrow_mut().new_events = 0;
+    }
+    pub fn back_to_latest(&mut self) {
+        self.pending_anchor.borrow_mut().take();
+        self.pending_latest = true;
+        self.shared.borrow_mut().new_events = 0;
+    }
+    // 直接记录当前视口中的事件与相对位置，插入变高正文也不让历史阅读跳动。
+    pub fn prepare_latest_insertion(&mut self) -> bool {
+        let (index, within) = self.detail_scroll.logical_scroll_top();
+        let follow = self.detail_scroll.offset().y >= px(-4.)
+            || (index == 0 || (index == 1 && within >= px(-4.)));
+        if follow {
+            self.back_to_latest();
+        } else {
+            let data = self.shared.borrow();
+            if let Some(event) = index.checked_sub(1).and_then(|i| data.history.get(i)) {
+                *self.pending_anchor.borrow_mut() = Some((event.event_id.clone(), within));
+            }
+        }
+        follow
+    }
     // 小窗打开期间只更新内容；新会话追加，避免鼠标或键盘指向的行换成另一会话。
     fn list_rows(&mut self) -> Vec<Session> {
         let data = self.shared.borrow();
@@ -281,6 +357,9 @@ impl Surface {
             manage: false,
             order: Vec::new(),
             order_filter: 0,
+            detail_scroll: ScrollHandle::new(),
+            pending_anchor: Rc::default(),
+            pending_latest: false,
         }
     }
 }
@@ -610,26 +689,7 @@ impl Render for Surface {
             let mut body = body.child(div().mt_3().child("主机提醒与唤醒"))
                 .child(div().text_color(rgb(t.muted)).child("静默仅停止主动提醒，仍保留记录与未读。保持唤醒只在所选主机在线且有运行中任务时生效，允许屏幕熄灭。"))
                 .child(div().text_color(rgb(t.muted)).child(data.power_status.clone()));
-            let mut sources: BTreeSet<String> =
-                data.view.state.snapshot.sources.keys().cloned().collect();
-            sources.extend(
-                data.view
-                    .state
-                    .snapshot
-                    .sessions
-                    .iter()
-                    .map(|s| s.source_id.clone()),
-            );
-            sources.extend(
-                data.view
-                    .state
-                    .snapshot
-                    .devices
-                    .iter()
-                    .filter(|d| d.role == "bridge")
-                    .map(|d| d.id.clone()),
-            );
-            sources.retain(|source| !data.view.state.snapshot.source_archived(source));
+            let sources = data.view.state.snapshot.bridge_sources();
             if sources.is_empty() {
                 body = body.child("连接 Hub 后可选择主机");
             }
@@ -745,7 +805,7 @@ impl Render for Surface {
                 .into_any_element();
         };
         let key = session.key();
-        let mut body = div().p_5().flex().flex_col().gap_3().h_auto();
+        let mut body = div().flex().flex_col().flex_shrink_0().gap_3().h_auto();
         body = body
             .child(
                 div()
@@ -924,6 +984,7 @@ impl Render for Surface {
         if data.loading {
             body = body.child(div().text_color(rgb(t.muted)).child("正在加载…"));
         }
+        let mut entries = Vec::new();
         for (index, event) in data.history.iter().cloned().enumerate() {
             let expanded = data.expanded_events.contains(&event.event_id);
             let unread = !event.read
@@ -1003,37 +1064,115 @@ impl Render for Surface {
                         .child(visible_title),
                 );
                 if !event.body.is_empty() {
-                    content = content.child(div().mt_2().child(event.body));
+                    if event.body.len() > 4096 {
+                        content = content.child(
+                            div()
+                                .mt_2()
+                                .text_size(px(11.))
+                                .text_color(rgb(t.muted))
+                                .child("长内容 · 可滚动阅读；浏览中不会自动跳到新事件"),
+                        );
+                    }
+                    content = content.child(
+                        div()
+                            .mt_2()
+                            .min_w_0()
+                            .w_full()
+                            .whitespace_normal()
+                            .child(event.body),
+                    );
                 }
                 entry = entry.child(content);
             }
-            body = body.child(entry);
+            entries.push(entry);
         }
         if data.history.is_empty() && !data.loading {
             body = body.child("暂无已采集事件");
         }
         let older = sender.clone();
+        let latest = sender.clone();
+        let (top_index, top_within) = self.detail_scroll.logical_scroll_top();
+        let below_latest = top_index > 1 || (top_index == 1 && top_within < px(-4.));
+        let anchor = self.pending_anchor.clone();
+        let scroll = self.detail_scroll.clone();
+        let anchor_index = anchor
+            .borrow()
+            .as_ref()
+            .and_then(|(id, _)| data.history.iter().position(|e| &e.event_id == id))
+            .map(|i| i + 1);
+        let position_probe = canvas(
+            |_, _, _| (),
+            move |_, _, w, _| {
+                if let Some(index) = anchor_index
+                    && let Some((_, within)) = anchor.borrow_mut().take()
+                    && let Some(bounds) = scroll.bounds_for_item(index)
+                {
+                    let offset = scroll.offset();
+                    scroll.set_offset(point(
+                        offset.x,
+                        scroll.bounds().top() - bounds.top() + within,
+                    ));
+                    w.refresh();
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         let nav = div()
+            .relative()
+            .child(position_probe)
             .flex_shrink_0()
             .px_4()
             .py_2()
             .border_t_1()
             .border_color(rgb(t.line))
             .flex()
+            .flex_wrap()
+            .gap_2()
             .justify_between()
             .child(format!("已加载 {} 条 · 最新在上", data.history.len()))
+            .when(below_latest || data.new_events > 0, |d| {
+                d.child(
+                    button(
+                        "back-latest",
+                        if data.new_events > 0 {
+                            format!("{} 条新事件 · 回到最新", data.new_events)
+                        } else {
+                            "回到最新".into()
+                        },
+                        t,
+                    )
+                    .on_click(move |_, _, _| {
+                        let _ = latest.try_send(Command::Latest);
+                    }),
+                )
+            })
             .when(data.history_more && !data.loading, |d| {
                 d.child(button("older", "加载更早", t).on_click(move |_, _, _| {
                     let _ = older.try_send(Command::Older);
                 }))
             });
+        if self.pending_latest {
+            self.pending_latest = false;
+            self.detail_scroll
+                .scroll_to_top_of_item(if entries.is_empty() { 0 } else { 1 });
+        }
         root.child(
             div()
                 .id("detail-content")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .child(body),
+                .track_scroll(&self.detail_scroll)
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_5()
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+                .child(body)
+                .children(entries),
         )
         .child(nav)
         .into_any_element()
@@ -1042,7 +1181,7 @@ impl Render for Surface {
 
 #[cfg(test)]
 mod timeline_tests {
-    use super::{Shared, advance_visible_reads};
+    use super::{Shared, advance_visible_reads, merge_timeline};
     use agent_pulse_tray::model::Event;
     use std::collections::BTreeSet;
 
@@ -1051,6 +1190,45 @@ mod timeline_tests {
             event_id: id.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn incremental_history_keeps_old_expansion_and_all_pages() {
+        let mut old = event("old");
+        old.position = 1;
+        let mut history = vec![old];
+        let mut expanded = BTreeSet::from(["old".into()]);
+        for range in [2..32, 32..62, 62..78] {
+            let events: Vec<_> = range
+                .map(|i| Event {
+                    position: i,
+                    event_id: format!("event-{i}"),
+                    ..Default::default()
+                })
+                .collect();
+            assert_eq!(
+                merge_timeline(
+                    &mut history,
+                    &mut expanded,
+                    &BTreeSet::new(),
+                    events.clone()
+                ),
+                events.len()
+            );
+            assert_eq!(
+                merge_timeline(&mut history, &mut expanded, &BTreeSet::new(), events),
+                0
+            );
+        }
+        assert_eq!(history.len(), 77);
+        assert_eq!(history[0].position, 77);
+        assert!(expanded.contains("old"));
+        assert!(expanded.contains("event-77"));
+        assert!(
+            history
+                .windows(2)
+                .all(|pair| pair[0].position > pair[1].position)
+        );
     }
 
     #[test]

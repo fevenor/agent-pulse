@@ -13,3 +13,7 @@
 该索引是当前已观察到的可选本地元数据，不承诺所有 Codex 版本都提供；不存在、不可读、格式变化、没有匹配标题或超过 8 MiB 时保留无标题事件，Hub 保留已有名称；首次无名称时由界面显示“未命名会话”。标题满足 1024 字节限制并保持有效 UTF-8。同一会话有多条缓存时取最后有效标题，读取不写入索引。不进行定时名称轮询；没有原生改名事件时，在下一次真实 hook 读取最新名称。
 
 需要发布新版独立 Codex 适配包，不能仅靠升级 Bridge 生效；先确保 Hub/Relay 支持 `session_title`，再使用原公钥的递增签名索引发布。初次事件可提供名称，后续真实 hook 附带最新名称；不改写历史正文、任务状态或会话备注。当前协议要求本轮支持名称事件的 Hub、Relay 和 Bridge 构建。字段依据见[官方 Codex hook 文档](https://developers.openai.com/codex/hooks/)。
+
+## 事件正文限制
+
+当前验证基线的真实 Stop hook 只带 session_id/hook_event_name/turn_id，没有最终回答字段，因此本轮仅记完成状态，不从 transcript 回填答案。工具提问/批准仍因缺可靠主/子归属后置。Interrupt/SessionEnd 无详细原因时只记录状态，不伪造正文；详见[事件与内容覆盖](../../docs/event-coverage.md)。

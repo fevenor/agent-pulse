@@ -53,6 +53,7 @@ enum Command {
     ReadAll(SessionKey),
     Manage(Box<Session>, &'static str, serde_json::Value),
     Older,
+    Latest,
     Quit,
     #[cfg(feature = "dev-demo")]
     DemoAlert,
@@ -279,6 +280,8 @@ fn run() -> Result<(), String> {
         read_requested: Default::default(),
         history_more: false,
         loading: false,
+        latest_loading: false,
+        new_events: 0,
         generation: 0,
         message: String::new(),
         management_busy: false,
@@ -331,6 +334,7 @@ fn run() -> Result<(), String> {
                 let mut card_until = None;
                 let mut awake = agent_pulse_tray::power::WakeGuard::default();
                 let mut last_update = Instant::now();
+                let mut latest_retry = Instant::now();
                 let mut emphasis_until: Option<Instant> = None;
                 let mut bridge_check = Instant::now();
                 let mut menu_dirty = true;
@@ -386,13 +390,13 @@ fn run() -> Result<(), String> {
                         let can_notify = update.can_notify;
                         {
                             let mut data = shared.borrow_mut();
-                            if let Some(previous) = data.selected()
-                                && update.state.snapshot.sessions.iter().any(|s| {
-                                    s.key() == previous.key()
-                                        && s.last_event_id != previous.last_event_id
-                                })
-                            {
-                                data.message = "会话有新活动，刷新后查看最新事件".into();
+                            if data.view.state.snapshot.run_id != update.state.snapshot.run_id {
+                                data.generation += 1;
+                                data.history.clear();
+                                data.initialize_history_expansion();
+                                data.latest_loading = false;
+                                data.loading = false;
+                                data.new_events = 0;
                             }
                             let current_unread: std::collections::BTreeSet<_> = update
                                 .state
@@ -510,11 +514,58 @@ fn run() -> Result<(), String> {
                                             data.history = events;
                                             data.initialize_history_expansion();
                                         } else {
-                                            data.history.extend(events);
+                                            data.merge_latest(events);
                                         }
                                         data.message.clear();
                                     }
                                     Err(e) => data.message = e,
+                                }
+                                drop(data);
+                                notify(detail, cx);
+                            }
+                            Reply::Latest {
+                                key,
+                                generation,
+                                run_id,
+                                result,
+                            } => {
+                                let valid = {
+                                    let data = shared.borrow();
+                                    data.selected.as_ref() == Some(&key)
+                                        && data.generation == generation
+                                        && data.view.state.snapshot.run_id == run_id
+                                };
+                                if !valid {
+                                    continue;
+                                }
+                                let follows =
+                                    if result.as_ref().is_ok_and(|events| !events.is_empty()) {
+                                        detail
+                                            .update(cx, |s, _, _| s.prepare_latest_insertion())
+                                            .unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+                                let mut data = shared.borrow_mut();
+                                data.latest_loading = false;
+                                match result {
+                                    Ok(events) if !events.is_empty() => {
+                                        let count = data.merge_latest(events);
+                                        if follows {
+                                            data.new_events = 0;
+                                        } else {
+                                            data.new_events += count;
+                                        }
+                                        data.message.clear();
+                                        latest_retry = Instant::now();
+                                    }
+                                    Ok(_) => {
+                                        latest_retry = Instant::now() + Duration::from_secs(2);
+                                    }
+                                    Err(error) => {
+                                        data.message = error;
+                                        latest_retry = Instant::now() + Duration::from_secs(2);
+                                    }
                                 }
                                 drop(data);
                                 notify(detail, cx);
@@ -533,6 +584,36 @@ fn run() -> Result<(), String> {
                                     let _ = input.send(Input::Refresh);
                                 }
                                 notify(detail, cx);
+                            }
+                        }
+                    }
+                    if !demo_mode && Instant::now() >= latest_retry {
+                        let mut data = shared.borrow_mut();
+                        if !data.loading
+                            && !data.latest_loading
+                            && data.view.status.starts_with("已")
+                            && let (Some(session), Some(requests)) = (data.selected(), &requests)
+                            && data
+                                .history
+                                .first()
+                                .is_none_or(|e| e.event_id != session.last_event_id)
+                        {
+                            if data.history.is_empty() {
+                                data.loading = true;
+                                let _ = requests.send(Request::History {
+                                    key: session.key(),
+                                    before: 0,
+                                    generation: data.generation,
+                                });
+                            } else {
+                                let after = data.history.first().map_or(0, |e| e.position);
+                                data.latest_loading = true;
+                                let _ = requests.send(Request::Latest {
+                                    key: session.key(),
+                                    after,
+                                    generation: data.generation,
+                                    run_id: data.view.state.snapshot.run_id.clone(),
+                                });
                             }
                         }
                     }
@@ -714,6 +795,8 @@ fn run() -> Result<(), String> {
                                 data.generation += 1;
                                 data.loading = !demo_mode;
                                 data.history_more = false;
+                                data.latest_loading = false;
+                                data.new_events = 0;
                                 if demo_mode {
                                     data.history = data
                                         .view
@@ -737,6 +820,7 @@ fn run() -> Result<(), String> {
                                     platform::show(w, true);
                                     w.focus(&s.focus);
                                     s.manage = false;
+                                    s.reset_timeline_scroll();
                                     cx.notify();
                                 });
                             }
@@ -778,6 +862,12 @@ fn run() -> Result<(), String> {
                             }
                             Command::ReportVisible(id) => {
                                 shared.borrow_mut().visible_events.insert(id);
+                            }
+                            Command::Latest => {
+                                let _ = detail.update(cx, |s, _, cx| {
+                                    s.back_to_latest();
+                                    cx.notify();
+                                });
                             }
                             Command::Older => {
                                 let mut data = shared.borrow_mut();

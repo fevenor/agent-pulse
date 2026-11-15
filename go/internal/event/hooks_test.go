@@ -39,24 +39,21 @@ func TestNativeHookSemantics(t *testing.T) {
 				}
 				return
 			}
-			if e == nil || e.Kind != tt.kind || e.Body != "" || e.Scope != "main" {
+			if e == nil || e.Kind != tt.kind || (e.Body != "" && !(tt.agent == "zcode" && tt.hook == "Stop") && !(tt.agent == "qoderclicn" && (tt.hook == "StopFailure" || tt.hook == "PermissionRequest"))) || e.Scope != "main" {
 				t.Fatal(e)
 			}
 		})
 	}
 }
 
-func TestLongNativeReplyIsDiscardedBeforeSending(t *testing.T) {
-	raw, _ := json.Marshal(map[string]string{"session_id": "s", "hook_event_name": "Stop", "responseText": strings.Repeat("私有回复", 20000)})
+func TestLongNativeReplyIsBoundedWithoutLosingCompletion(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"session_id": "s", "hook_event_name": "Stop", "last_assistant_message": strings.Repeat("最终回复", 20000)})
 	e, err := Convert("zcode", "host", "Stop", raw, time.Now())
-	if err != nil || e == nil || e.Kind != "turn.completed" || e.Body != "" {
-		t.Fatal("长回复导致完成事件丢失", err)
-	}
-	result, _ := json.Marshal(e)
-	if len(result) > 1024 || strings.Contains(string(result), "私有回复") {
-		t.Fatal("上传了原始回复")
+	if err != nil || e == nil || e.Kind != "turn.completed" || len(e.Body) > 32<<10 || !strings.Contains(e.Body, "已截断") {
+		t.Fatal("长回复导致完成事件丢失或截断未标明", e, err)
 	}
 }
+
 func TestAntigravityDirectStartMultipleSessionsAndUnknownStop(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", t.TempDir())

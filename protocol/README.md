@@ -46,7 +46,9 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 
 ## 会话详情与管理
 
-历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。会话快照中的 `sources` 将来源指纹映射为 Hub 当前统一维护的 `{name, environment, archived}`。归档主机的会话和未读对 Tray 隐藏，事件历史默认排除；Hub 管理页可显式查询归档历史。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、会话级 `archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
+`GET /api/v1/events` 带完整会话筛选时可使用 `after` 非负位置，按持久位置升序返回新增事件；不与 before 同时使用，不查询归档历史。客户端逐页补齐后倒序合并，避免断线期间超过一页漏记录。
+
+历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。会话快照中的 `sources` 将来源指纹映射为 Hub 当前统一维护的 `{name, environment, archived, role}`。role 区分采集 Bridge 与展示 Tray，沿用 Hub 已持久化的设备角色，主机策略仅作用于 Bridge。归档主机的会话和未读对 Tray 隐藏，事件历史默认排除；Hub 管理页可显式查询归档历史。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、会话级 `archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
 
 管理请求示例：
 

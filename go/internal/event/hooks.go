@@ -12,27 +12,34 @@ import (
 )
 
 type Hook struct {
-	SessionID      string   `json:"session_id"`
-	Event          string   `json:"hook_event_name"`
-	CWD            string   `json:"cwd"`
-	AgentID        string   `json:"agent_id"`
-	AgentType      string   `json:"agent_type"`
-	AgentName      string   `json:"agentName"`
-	ParentSession  string   `json:"parentSessionId"`
-	TurnID         string   `json:"turn_id"`
-	ToolID         string   `json:"tool_use_id"`
-	Tool           string   `json:"tool_name"`
-	Transcript     string   `json:"transcript_path"`
-	Source         string   `json:"source"`
-	Notification   string   `json:"notification_type"`
-	ConversationID string   `json:"conversationId"`
-	Workspaces     []string `json:"workspacePaths"`
-	Termination    string   `json:"terminationReason"`
-	FullyIdle      *bool    `json:"fullyIdle"`
-	Execution      *int64   `json:"executionNum"`
-	Step           *int64   `json:"stepIdx"`
-	ToolCall       struct {
-		Name string `json:"name"`
+	SessionID        string          `json:"session_id"`
+	Event            string          `json:"hook_event_name"`
+	CWD              string          `json:"cwd"`
+	AgentID          string          `json:"agent_id"`
+	AgentType        string          `json:"agent_type"`
+	AgentName        string          `json:"agentName"`
+	ParentSession    string          `json:"parentSessionId"`
+	TurnID           string          `json:"turn_id"`
+	ToolID           string          `json:"tool_use_id"`
+	Tool             string          `json:"tool_name"`
+	Transcript       string          `json:"transcript_path"`
+	Source           string          `json:"source"`
+	Notification     string          `json:"notification_type"`
+	ConversationID   string          `json:"conversationId"`
+	Workspaces       []string        `json:"workspacePaths"`
+	Termination      string          `json:"terminationReason"`
+	FullyIdle        *bool           `json:"fullyIdle"`
+	Execution        *int64          `json:"executionNum"`
+	Step             *int64          `json:"stepIdx"`
+	FinalModelOutput json.RawMessage `json:"finalModelOutput"`
+	ErrorContent     json.RawMessage `json:"error"`
+	ErrorType        string          `json:"error_type"`
+	LastAssistant    json.RawMessage `json:"last_assistant_message"`
+	ToolInput        json.RawMessage `json:"tool_input"`
+	Message          json.RawMessage `json:"message"`
+	ToolCall         struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"args"`
 	} `json:"toolCall"`
 	ParentID string `json:"parentConversationId"`
 }
@@ -49,8 +56,8 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 		return nil, nil
 	}
 	// ZCode 3.17.2 默认主会话不带 agentName；子代理显式带 zcode-* 名称。
-	// 工具钩子没有可靠归属字段，以下仅转换三个会话生命周期事件。
-	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "" || (hook != "SessionStart" && hook != "UserPromptSubmit" && hook != "Stop")) {
+	// 只接入已核验归属字段的生命周期及提问工具；明确子代理仍被过滤。
+	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "" || (hook != "SessionStart" && hook != "UserPromptSubmit" && hook != "Stop" && hook != "PreToolUse" && hook != "PostToolUse")) {
 		return nil, nil
 	}
 	kind := ""
@@ -81,15 +88,15 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 			}
 		case "PermissionRequest":
 			// Codex 工具 hook 可能沿用父会话 ID，公开契约没有稳定的主线程归属字段。
-			if agent == "qoderclicn" {
+			if agent == "qoderclicn" && !isQuestionTool(h.Tool) {
 				kind = "approval.required"
 			}
 		case "PreToolUse":
-			if agent == "qoderclicn" && (h.Tool == "AskUserQuestion" || h.Tool == "ask_user_question") {
+			if (agent == "qoderclicn" || agent == "zcode") && isQuestionTool(h.Tool) {
 				kind = "input.required"
 			}
 		case "PostToolUse":
-			if agent == "qoderclicn" {
+			if agent == "qoderclicn" || (agent == "zcode" && isQuestionTool(h.Tool)) {
 				kind = "activity.observed"
 			}
 		case "Notification":
@@ -172,6 +179,49 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 			return nil, nil
 		}
 		e.SessionTitle = name
+	}
+	// 仅采集本事件的最终回答或提问字段，不读思考、用户提示词、历史正文或任意工具参数。
+	if agent == "zcode" || agent == "qoderclicn" || agent == "antigravity" {
+		switch kind {
+		case "turn.completed":
+			var reply string
+			rawReply := h.LastAssistant
+			if agent == "antigravity" {
+				rawReply = h.FinalModelOutput
+			}
+			if json.Unmarshal(rawReply, &reply) == nil {
+				e.Body = visibleBody(reply)
+			}
+		case "run.failed":
+			var failure string
+			if json.Unmarshal(h.ErrorContent, &failure) == nil {
+				e.Body = visibleBody(failure)
+			}
+			if e.Body == "" && h.ErrorType != "" {
+				e.Body = visibleBody(h.ErrorType)
+			}
+		case "approval.required":
+			input := h.ToolInput
+			name := h.Tool
+			if agent == "antigravity" {
+				input = h.ToolCall.Arguments
+				name = h.ToolCall.Name
+			}
+			e.Body = approvalBody(name, input)
+		case "input.required":
+			if hook == "PreToolUse" {
+				input := h.ToolInput
+				if agent == "antigravity" {
+					input = h.ToolCall.Arguments
+				}
+				e.Body = questionBody(input)
+			} else {
+				var message string
+				if json.Unmarshal(h.Message, &message) == nil {
+					e.Body = visibleBody(message)
+				}
+			}
+		}
 	}
 	if err := e.Validate(); err != nil {
 		return nil, err

@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin";
-import { bridgeURL, convert, emit, eventTypes, sessionID, type SessionInfo } from "./adapter.ts";
+import { bridgeURL, convert, emit, eventTypes, FinalOutput, sessionID, type SessionInfo } from "./adapter.ts";
 
 export default Plugin.define({
   id: "agent-pulse",
@@ -15,6 +15,7 @@ export default Plugin.define({
     const controller = new AbortController();
     // 有界缓存用于删除事件到达后仍能识别原会话，未命中则安全忽略。
     const sessions = new Map<string, SessionInfo>();
+    const output = new FinalOutput();
     let lastWarning = 0;
     const warn = () => {
       if (Date.now() - lastWarning > 10_000) {
@@ -37,7 +38,10 @@ export default Plugin.define({
               sessions.set(id, session);
               if (sessions.size > 1024) sessions.delete(sessions.keys().next().value!);
             }
-            const converted = convert(event, session, source);
+            if (!session || session.parentID) continue;
+            output.observe(event);
+            const finalText = event.type === "session.execution.succeeded" ? output.take(id) : "";
+            const converted = convert(event, session, source, finalText);
             if (converted) await emit(url, converted, controller.signal);
             if (event.type === "session.deleted") sessions.delete(id);
           } catch { if (!controller.signal.aborted) warn(); }

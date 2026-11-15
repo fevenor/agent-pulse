@@ -5,6 +5,7 @@ project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 uv run --offline --no-project python "$project_root/scripts/check/test_script_layout.py"
 uv run --offline --no-project python "$project_root/scripts/check/test_install_bridge.py"
 uv run --offline --no-project python "$project_root/scripts/check/test_rc_draft.py"
+uv run --offline --no-project python "$project_root/scripts/check/test_publish_hub_release.py"
 cd "$project_root/go"
 GOTOOLCHAIN=local go test -race ./...
 GOTOOLCHAIN=local go vet ./...

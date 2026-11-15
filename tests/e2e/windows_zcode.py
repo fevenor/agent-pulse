@@ -137,25 +137,33 @@ def serve(directory, target):
         print("隔离服务已停止，测试钩子已移除。", flush=True)
 
 
-def verify(directory):
+def verify(directory, require_question=False):
     base = read(directory / "ready.json")["hub"]
     snapshot = get(base, "/api/v1/snapshot")
     sessions = [s for s in snapshot["sessions"] if s["agent"] == "zcode"]
     assert sessions and all(s["state"] == "idle" for s in sessions), "ZCode 未确认完成"
     kinds = set()
+    all_events = []
     for session in sessions:
         query = urllib.parse.urlencode({k: session[k] for k in ("source_id", "agent", "session_id")})
         history = get(base, "/api/v1/events?" + query)
         events = history["events"] if isinstance(history, dict) else history
         kinds.update(e["kind"] for e in events)
+        all_events.extend(events)
     assert {"session.started", "session.resumed", "turn.completed"} <= kinds, kinds
+    completed = [e for e in all_events if e["kind"] == "turn.completed"]
+    assert completed and all(e.get("body", "").strip() for e in completed), "真实完成事件缺少最终回答"
+    if require_question:
+        questions = [e for e in all_events if e["kind"] == "input.required"]
+        assert questions and all(e.get("body", "").strip() for e in questions), "真实提问事件缺少问题内容"
+        assert not any(e["kind"] == "approval.required" for e in all_events), "同一提问重复生成批准事件"
     runtime = read(directory / "adapters/runtime/zcode.json")
     assert runtime["version"] == read(ROOT / "adapters/zcode/manifest.json")["version"]
     tray = read(directory / "data/state.json")
     assert any(e["agent"] == "zcode" for e in tray["snapshot"]["unread"]), "Tray 未接收到事件"
     result = {"source": "ZCode 原生钩子", "model": "GLM-5.3-Flash（由桌面确认）",
               "embedded_bridge": True, "lifecycle_kinds": sorted(kinds), "tray_recorded": True,
-              "phone_push": False, "sessions": len(sessions)}
+              "phone_push": False, "sessions": len(sessions), "final_output_received": True, "question_content_checked": require_question}
     write(directory / "result.json", result)
     print(json.dumps(result, ensure_ascii=False))
 
@@ -163,6 +171,7 @@ def verify(directory):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["serve", "verify", "stop"])
+    parser.add_argument("--require-question", action="store_true", help="需要在真实宿主完成提问并回答，核对问题内容及无重复批准")
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--zcode-config", type=Path, default=Path.home() / ".zcode/cli/config.json")
     args = parser.parse_args()
@@ -170,6 +179,6 @@ if __name__ == "__main__":
     if args.mode == "serve":
         serve(directory, args.zcode_config.resolve())
     elif args.mode == "verify":
-        verify(directory)
+        verify(directory, args.require_question)
     else:
         (directory / "stop").touch()

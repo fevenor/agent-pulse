@@ -164,6 +164,8 @@ pub struct Device {
 }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SourceLabel {
+    #[serde(default)]
+    pub role: String,
     pub name: String,
     pub environment: String,
     #[serde(default)]
@@ -302,6 +304,33 @@ impl Store {
 }
 
 impl Snapshot {
+    // 主机策略只作用于采集来源，保留离线 Bridge，排除仅展示通知的 Tray。
+    pub fn bridge_sources(&self) -> BTreeSet<String> {
+        let mut sources: BTreeSet<String> = self
+            .sources
+            .iter()
+            .filter(|(_, label)| label.role == "bridge")
+            .map(|(id, _)| id.clone())
+            .collect();
+        sources.extend(
+            self.devices
+                .iter()
+                .filter(|d| d.role == "bridge")
+                .map(|d| d.id.clone()),
+        );
+        sources.retain(|id| {
+            let bridge = self.sources.get(id).is_some_and(|s| s.role == "bridge")
+                || self
+                    .devices
+                    .iter()
+                    .any(|d| d.id == *id && d.role == "bridge");
+            let tray = self.sources.get(id).is_some_and(|s| s.role == "tray")
+                || self.devices.iter().any(|d| d.id == *id && d.role == "tray");
+            !self.source_archived(id) && (bridge || !tray)
+        });
+        sources
+    }
+
     pub fn source_archived(&self, id: &str) -> bool {
         self.sources.get(id).is_some_and(|source| source.archived)
     }
@@ -393,6 +422,7 @@ mod tests {
         state.snapshot.sources.insert(
             "host-b".into(),
             SourceLabel {
+                role: "bridge".into(),
                 name: "旧主机名".into(),
                 environment: String::new(),
                 archived: false,
@@ -432,5 +462,57 @@ mod tests {
         assert!(s.state.pending_reads.is_empty());
         drop(s);
         fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod source_policy_tests {
+    use super::*;
+    #[test]
+    fn host_policies_keep_offline_bridges_and_exclude_trays() {
+        let mut snapshot = Snapshot::default();
+        for (id, role, archived) in [
+            ("offline-bridge", "bridge", false),
+            ("offline-tray", "tray", false),
+            ("archived-bridge", "bridge", true),
+            ("label-only", "", false),
+        ] {
+            snapshot.sources.insert(
+                id.into(),
+                SourceLabel {
+                    role: role.into(),
+                    name: "同名主机".into(),
+                    environment: String::new(),
+                    archived,
+                },
+            );
+        }
+        snapshot.devices.push(Device {
+            id: "online-bridge".into(),
+            role: "bridge".into(),
+            ..Default::default()
+        });
+        snapshot.devices.push(Device {
+            id: "online-tray".into(),
+            role: "tray".into(),
+            ..Default::default()
+        });
+        snapshot.sessions.push(Session {
+            source_id: "session-source".into(),
+            ..Default::default()
+        });
+        snapshot.sessions.push(Session {
+            source_id: "offline-tray".into(),
+            ..Default::default()
+        });
+        snapshot.devices.push(Device {
+            id: "offline-bridge".into(),
+            role: "tray".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            snapshot.bridge_sources(),
+            BTreeSet::from(["offline-bridge".into(), "online-bridge".into()])
+        );
     }
 }

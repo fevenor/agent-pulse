@@ -133,6 +133,15 @@ func (h *Hub) Handler(token string) http.Handler {
 				return
 			}
 		}
+		after := int64(0)
+		hasAfter := r.URL.Query().Has("after")
+		if hasAfter {
+			after, err = strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+			if err != nil || after < 0 || before != 0 {
+				transport.Error(w, 400, "after 必须为非负整数且不能与 before 同时使用")
+				return
+			}
+		}
 		includeArchived := r.URL.Query().Get("include_archived") == "true"
 		key := protocol.SessionKey{SourceID: r.URL.Query().Get("source_id"), Agent: r.URL.Query().Get("agent"), SessionID: r.URL.Query().Get("session_id")}
 		var items []protocol.EventView
@@ -141,8 +150,20 @@ func (h *Hub) Handler(token string) http.Handler {
 				transport.Error(w, 400, "会话筛选必须包含来源、Agent 和会话标识")
 				return
 			}
-			items, err = h.SessionHistoryWithArchived(r.Context(), key, before, limit, includeArchived)
+			if hasAfter {
+				if includeArchived {
+					transport.Error(w, 400, "新事件跟随不查询归档历史")
+					return
+				}
+				items, err = h.SessionEventsAfter(r.Context(), key, after, limit)
+			} else {
+				items, err = h.SessionHistoryWithArchived(r.Context(), key, before, limit, includeArchived)
+			}
 		} else {
+			if hasAfter {
+				transport.Error(w, 400, "after 需要完整会话筛选")
+				return
+			}
 			items, err = h.HistoryWithArchived(r.Context(), before, limit, includeArchived)
 		}
 		if err != nil {

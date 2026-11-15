@@ -18,7 +18,7 @@ AGENT_PULSE_QODER_WORKSPACE=/绝对路径/可信测试目录 uv run --offline --
 - 用户改名：`type` 为 `custom-title`，名称字段为 `customTitle`。
 - 宿主生成的标题：`type` 为 `ai-title`，名称字段为 `aiTitle`。它是明确的标题元数据，不是会话摘要。
 - 两类记录都必须包含与当前真实事件完全一致、区分大小写的 `sessionId`；同类名称按文件顺序取最后一条。用户名称优先于自动标题。
-- 不将 `summary`、`last-prompt`、首条提示词、正文、项目目录名或会话标识作为名称。会话标识只用于后台定位。
+- 不将 `summary`、对话正文、项目目录名或会话标识自行生成名称；`last-prompt.lastPrompt` 的宿主默认展示规则见下节。会话标识只用于后台定位。
 
 名称读取函数为 `qoderSessionTitle(sessionID, cwd, transcriptPath string) string`。真实事件提供绝对 `transcriptPath` 时优先使用，且文件名必须精确对应当前会话；否则按当前绝对工作目录及宿主配置根目录定位单个文件。不扫描其他项目或历史会话，不读取认证文件。默认根目录为 `~/.qoder-cn`，支持宿主的 `QODERCN_CONFIG_DIR`、`QODERCN_CLI_HOME`、`QODERCN_CONFIG_DIR_NAME` 环境覆盖；命令行 `--config-dir` 等未传入 Bridge 的覆盖应由事件实际文件路径定位，不能凭空推断。
 
@@ -36,4 +36,10 @@ AGENT_PULSE_QODER_WORKSPACE=/绝对路径/可信测试目录 uv run --offline --
 
 ### 默认展示名称
 
-手工标题 `custom-title.customTitle` 优先于自动标题 `ai-title.aiTitle`；都不可用时读取同一会话的 `last-prompt.lastPrompt`。这是 Qoder 1.1.89 原生会话列表已经采用的展示元数据，不是解析 `user.message.content` 猜名称。仍按精确会话 ID、首尾有界窗口读取，排除其他会话及无效类型；只在下一次真实事件到来时刷新，不轮询，不上传消息正文。缺少全部明确名称时显示未命名。
+手工标题 `custom-title.customTitle` 优先于自动标题 `ai-title.aiTitle`；都不可用时读取同一会话的 `last-prompt.lastPrompt`。这是 Qoder 1.1.89 原生会话列表已经采用的展示元数据，不是解析 `user.message.content` 猜名称。仍按精确会话 ID、首尾有界窗口读取，排除其他会话及无效类型；只在下一次真实事件到来时刷新，不轮询，名称读取不会上传历史消息正文。缺少全部明确名称时显示未命名。
+
+## 完成输出与用户提问
+
+原生 Stop 的 `last_assistant_message` 作为本轮最终回答，不读取用户提示词、思考或历史消息补答案。提问工具 PreToolUse 的 `tool_input.questions` 只提取 question、multiSelect、options 的 label/description，展示问题与选项；同一 AskUserQuestion 的 PermissionRequest 不再另生成批准提醒。其他权限请求保持等待批准，不上传任意工具参数。Notification 的 elicitation_dialog 只采用宿主明确提供的 message。
+
+正文保持当前事件上限 32 KiB；超长时按 UTF-8 边界截断并标明，字段缺失或类型错误保留完成/等待状态而不猜内容。旧事件不会追补后来生成的回答，网络重试仍使用初次转换的同一载荷。

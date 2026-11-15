@@ -45,14 +45,18 @@ uv run --offline --no-project python scripts/release/prepare-hub-release.py \
   --base-archive ./dist/hub-build.tar --base-sha256 "$HUB_BUILD_SHA256" \
   --output ./dist/hub-release --tool ./bin/agent-pulse-adapters
 
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --build-context "hub-build=oci-layout://$(pwd)/dist/hub-release/hub-build" \
-  --tag ghcr.io/fevenor/agent-pulse-hub:已确认版本 --push ./dist/hub-release
+# 实际发布是独立步骤，需发布者已有 GHCR write:packages 权限；prepare 本身不会推送。
+uv run --offline --no-project python scripts/release/publish-hub-release.py \
+  --manifest ./dist/candidate-manifest.json --repository ./dist/repository-combined \
+  --public /安全目录/publisher.pub --archive ./dist/hub-build.tar \
+  --tool ./bin/agent-pulse-adapters --output ./dist/hub-publish
 ```
 
 准备脚本复用 Go 发布工具验签、核对包摘要与大小，只复制公开公钥、索引和不可变包；OCI 归档先核对摘要，拒绝路径越界、链接及非法文件类型。它不读取私钥，不构建、不推送镜像，不覆盖已有输出。命名上下文仅向 Buildx 提供本地 OCI 构建，最终镜像包含默认配置、网页和 `/repository`，普通用户无需挂载包仓库或手填公钥。
 
 发布采用 Linux 原生环境；Windows 可以进行脚本与目录准备回归，但不能替代 Linux 容器验收。已经由发布者验证的本地基准镜像仍可显式使用 `--base-image <镜像或digest>`，仅是维护入口，不作为第三种用户交付物。
+
+完整 Hub 的发布步骤会核对候选提交与五包签名仓库、推送横杠成品的 RC 标签和不可变提交标签，并回读远端摘要及 amd64/arm64 平台索引。只在本地构建或装载不代表 GHCR Packages 已创建；须保留 publish-result.json 与远端验证结果。旧的 agent-pulse/hub、hub-base、relay 包不会因更改工作流自动删除，删除须使用者另行确认，不能把旧包误写成当前发布目标。
 
 镜像仓库授权沿用现有 GitHub/容器工具登录，不另建账号服务。CI 的 Relay 推送使用仓库 `GITHUB_TOKEN` 的 packages 写权限；完整 Hub 推送使用发布者已有授权，私钥无需上传 GitHub。公开镜像可匿名拉取；尚未公开的草稿/镜像须已有读取权限。本地构建通过不表示远端工作流或公开发布已完成。
 
