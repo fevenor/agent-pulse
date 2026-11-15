@@ -629,3 +629,15 @@ Windows原生隔离详情复验：新活动自动追加并定位；历史记录6
 
 
 最新 Windows 完整检查通过，含 Go 全模块测试/vet、OpenCode 10项映射/正文/UTF-8/缓存边界测试、Web检查、Rust严格检查与原生服务联调。Linux同份源码通过全模块竞态/vet、用户安装/发布回归；缺离线依赖时仅本次 pnpm 安装联网取锁定包，不换包管理器/工具版本。真实 Codex 加本地 Responses 模拟及独立包 OpenCode 原生表单/连续改名/已读/Hub崩溃恢复通过。首次OpenCode烟雾缺宿主PATH未安装，将实际已存在的宿主目录加入测试进程PATH后重跑通过，未修改系统或日常服务环境。正文另外限制JSON转义后的大小，为64KiB网络事件保留元数据空间，不让32KiB高转义正文导致整个完成事件丢失。
+
+
+Qoder 最新本地产物通过一轮已授权 DeepSeek-Flash 短请求：真实 Stop 的最终回答进入隔离 Hub 并送达本地 HTTP 接收器，没有发送真实手机。另一次只提供提问工具的 headless 请求未产生原生提问hook，模型明确反馈该运行形态无 AskUserQuestion，不能把文本问题当提问事件通过；此失败只限打印模式测试，不否定用户交互CLI的原生提问，后续需交互模式复验。ZCode隔离安装就绪，但桌面自动化未能在专用空草稿中输入请求，因此没有新增模型调用或真实提问证据，测试钩子已移除，原用户配置保留。静态原生字段映射、模拟回归与真实宿主/用户实收继续分别报告，不用模拟事件补这些证明。
+
+
+### 最终流水线与交付核验
+
+源码提交 `f4d84384c8c28e2ed4693e12b3e1f66fcd442087` 的 [RC2草稿工作流](https://github.com/fevenor/agent-pulse/actions/runs/43737411147)、[Linux检查](https://github.com/fevenor/agent-pulse/actions/runs/43737402080)、[Windows检查](https://github.com/fevenor/agent-pulse/actions/runs/43737402071) 均成功。草稿仍未转正，RC2标签绑定同一构建提交；10个附件重新下载后的SHA256、Windows四文件、五包ZIP及构建清单通过。
+
+最终适配版本：Antigravity0.2.9、Codex/Qoder0.2.7、OpenCode0.3.4、ZCode0.1.5。完整Hub真实发布到GHCR横杠包，保留不可变提交标签与远端双架构摘要，签名索引递增且原公钥保持；部署演练逐包版本/摘要、配置保持、回滚资料与健康均核验，其他服务未重建。既有Relay原样转发新增after查询，实际中继路径查询200，无凭据401；不需要Relay运行升级。Windows日常Tray恢复，ZCode包及五个自有hook各一份、提问前后matcher限定、原私人连接配置保留均核验。部署快照、实例地址和凭据仅留私有资料。
+
+OpenCode另做无模型原生表单正文复验：真实form.created中的字段与茶/咖啡选项进入Hub并完整匹配，不仅是表单标题；原生连续改名、未读/状态保持及Hub重启恢复同时通过。Qoder真实短回答通过本地接收器；交互提问的新实收与ZCode真实输出仍按上一节保留待验，不将单测或合成UI验收代替它们。
