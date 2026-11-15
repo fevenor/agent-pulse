@@ -26,6 +26,8 @@ func qoderTitleRow(kind, id, title string) string {
 	field := "customTitle"
 	if kind == "ai-title" {
 		field = "aiTitle"
+	} else if kind == "last-prompt" {
+		field = "lastPrompt"
 	}
 	row, _ := json.Marshal(map[string]string{"type": kind, "sessionId": id, field: title})
 	return string(row) + "\n"
@@ -49,7 +51,12 @@ func TestQoderSessionTitleMetadata(t *testing.T) {
 		{"空值不覆盖", custom + prefix + `,"customTitle":null}`, "用户名称"},
 		{"摘要不是名称", `{"type":"summary","sessionId":"` + qoderTestSessionID + `","summary":"不是名称","customTitle":"不能猜测"}`, ""},
 		{"正文不是名称", `{"type":"user","sessionId":"` + qoderTestSessionID + `","message":{"content":"不是名称"},"title":"猜测字段"}`, ""},
-		{"最近提示词不是名称", `{"type":"last-prompt","sessionId":"` + qoderTestSessionID + `","lastPrompt":"不是名称"}`, ""},
+		{"宿主默认展示元数据", qoderTitleRow("last-prompt", qoderTestSessionID, "hello"), "hello"},
+		{"手工名称优先于默认展示", custom + qoderTitleRow("last-prompt", qoderTestSessionID, "hello"), "用户名称"},
+		{"AI名称优先于默认展示", auto + qoderTitleRow("last-prompt", qoderTestSessionID, "hello"), "原生自动标题"},
+		{"默认展示随元数据更新", qoderTitleRow("last-prompt", qoderTestSessionID, "hello") + qoderTitleRow("last-prompt", qoderTestSessionID, "world"), "world"},
+		{"默认展示不跨会话", qoderTitleRow("last-prompt", "other", "hello"), ""},
+		{"默认展示字段区分大小写", `{"type":"last-prompt","sessionId":"` + qoderTestSessionID + `","LastPrompt":"错误字段"}`, ""},
 		{"未知类型不冒充标题", qoderTitleRow("session-title", qoderTestSessionID, "未知字段"), ""},
 		{"无会话标识不接入", qoderTitleRow("custom-title", "", "无主名称"), ""},
 		{"缺失名称不覆盖", custom + prefix + `}`, "用户名称"},
@@ -190,5 +197,17 @@ func TestQoderHookRefreshesTitleOnNextRealEvent(t *testing.T) {
 	latest, err := Convert("qoderclicn", "host", "Stop", raw, time.Now())
 	if err != nil || latest == nil || latest.SessionID != first.SessionID || latest.SessionTitle != "最新用户名称" || latest.Kind != "turn.completed" || latest.Body != "" {
 		t.Fatal("下次真实事件应刷新名称而非创建新会话或上传正文", latest, err)
+	}
+}
+
+func TestQoderDefaultDisplayMetadataArrivesWithLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), qoderTestSessionID+".jsonl")
+	writeQoderTitleFixture(t, path, qoderTitleRow("last-prompt", qoderTestSessionID, "hello"))
+	raw, _ := json.Marshal(map[string]string{"session_id": qoderTestSessionID, "transcript_path": path})
+	for _, hook := range []string{"SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"} {
+		e, err := Convert("qoderclicn", "source", hook, raw, time.Now())
+		if err != nil || e == nil || e.SessionTitle != "hello" || e.Body != "" {
+			t.Fatal(hook, e, err)
+		}
 	}
 }

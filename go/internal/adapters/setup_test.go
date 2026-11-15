@@ -3,6 +3,7 @@ package adapters
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -348,5 +349,28 @@ func TestSetupDoesNotRequireSpecialAntigravityLauncher(t *testing.T) {
 	printSetupSummary(&out, []setupAgent{{ID: "antigravity", Name: "Antigravity CLI", Version: "1.5.9"}}, map[string]string{"antigravity": "/配置/hooks.json"}, map[string]string{"antigravity": "接入配置已完成"}, "/配置/bridge.yaml", false)
 	if strings.Contains(out.String(), "run-adapter") || strings.Contains(out.String(), "包装") || strings.Contains(out.String(), "不会采集") {
 		t.Fatal("配置后必须允许正常直接启动", out.String())
+	}
+}
+
+func TestRunningSyncUsesLatestManagedChoiceBeforeWizardCloses(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "bridge.json")
+	running := config.Bridge{SourceID: "selection", Listen: "127.0.0.1:18702", HubURL: "http://127.0.0.1:1", Adapters: config.AdapterUpdates{Directory: root, PublicKey: "already-trusted", Managed: map[string]string{"zcode": filepath.Join(root, "agent.json")}}}
+	disk := map[string]any{"source_id": running.SourceID, "listen": running.Listen, "hub_url": running.HubURL, "adapters": map[string]any{"directory": root, "managed": map[string]string{}}}
+	raw, _ := json.Marshal(disk)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := currentAdapterSelection(running, path)
+	if err != nil || len(selected.Adapters.Managed) != 0 || selected.Adapters.PublicKey != "already-trusted" {
+		t.Fatal("后台同步不能重新认领已停用的宿主", selected.Adapters.Managed, err)
+	}
+	disk["source_id"] = "other-identity"
+	raw, _ = json.Marshal(disk)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := currentAdapterSelection(running, path); err == nil {
+		t.Fatal("旧进程不能跨身份接管新配置")
 	}
 }

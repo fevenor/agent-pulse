@@ -220,6 +220,27 @@ impl Settings {
         if raw.ends_with('\n') || !raw.is_empty() {
             updated.push_str(newline);
         }
+        // JSON 也是合法 YAML，流式/缩进对象不能追加顶层行；结构化回退只更新开关。
+        let mut expected: serde_yaml::Value =
+            serde_yaml::from_str(&raw).map_err(|_| "便携配置格式无效，未修改")?;
+        let mapping = expected.as_mapping_mut().ok_or("便携配置必须为对象")?;
+        mapping.insert(
+            serde_yaml::Value::String("bridge_enabled".into()),
+            serde_yaml::Value::Bool(enabled),
+        );
+        if serde_yaml::from_str::<serde_yaml::Value>(&updated)
+            .ok()
+            .as_ref()
+            != Some(&expected)
+        {
+            if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&raw) {
+                json["bridge_enabled"] = serde_json::Value::Bool(enabled);
+                updated =
+                    serde_json::to_string_pretty(&json).map_err(|_| "无法生成便携配置")? + "\n";
+            } else {
+                updated = serde_yaml::to_string(&expected).map_err(|_| "无法生成便携配置")?;
+            }
+        }
         // 临时文件写完再替换，避免向导成功后写配置失败导致原配置被截断。
         let temporary = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
         let result = (|| -> std::io::Result<()> {
@@ -339,6 +360,29 @@ mod tests {
         assert!(updated.contains("hub_url: http://127.0.0.1:18700"));
         assert!(updated.contains("token: secret"));
         assert!(updated.contains("bridge_enabled: true  # 本机接入"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn bridge_enabled_edit_supports_json_and_flow_yaml_without_corrupting_configuration() {
+        let root =
+            std::env::temp_dir().join(format!("pulse-json-setting-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("tray.yaml");
+        for raw in [
+            r#"{"hub_url":"http://127.0.0.1:1","bridge_enabled":false,"token":"keep"}"#,
+            "{hub_url: 'http://127.0.0.1:1', bridge_enabled: false, token: keep}",
+        ] {
+            fs::write(&path, raw).unwrap();
+            Settings::set_bridge_enabled(&path, true).unwrap();
+            let value: serde_yaml::Value =
+                serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(value["bridge_enabled"].as_bool(), Some(true));
+            assert_eq!(value["token"].as_str(), Some("keep"));
+            Settings::set_bridge_enabled(&path, false).unwrap();
+            let value: serde_yaml::Value =
+                serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(value["bridge_enabled"].as_bool(), Some(false));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }

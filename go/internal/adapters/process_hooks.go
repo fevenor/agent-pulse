@@ -3,6 +3,7 @@ package adapters
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -88,6 +89,21 @@ func ownsProcessHook(handler map[string]any, exe, configPath, id string) bool {
 	command, _ := handler["command"].(string)
 	args, ok := handler["args"].([]any)
 	return handler["type"] == "process" && strings.EqualFold(filepath.Base(command), filepath.Base(exe)) &&
-		ok && len(args) == 7 && args[0] == "dispatch" && args[1] == "--config" && args[2] == configPath &&
+		ok && len(args) == 7 && args[0] == "dispatch" && args[1] == "--config" && sameHookConfigFile(args[2], configPath) &&
 		args[3] == "--adapter" && args[4] == id && args[5] == "--hook"
+}
+
+// 宿主参数可带 Windows 扩展路径、短路径或不同大小写；所有权按实际文件身份确认。
+// 文件尚未创建时只接受清理后完全相同的绝对路径，不把其他 Bridge 的登记当成本软件所有。
+func sameHookConfigFile(value any, expected string) bool {
+	path, ok := value.(string)
+	if !ok || !filepath.IsAbs(path) || !filepath.IsAbs(expected) {
+		return false
+	}
+	if filepath.Clean(path) == filepath.Clean(expected) {
+		return true
+	}
+	first, firstErr := os.Stat(path)
+	second, secondErr := os.Stat(expected)
+	return firstErr == nil && secondErr == nil && os.SameFile(first, second)
 }

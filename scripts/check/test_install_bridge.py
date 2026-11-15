@@ -151,6 +151,13 @@ else:out.write_bytes(pathlib.Path(os.environ['FIXTURE_FILE']).read_bytes())
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), "停止的旧程序".encode())
 
+    def test_install_success_text_does_not_assign_developer_acceptance_to_user(self):
+        text = INSTALLER.read_text(encoding="utf-8")
+        self.assertNotIn("启动要求", text)
+        self.assertNotIn("验收", text)
+        self.assertNotIn("/hooks", text)
+        self.assertIn("可以正常使用所选 Agent", text)
+
     def test_latest_stable_does_not_silently_select_prerelease(self):
         self.run_install(success=False, env={"FIXTURE_LATEST": "v0.5.0-rc.1"})
         self.assert_untouched()

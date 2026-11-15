@@ -212,7 +212,7 @@ fn run() -> Result<(), String> {
             &settings.config_path,
         )?)
     };
-    let setup_settings = settings.clone();
+    let mut setup_settings = settings.clone();
     let startup_status = autostart
         .as_ref()
         .map(Registration::status)
@@ -650,7 +650,8 @@ fn run() -> Result<(), String> {
                                     continue;
                                 }
                                 shared.borrow_mut().bridge_setup_running = true;
-                                shared.borrow_mut().startup_message = "正在打开 Agent 配置向导…".into();
+                                shared.borrow_mut().startup_message =
+                                    "正在打开 Agent 配置向导…".into();
                                 notify(settings_window, cx);
                                 let setup_settings = setup_settings.clone();
                                 let setup_tx = tx.clone();
@@ -658,7 +659,8 @@ fn run() -> Result<(), String> {
                                     .name("agent-pulse-bridge-setup".into())
                                     .spawn(move || {
                                         let result = platform::Bridge::run_setup(&setup_settings);
-                                        let _ = setup_tx.try_send(Command::BridgeSetupFinished(result));
+                                        let _ =
+                                            setup_tx.try_send(Command::BridgeSetupFinished(result));
                                     })
                                     .is_err()
                                 {
@@ -670,11 +672,24 @@ fn run() -> Result<(), String> {
                                 }
                             }
                             Command::BridgeSetupFinished(result) => {
+                                // 只刷新本机接入，不重建网络工作线程、托盘或窗口，也不清理离线已读。
+                                let result = result.and_then(|()| {
+                                    platform::Bridge::apply_config(&mut bridge, &mut setup_settings)
+                                });
                                 let mut data = shared.borrow_mut();
                                 data.bridge_setup_running = false;
+                                data.bridge = bridge
+                                    .as_mut()
+                                    .map(|b| b.status())
+                                    .unwrap_or_else(|| "本机接入未启用".into());
                                 data.startup_message = match result {
-                                    Ok(()) => "Agent 钩子配置已完成。请退出并重新启动 Tray，使内置 Bridge 启动并接收事件。修改后的 Agent 配置可能还需重启或重新加载；Codex 等宿主还可能要求确认项目或命令信任。".into(),
-                                    Err(error) => format!("本机 Agent 配置未完成：{error}"),
+                                    Ok(()) => {
+                                        "Agent 配置已生效，本机接入已重新加载，无需重启 Tray。"
+                                            .into()
+                                    }
+                                    Err(error) => {
+                                        format!("本机 Agent 配置未完成或接入未生效：{error}")
+                                    }
                                 };
                                 drop(data);
                                 notify(settings_window, cx);

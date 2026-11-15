@@ -16,7 +16,7 @@ import (
 var qoderSessionIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // qoderSessionTitle 只在真实事件到达时读取宿主明确保存的标题元数据，不轮询。
-// 数据来源已核验于 Qoder 中国版 CLI 1.1.85；不把摘要、提示词或正文当作名称。
+// 手工/AI 标题及 1.1.89 明确用于列表展示的 last-prompt 元数据可作为名称；不从对话正文推断。
 func qoderSessionTitle(sessionID, cwd, transcriptPath string) string {
 	if !qoderSessionIdentifier.MatchString(sessionID) || strings.Contains(sessionID, "..") {
 		return ""
@@ -94,7 +94,7 @@ func qoderSessionTitle(sessionID, cwd, transcriptPath string) string {
 			tail = nil
 		}
 	}
-	custom, automatic := "", ""
+	custom, automatic, displayPrompt := "", "", ""
 	for _, part := range [][]byte{head, tail} {
 		for _, line := range bytes.Split(part, []byte{'\n'}) {
 			if !utf8.Valid(line) {
@@ -113,6 +113,8 @@ func qoderSessionTitle(sessionID, cwd, transcriptPath string) string {
 				field = "customTitle"
 			case "ai-title":
 				field = "aiTitle"
+			case "last-prompt":
+				field = "lastPrompt"
 			default:
 				continue
 			}
@@ -122,14 +124,19 @@ func qoderSessionTitle(sessionID, cwd, transcriptPath string) string {
 			}
 			if kind == "custom-title" {
 				custom = *title
-			} else {
+			} else if kind == "ai-title" {
 				automatic = *title
+			} else {
+				displayPrompt = *title
 			}
 		}
 	}
 	name := strings.TrimSpace(custom)
 	if name == "" {
 		name = strings.TrimSpace(automatic)
+	}
+	if name == "" {
+		name = strings.TrimSpace(displayPrompt)
 	}
 	// 采用 Bridge 现有标题长度边界，不截断 UTF-8 字符。
 	if len(name) > 1024 {

@@ -1,5 +1,8 @@
 """使用一次性签名密钥验证 Hub 镜像适配仓库准备流程。"""
 import argparse
+import hashlib
+import tarfile
+import io
 import importlib.util
 import json
 import shutil
@@ -150,6 +153,47 @@ def main():
         digest = verified["packages"][0]["sha256"]
         assert (output / "repository" / "packages" / f"{digest}.zip").read_bytes() == (
             repository / "packages" / f"{digest}.zip").read_bytes()
+        # 发布者专用 OCI 构建：验证归档摘要、不覆盖输出及非法路径拒绝。
+        try:
+            module.prepare(repository, public, "hub-build", root / "missing-archive", tool)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("内部构建缺少归档时不能隐式拉取同名镜像")
+        archive_path = root / "hub-build.tar"
+        def write_archive(unsafe=False):
+            with tarfile.open(archive_path, "w") as archive:
+                for name, data in (("oci-layout", b'{"imageLayoutVersion":"1.0.0"}'), ("index.json", b'{"schemaVersion":2,"manifests":[]}')):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    archive.addfile(info, io.BytesIO(data))
+                if unsafe:
+                    info = tarfile.TarInfo("../escape")
+                    info.size = 1
+                    archive.addfile(info, io.BytesIO(b"x"))
+        write_archive()
+        archive_digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        oci_output = root / "oci-output"
+        module.prepare(repository, public, "hub-build", oci_output, tool, archive_path, archive_digest)
+        assert (oci_output / "hub-build/oci-layout").exists()
+        assert (oci_output / "repository/publisher.pub").read_bytes() == public.read_bytes()
+        assert not list(oci_output.rglob("*.key"))
+        for name, checksum in (("bad-hash", "0" * 64),):
+            try:
+                module.prepare(repository, public, "hub-build", root / name, tool, archive_path, checksum)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("OCI 摘要错误未拒绝")
+        write_archive(unsafe=True)
+        try:
+            module.prepare(repository, public, "hub-build", root / "bad-path", tool, archive_path, hashlib.sha256(archive_path.read_bytes()).hexdigest())
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("OCI 归档路径越界未拒绝")
+        assert not (root / "escape").exists()
+
         dockerfile = (output / "Dockerfile").read_text(encoding="utf-8")
         assert f"FROM {base_image}\n" in dockerfile
         assert "COPY --chown=65532:65532 repository/ /repository/" in dockerfile

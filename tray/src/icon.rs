@@ -7,6 +7,10 @@ use tray_icon::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+// Windows 以 GUID 保存通知区域偏好；同一产品重启和升级不得生成新图标身份。
+// 不写系统钉住设置，不依赖配置或程序版本；同一登录会话由单实例锁保证唯一。
+const TRAY_GUID: u128 = 0x5c676aa6_6b5e_4f58_b6f1_373063caa271;
+
 pub struct Tray {
     guid: u128,
     pub icon: TrayIcon,
@@ -34,7 +38,7 @@ impl Tray {
     }
     pub fn create(sender: async_channel::Sender<Command>) -> Self {
         NOTIFICATION_SENDER.with(|s| *s.borrow_mut() = Some(sender.clone()));
-        let guid = uuid::Uuid::new_v4().as_u128();
+        let guid = TRAY_GUID;
         let menu = Menu::new();
         let caption = MenuItem::new("活跃会话", false, None);
         let open = MenuItem::new("打开会话列表", true, None);
@@ -248,6 +252,36 @@ unsafe extern "system" fn notification_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn notification_area_identity_is_product_stable() {
+        assert_eq!(TRAY_GUID, 0x5c676aa6_6b5e_4f58_b6f1_373063caa271);
+        assert_ne!(TRAY_GUID, 0);
+    }
+    #[test]
+    fn stable_guid_can_register_again_after_native_icon_exit() {
+        use windows::{Win32::UI::Shell::*, core::GUID};
+        let identity = NOTIFYICONIDENTIFIER {
+            cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
+            guidItem: GUID::from_u128(TRAY_GUID),
+            ..Default::default()
+        };
+        if unsafe { Shell_NotifyIconGetRect(&identity) }.is_ok() {
+            // 不覆盖已运行的新版本图标；有日常实例时原生重复登记测试另行执行。
+            eprintln!("已有相同身份的托盘实例，保留用户图标，未执行原生登记测试");
+            return;
+        }
+        for _ in 0..2 {
+            let icon = TrayIconBuilder::new()
+                .with_guid(TRAY_GUID)
+                .with_tooltip("AgentPulse 原生图标回归")
+                .with_icon(pulse_icon(false))
+                .build()
+                .unwrap();
+            unsafe { Shell_NotifyIconGetRect(&identity) }.unwrap();
+            drop(icon);
+        }
+    }
+
     #[test]
     fn menu_title_keeps_graphemes() {
         assert_eq!(

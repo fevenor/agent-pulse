@@ -106,9 +106,15 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     linux, windows, bridges, assets = output / "linux", output / "windows", output / "bridges", output / "assets"
     assets.mkdir()
-    for name, directory in (("linux-adapters", linux), ("windows-amd64", windows), ("linux-bridge", bridges)):
+    for name, directory in (("linux-adapters", linux), ("windows-amd64", windows), ("linux-bridge", bridges), ("hub-build", output / "hub-build")):
         command("gh", "run", "download", args.run_id, "--repo", args.repository,
                 "--name", name, "--dir", directory)
+    hub_archive = unique_file(output / "hub-build", "hub-build.tar")
+    hub_sums = unique_file(output / "hub-build", "SHA256SUMS.txt").read_text(encoding="utf-8").split()
+    hub_hash = hashlib.sha256(hub_archive.read_bytes()).hexdigest()
+    if hub_sums != [hub_hash, "hub-build.tar"]:
+        raise ValueError("Hub 内部构建摘要不符")
+    shutil.copyfile(hub_archive, assets / "hub-build.tar")
     bridge_files = bridge_artifacts(bridges)
     for artifact in bridge_files:
         shutil.copyfile(artifact["path"], assets / artifact["name"])
@@ -142,8 +148,9 @@ def main():
     image_root = "ghcr.io/" + args.repository.lower()
     manifest = {"tag": args.tag, "commit": args.commit, "workflow_run_id": args.run_id,
                 "draft": True, "prerelease": True, "packages": index["packages"],
-                "hub_base": image_root + "/hub-base:" + args.tag,
-                "relay": image_root + "/relay:" + args.tag,
+                "hub": image_root + "-hub:" + args.tag,
+                "hub_build": {"asset": "hub-build.tar", "sha256": hub_hash, "publisher_only": True},
+                "relay": image_root + "-relay:" + args.tag,
                 "signed_repository": False, "index_sequence_is_placeholder": True,
                 "bridge_assets": [{key: value for key, value in artifact.items() if key != "path"} for artifact in bridge_files]}
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -155,7 +162,7 @@ def main():
 
 - Windows 本机接入只支持 ZCode 图形界面；Windows Codex CLI 和 ChatGPT Windows 桌面端仅规划。
 - Linux 保留 Codex、Qoder、Antigravity CLI 与 OpenCode。
-- 本候选修复时间线折叠/空白、同版本缺失钩子与配置向导假成功；同步原生会话名称，正常 Agent 直接启动不要求包装器。
+- 本候选修复时间线折叠/空白、同版本缺失钩子、同文件双登记与配置向导假成功；配置完成即时重载本机接入，托盘使用固定图标身份，补齐 Qoder 列表展示名称。正常 Agent 直接启动不要求包装器。
 - Windows 本地已验证 ZCode 3.18.2 的两轮短对话和改名后下一次真实事件同步；ACP 完整宿主任务、真实子代理及长期桌面场景仍按开发记录保留边界。
 - 主机快捷偏好、唤醒退出、通知分流及悬浮入口的剩余检查留到试运行中观察。
 - 编译器 Go 1.27.4、x/sys 0.44.0；ARM 镜像运行为模拟验证，不代表真机。
@@ -167,10 +174,11 @@ def main():
 - agent-pulse-adapters-linux-amd64：Linux 发布工具，下载后赋予可执行权限；私钥保持在发布者机器，不进入 CI 或附件。
 - agent-pulse-bridge-linux-amd64 / agent-pulse-bridge-linux-arm64：已完成构建的 Bridge；用户无需安装编译器。Bridge arm64 不代表当前命令适配包已支持 arm64。
 - install-bridge.sh：自动识别 Linux 架构、下载并校验 Bridge 的用户安装入口；Release 草稿不能匿名下载，公开后才可使用 --version 指向本候选版本。
-- Hub 基础镜像：{manifest['hub_base']}。它不含正式签名仓库，不能冒充普通用户完整 RC。
-- Relay 镜像：{manifest['relay']}。
+- hub-build.tar：发布者专用的同提交双架构 OCI 构建，不含签名仓库、不单独发布到镜像仓库，普通用户无需安装。
+- Hub 成品目标：{manifest['hub']}。发布者完成签名组装后才可部署；草稿生成不表示它已发布。
+- Relay 成品目标：{manifest['relay']}。须另外核对实际镜像发布记录；本草稿生成不表示该标签已发布。
 
-本候选不承诺旧候选通讯/存储兼容，试运行应使用同一现行构建与隔离数据目录，保留已有数据备份，不清空日常数据。测试新适配包时，在 Linux 发布机按 docs/images.md 使用既有长期密钥签名，再用 scripts/release/prepare-hub-release.py 附加仓库到此基础镜像；无需将私钥上传 GitHub。升级服务前备份数据库，先 Hub/Relay、后 Bridge/Tray，再下发包索引。
+本候选不承诺旧候选通讯/存储兼容，试运行应使用同一现行构建与隔离数据目录，保留已有数据备份，不清空日常数据。测试新适配包时，在 Linux 发布机按 docs/images.md 使用既有长期密钥签名，再用 scripts/release/prepare-hub-release.py 将签名仓库附加到同提交的 hub-build.tar，并仅发布 Hub 成品镜像；无需将私钥上传 GitHub。升级服务前备份数据库，先 Hub/Relay、后 Bridge/Tray，再下发包索引。
 
 Windows 完整仓库准备目录仍有拒绝访问的验证边界，签名与完整镜像准备沿用 Linux 流程。草稿不是新的真实宿主或手机实收证明；运行期间保留实际事件、提醒和异常证据，公开反馈不包含私人配置、令牌或会话正文。
 
@@ -188,6 +196,8 @@ Windows 完整仓库准备目录仍有拒绝访问的验证边界，签名与完
         command("gh", "release", "create", args.tag, "--repo", args.repository,
                 "--target", args.commit, "--draft", "--prerelease",
                 "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", assets / "trial-guide.md")
+    command("gh", "release", "edit", args.tag, "--repo", args.repository,
+            "--notes-file", assets / "trial-guide.md")
     command("gh", "release", "upload", args.tag, "--repo", args.repository, "--clobber", *sorted(assets.iterdir()))
     release = json.loads(command("gh", "release", "view", args.tag, "--repo", args.repository, "--json", fields).stdout)
     require_draft(release, args.tag, args.commit)

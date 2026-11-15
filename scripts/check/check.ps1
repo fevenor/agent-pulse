@@ -10,6 +10,7 @@ function Invoke-Checked {
 }
 $previousToolchain = $env:GOTOOLCHAIN
 $previousPnpm = $env:VOLTA_FEATURE_PNPM
+$previousEmbedded = $env:AGENT_PULSE_BRIDGE_BINARY
 $previousConsoleEncoding = [Console]::OutputEncoding
 $previousOutputEncoding = $OutputEncoding
 try {
@@ -44,6 +45,11 @@ try {
         }
     }
     if ($Tray) {
+        if ($Integration) {
+            $embedded = Join-Path $projectRoot '.cache/build/windows/bridge.exe'
+            if (-not (Test-Path -LiteralPath $embedded)) { throw '请先构建开发工具，再执行原生集成检查' }
+            $env:AGENT_PULSE_BRIDGE_BINARY = $embedded
+        }
         . (Join-Path $projectRoot 'scripts/build/windows-tools.ps1')
         Initialize-CppTools
         Push-Location (Join-Path $projectRoot 'tray')
@@ -51,7 +57,10 @@ try {
             Invoke-Checked cargo @('fmt', '--check')
             Invoke-Checked cargo @('clippy', '--release', '--locked', '--all-targets', '--', '-D', 'warnings')
             Invoke-Checked cargo @('test', '--release', '--locked')
-            if ($Integration) { Invoke-Checked cargo @('test', '--release', '--locked', '--test', 'sync_services', '--', '--ignored') }
+            if ($Integration) {
+                Invoke-Checked cargo @('test', '--release', '--locked', '--test', 'sync_services', '--', '--ignored')
+                Invoke-Checked cargo @('test', '--release', '--locked', '--bin', 'agent-pulse-tray', 'bridge_reload_native', '--', '--ignored')
+            }
             $guardOutput = (& cargo check --release --locked --features dev-demo 2>&1 | Out-String)
             if ($LASTEXITCODE -eq 0 -or -not $guardOutput.Contains('发布构建禁止包含演示功能')) { throw '演示发布隔离检查失败' }
             # 上一步故意验证编译失败；清除已确认的预期退出码，避免 CI 将整个检查判失败。
@@ -64,4 +73,5 @@ try {
     $OutputEncoding = $previousOutputEncoding
     $env:GOTOOLCHAIN = $previousToolchain
     $env:VOLTA_FEATURE_PNPM = $previousPnpm
+    $env:AGENT_PULSE_BRIDGE_BINARY = $previousEmbedded
 }

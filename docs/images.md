@@ -1,59 +1,60 @@
 # 镜像构建与部署
 
-首次部署按 [部署指南](deployment.md) 执行。Hub 使用 [`hub.image.yaml`](../deploy/compose/hub.image.yaml)，Relay 使用 [`relay.image.yaml`](../deploy/compose/relay.image.yaml)；本页说明发布规则及镜像验证。
+首次部署按 [部署指南](deployment.md) 执行。普通用户只使用完整 Hub 与 Relay 两个成品镜像，不需要理解或安装中间构建。Hub 使用 [`hub.image.yaml`](../deploy/compose/hub.image.yaml)，Relay 使用 [`relay.image.yaml`](../deploy/compose/relay.image.yaml)。
 
-[GitHub Workflow](../.github/workflows/images.yml) 负责 Hub 与 Relay 的检查和基础镜像构建。PR、main/master 推送、`v*` 标签和手动触发均执行检查；仅推送事件在检查通过后发布至 GHCR。Relay 是直接可部署镜像；Hub 自动构建标签为 `hub-base`，它包含默认运行配置和网页，但尚无 RC 对应的签名适配仓库，不能当作普通用户发布镜像。正式 Hub RC 由发布者在本地签名后，使用本页的准备脚本附加仓库并推送版本标签。手动触发只验证，不发布。
+## 发布与签名规则
 
-发布前用于集中验证的完整版本称为**预发布候选版本（RC）**。发布编译器与 Go 标准库固定为 Go 1.27.4，`go/go.mod` 的 Go 1.25.0 仅保留源码语言兼容底线；`golang.org/x/sys` 使用最小修复版本 0.44.0。固定版本不能代替真实二进制构建信息核验，也不表示既有远端镜像已经更新。
+采用现有 Hub/Relay 分发和官方索引签名。版本号用于区分版本，SHA-256 用于核对文件，签名用于确认发布授权；版本和摘要不替代签名。贡献者只提交源码与测试，官方发布者审核、构建并统一签名。普通用户不生成私钥、不签适配包，也不自行组装 Hub。
 
-## 构建与标签
+发布私钥沿用发布者本机安全存放方式，不进入仓库、CI、Hub、Relay、构建目录或用户附件；已有公钥的设备继续沿用原密钥，索引序号递增。不引入账号、多维护者密钥体系或密钥管理服务。
 
-流程先运行 Go 竞态/静态检查、OpenCode 类型与映射测试、Vue 生产构建，再构建 `linux/amd64`、`linux/arm64` 的 Hub/Relay。两种架构均启动真实容器，验证鉴权、离线队列、崩溃恢复、反向通道、页面和已读；arm64 使用 QEMU 模拟。镜像使用非 root 用户，SQLite 存在独立数据卷。
+GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查。Go 编译器固定 1.27.4；Go module 的 1.25.0 仅为源码语言底线。两架构 Hub/Relay 均执行容器恢复、鉴权、离线去重、名称转发和已读检查；arm64 在 x86_64 上的模拟验证不等于真机。
 
-自动构建的基础镜像地址按当前仓库自动生成，并转成小写。本仓库为 `fevenor/agent-pulse`：
+## 成品命名与内部构建
 
-- `ghcr.io/fevenor/agent-pulse/hub-base:sha-<完整提交哈希>`
-- `ghcr.io/fevenor/agent-pulse/relay:sha-<完整提交哈希>`
+本仓库的普通用户成品地址为：
 
-默认分支仅发布提交 SHA 标签，不在试运行前更新稳定 `latest`；版本标签发布基础 Hub 与 Relay 的同名版本。只有完成本地签名与镜像附加步骤后，发布者才将完整 Hub 镜像标记为普通用户使用的 `hub:<RC版本>`。部署固定完整 RC 标签，不能使用 `hub-base`。
+- `ghcr.io/fevenor/agent-pulse-hub:<已发布版本>`
+- `ghcr.io/fevenor/agent-pulse-relay:<已发布版本>`
+
+仅 push 事件在检查通过后自动发布 Relay 的固定提交/版本标签，不更新稳定 `latest`。Hub 在签名仓库组装完成后由发布者发布同一版本成品，未完成签名不能冒充成品。
+
+未签名 Hub 应用使用 `hub-build.tar` 保存在同一工作流的 `hub-build` Artifact 中，常规保留14天。OCI（开放容器镜像规范）归档能保存 amd64/arm64 的共同构建，不必额外推送第三个公开基础镜像；它是发布者内部材料，不是普通用户的安装目标。新的源码流程不会自动迁移或删除此前镜像标签，实际发布情况见开发记录。
 
 ## RC 试运行草稿
 
-推送 `v<工程版本>-rc.<序号>` 标签触发 `release-draft.yml`，复用同一提交的 Linux 与 Windows 工作流；只有两类检查及产物构建均成功才创建 GitHub Release 草稿。草稿保持预发布标记，不自动转正、不更新稳定镜像别名。已被人工发布或改为其他状态的 Release 不由重跑覆盖。
+推送 `v<工程版本>-rc.<序号>` 标签触发 `release-draft.yml`。同一提交的 Linux 与 Windows 检查成功后创建 Release 草稿，保持预发布与未转正状态。已有正式发布不由重跑覆盖，旧草稿不会自动更新。
 
-草稿附 Windows 单入口便携包、五包未签名仓库、Linux 两架构 Bridge 预构建与安装脚本、发布工具、构建清单、摘要和中文试运行说明。私有配置和发布私钥不进入 CI 或附件；没有长期密钥时不生成替代公钥，不把基础 Hub 镜像冒充完整签名 RC。发布者可沿用现有 Hub/已签名仓库试运行客户端，或在 Linux 本机使用已有长期密钥签名，再按下文准备完整 Hub 镜像。Bridge 由同一 Linux 工作流预先构建，草稿生成只核验并复制产物；安装器从公开 Release 自动下载，不要求目标用户编译。旧草稿不会因本地修改自动补齐附件。草稿仅发布固定 SHA/RC 标签，人工运行数日后的发布与稳定版本推广由发布者单独决定。
+草稿附 Windows 单入口便携包、五包未签名仓库、两架构 Linux Bridge、安装脚本、发布工具、`candidate-manifest.json` 构建清单、`trial-guide.md` 中文说明、校验清单及发布者专用 `hub-build.tar`。上传后检查实际附件名称和大小；所有文件均使用稳定 ASCII 名称，内容和标签说明保持中文。
+
+草稿中的构建归档与未签名包仅供发布者准备完整成品，不能让安装用户自行签名。新的适配包试运行需与同一现行 Hub/Relay/Bridge 构建配套，使用隔离数据并保留旧数据备份；不承诺旧候选通讯/存储兼容，不自动清空日常数据。正式公开和稳定版本推广仍由发布者明确决定。
 
 ## 准备普通用户 Hub RC 镜像
 
-发布者需先从对应提交的 Linux 和 Windows 工作流下载 `linux-adapters` 与 `windows-amd64` 包。首次使用时在私有安全目录生成一套发布密钥并长期保管；以后沿用同一密钥，不将私钥放入仓库、构建目录、镜像或 CI 产物。
-
-在源码根目录合并平台包并使用递增序号生成索引：
+以下操作只面向官方发布维护者。先下载同一候选的构建归档和两平台适配包，按校验清单验证摘要。未签名仓库可来自 RC 附件或现有合并工具，不能混用不同候选的程序与包。首次正式发布才生成一套长期密钥，后续沿用已有密钥，不创建替代公钥。
 
 ```sh
-uv run --offline --no-project python scripts/release/merge_adapter_repositories.py \
-  ./dist/repository-linux ./dist/repository-windows \
-  --output ./dist/repository-combined --sequence 1
-./bin/agent-pulse-adapters keygen --private /安全目录/publisher.key --public /安全目录/publisher.pub
+# 使用已有长期密钥及新的正式索引序号签署本次五包仓库。
+# index-input.json 中的序号必须高于现有正式索引，草稿序号1只是占位值。
 ./bin/agent-pulse-adapters publish --repository ./dist/repository-combined \
   --private /安全目录/publisher.key --index ./dist/repository-combined/index-input.json
-```
 
-后续发布将序号递增。首次发布可在同一安全目录创建密钥；已经有正式公钥的部署必须继续使用原密钥。然后使用签名仓库、公钥与匹配提交构建的 `hub-base` 镜像准备独立 Docker 构建目录：
-
-```sh
+# HUB_BUILD_SHA256 取自同一候选的构建清单/校验清单，不从归档自己推断来源。
 uv run --offline --no-project python scripts/release/prepare-hub-release.py \
   --repository ./dist/repository-combined --public /安全目录/publisher.pub \
-  --base-image ghcr.io/fevenor/agent-pulse/hub-base:rc版本 \
+  --base-archive ./dist/hub-build.tar --base-sha256 "$HUB_BUILD_SHA256" \
   --output ./dist/hub-release --tool ./bin/agent-pulse-adapters
-docker buildx build --platform linux/amd64,linux/arm64 --push \
-  --tag ghcr.io/fevenor/agent-pulse/hub:rc版本 ./dist/hub-release
+
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-context "hub-build=oci-layout://$(pwd)/dist/hub-release/hub-build" \
+  --tag ghcr.io/fevenor/agent-pulse-hub:已确认版本 --push ./dist/hub-release
 ```
 
-正式发布采用 Linux 发布机流程。Windows 辅助目录准备在完整仓库上仍有原子改名拒绝访问的已知验证边界，不能用小仓库测试推断稳定；当前结果见[开发记录](development-status.md)。
+准备脚本复用 Go 发布工具验签、核对包摘要与大小，只复制公开公钥、索引和不可变包；OCI 归档先核对摘要，拒绝路径越界、链接及非法文件类型。它不读取私钥，不构建、不推送镜像，不覆盖已有输出。命名上下文仅向 Buildx 提供本地 OCI 构建，最终镜像包含默认配置、网页和 `/repository`，普通用户无需挂载包仓库或手填公钥。
 
-脚本使用 Bridge 同一验签工具核对索引签名、包摘要与大小，将 `publisher.pub` 和索引引用的不可变包复制到新的构建目录，拒绝损坏仓库和已存在的输出目录。它不读取私钥、不签名、不构建或推送镜像；最终 `docker buildx` 步骤需发布者显式执行。完整镜像包含默认 Hub 配置、网页和 `/repository`，Hub 自动读取随仓库提供的 `publisher.pub`；显式 `adapter_public_key` 仍优先。普通用户部署已签名 RC 时无需挂载仓库或配置公钥。
+发布采用 Linux 原生环境；Windows 可以进行脚本与目录准备回归，但不能替代 Linux 容器验收。已经由发布者验证的本地基准镜像仍可显式使用 `--base-image <镜像或digest>`，仅是维护入口，不作为第三种用户交付物。
 
-使用仓库自带 `GITHUB_TOKEN` 的 packages 写权限，无需额外保存镜像仓库密码。私有镜像拉取需部署主机已有 GHCR 读取授权；公开镜像可匿名拉取。第一次远端运行仍需检查仓库 Actions 权限与镜像可见性。本地构建通过不代表 GitHub 上已执行或已发布。
+镜像仓库授权沿用现有 GitHub/容器工具登录，不另建账号服务。CI 的 Relay 推送使用仓库 `GITHUB_TOKEN` 的 packages 写权限；完整 Hub 推送使用发布者已有授权，私钥无需上传 GitHub。公开镜像可匿名拉取；尚未公开的草稿/镜像须已有读取权限。本地构建通过不表示远端工作流或公开发布已完成。
 
 ## 本地执行相同验证
 
@@ -98,6 +99,6 @@ docker compose --env-file /安全目录/relay.env -f deploy/compose/relay.image.
 docker compose --env-file /安全目录/relay.env -f deploy/compose/relay.image.yaml ps
 ```
 
-镜像地址形如 `ghcr.io/owner/agent-pulse/relay:sha-完整提交哈希`，须替换为实际发布值。默认仅暴露宿主 `127.0.0.1:18701`，使用 [Nginx 配置](../deploy/proxy/relay.nginx.conf) 提供公网 HTTPS/WSS。Hub 主动连接该地址；无需开放 Hub 公网入站。升级前备份数据卷，回退时指定之前已验证的镜像版本；不要使用 `down -v` 删除持久数据。
+镜像地址形如 `ghcr.io/owner/agent-pulse-relay:sha-完整提交哈希`，须替换为实际发布值。默认仅暴露宿主 `127.0.0.1:18701`，使用 [Nginx 配置](../deploy/proxy/relay.nginx.conf) 提供公网 HTTPS/WSS。Hub 主动连接该地址；无需开放 Hub 公网入站。升级前备份数据卷，回退时指定之前已验证的镜像版本；不要使用 `down -v` 删除持久数据。
 
 流程参考 [Docker 多架构构建说明](https://docs.docker.com/build/ci/github-actions/multi-platform/)；Node 环境使用 [Volta Action](https://github.com/volta-cli/action)，Python 测试通过 [setup-uv](https://github.com/astral-sh/setup-uv) 执行。

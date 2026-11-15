@@ -597,7 +597,7 @@ impl Render for Surface {
                         ).on_click(move |_, _, _| {
                             let _ = bridge_setup.try_send(Command::BridgeSetup);
                         }))
-                        .child(div().text_color(rgb(t.muted)).child("向导会在独立控制台中扫描并逐项询问支持的 Agent；最后报告保留至按 Enter 关闭，完成后需重启 Tray。配置保存在 data/，Tray 只需设置 Hub 地址。"))
+                        .child(div().text_color(rgb(t.muted)).child("向导会在独立控制台中扫描并逐项询问支持的 Agent；最后报告保留至按 Enter 关闭，完成后自动应用本机接入配置，无需重启 Tray。配置保存在 data/，Tray 只需设置 Hub 地址。"))
                 })
                 .child(div().mt_3().child("服务连接"))
                 .child(

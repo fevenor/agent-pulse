@@ -26,6 +26,13 @@ class DraftTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     module.validate_uploaded_assets({"assets": assets}, paths)
 
+    def test_hub_unsigned_build_is_not_a_published_third_image(self):
+        text = (Path(__file__).resolve().parents[2] / ".github/workflows/images.yml").read_text(encoding="utf-8")
+        self.assertIn("name: hub-build", text)
+        self.assertIn("type=oci,dest=dist/hub-build/hub-build.tar", text)
+        self.assertNotIn('image="$image-base"', text)
+        self.assertIn('image="$image_repository-relay"', text)
+
     def test_only_matching_rc_tag(self):
         module.validate_tag("v0.5.0-rc.1", "0.5.0")
         for tag in ("v0.5.0", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):

@@ -24,7 +24,7 @@ docker volume create agent-pulse-hub-data
 docker run -d --name agent-pulse-hub --restart unless-stopped \
   -p 127.0.0.1:18700:18700 \
   -v agent-pulse-hub-data:/data \
-  ghcr.io/fevenor/agent-pulse/hub:替换为已发布RC版本
+  ghcr.io/fevenor/agent-pulse-hub:替换为已发布RC版本
 ```
 
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
@@ -112,7 +112,7 @@ Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客�
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：
 
 ```dotenv
-AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse/relay:sha-替换为已发布完整提交哈希
+AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:sha-替换为已发布完整提交哈希
 AGENT_PULSE_RELAY_TOKEN=替换为生成的随机令牌
 ```
 
@@ -142,7 +142,7 @@ AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 | 现象 | 优先检查 |
 | --- | --- |
 | Hub 健康但无管理页 | 非容器部署是否配置 `web_directory`、是否已构建页面 |
-| 适配索引 404 | 确认部署的是完整 RC 镜像，而非仅用于发布者的 `hub-base`；自建仓库时检查 `/repository/index.json` 与容器读取权限 |
+| 适配索引 404 | 确认部署的是完整 RC 镜像，而非未附加签名仓库的内部应用构建；自建仓库时检查 `/repository/index.json` 与容器读取权限 |
 | 服务在线但没有原生会话 | 宿主是否重新加载、hook 是否已信任、managed 路径和版本是否匹配 |
 | 手工同步成功，服务同步失败 | systemd PATH、配置所引用环境变量及文件权限 |
 | Relay 健康但 `hub_connected: false` | Hub 中继地址和 token、HTTPS/WebSocket 代理、出站网络 |

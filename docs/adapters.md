@@ -54,7 +54,7 @@ uv run --offline --no-project python scripts/release/merge_adapter_repositories.
 
 同一插件在不同平台重复打包时，pnpm 路径长度处理可能使 bundle 的来源注释不同；合并器不会忽略这些内容差异。公用索引应使用上述单次通用构建方式，不通过放宽摘要检查或覆盖同版本包规避冲突。
 
-Hub 基础镜像由构建工作流发布为 `hub-base`，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的基础镜像生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像启动时 Hub 自动读取 `/repository/publisher.pub`；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载完整 RC 镜像后不需要挂载仓库或配置公钥。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
+Hub 未签名应用构建由工作流保存为发布者专用 OCI 归档 `hub-build.tar`，不单独公开第三个镜像，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的 OCI 内部构建生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像启动时 Hub 自动读取 `/repository/publisher.pub`；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载完整 RC 镜像后不需要挂载仓库或配置公钥。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
 
 ## 主机：首次接入与自动更新
 
@@ -93,7 +93,7 @@ ZCode 已实测基线为 Windows amd64 的 3.17.2，主/次/补丁版本政策�
 
 Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 `zcode`，值为本机 `%USERPROFILE%/.zcode/cli/config.json` 的实际绝对路径；保留原有公钥、包目录及其他来源。不要把示例百分号变量直接写入 YAML 期待自动展开。经签名的 Windows ZCode 包安装后，设置页“钩子”可看到 AgentPulse 管理的三个事件。同版本已安装也会核对当前授权文件并补回缺失钩子；配置无变化不重复写入。向导以实际文件及总开关核验结果报告完成，不只依赖安装记录。
 
-配置采用 `hooks.events` 中的 `type: process`，可执行路径和参数数组分开保存，避免 PowerShell/cmd 引号及编码转换。已有 `hooks.enabled: false` 会被尊重，需用户在 ZCode 中明确开启；没有该字段时安装器启用钩子。保留其他用户钩子、超时和错误策略，仅替换本软件同来源同配置的 dispatch 条目；升级内置 Bridge 的版本目录不会重复安装。
+配置采用 `hooks.events` 中的 `type: process`，可执行路径和参数数组分开保存，避免 PowerShell/cmd 引号及编码转换。已有 `hooks.enabled: false` 会被尊重，需用户在 ZCode 中明确开启；没有该字段时安装器启用钩子。保留其他用户钩子、超时和错误策略，仅替换本软件同来源同配置的 dispatch 条目；配置路径按同文件身份核对，普通路径、扩展路径、短路径或不同大小写不会留下重复自有钩子。其他 Bridge 配置和用户钩子保留；升级内置 Bridge 的版本目录不会重复安装。
 
 开始和用户提交分别映射会话开始/继续，正常 Stop 映射本轮完成。ZCode 子代理带有独立身份的生命周期输入会被忽略；工具事件未提供足够稳定的主/子归属，因此不配置工具或批准事件。强制取消、崩溃、模型异常不保证触发 Stop，暂不支持自动推断失败、中断、关闭和等待输入；此时可在详情人工修正状态，也会释放基于该状态的唤醒请求。
 
@@ -111,10 +111,10 @@ ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）�
 
 ### 会话身份与名称来源
 
-会话身份按来源、Agent 和原生会话 ID 定位，名称是可变属性。无名称时显示“未命名会话”，项目单独展示；本项目别名仅作备注，不覆盖 Agent 最新名称。名称只从宿主明确保存的字段获取，不使用摘要、提示词或 ID 生成。
+会话身份按来源、Agent 和原生会话 ID 定位，名称是可变属性。无名称时显示“未命名会话”，项目单独展示；本项目别名仅作备注，不覆盖 Agent 最新名称。名称只从宿主明确保存并用于展示的字段获取，不使用对话正文、摘要或 ID 自行生成。
 
 - Codex CLI：每次真实 hook 按 ID 读取可选 `session_index.jsonl` 的 `thread_name`，见 [Codex 适配器](../adapters/codex/README.md#会话标题)。
-- Qoder 中国版 CLI：每次真实 hook 按 ID 读取会话文件中的 `custom-title.customTitle`，用户名优先；没有用户名时可使用宿主明确生成的 `ai-title.aiTitle`，见 [Qoder 适配器](../adapters/qoderclicn/README.md#会话名称读取)。
+- Qoder 中国版 CLI：每次真实 hook 按 ID 读取会话文件中的 `custom-title.customTitle`，用户名优先；其次采用 `ai-title.aiTitle`，都缺失时采用宿主 1.1.89 明确用于列表展示的 `last-prompt.lastPrompt` 元数据。该字段是宿主展示来源，不是从对话正文推断名称；见 [Qoder 适配器](../adapters/qoderclicn/README.md#会话名称读取)。
 - Antigravity CLI：每次真实 hook 按 ID 优先读取持久化注解 `annotations/<会话标识>.pbtxt` 的顶层 `title`；不可用时才回退 JSON 缓存 `summary.ID/Title`，不使用 `Preview`，见 [Antigravity 适配器](../adapters/antigravity/README.md#会话名称)。
 - OpenCode：接入原生 `session.renamed`；普通事件也携带原生名称，改名事件使用当时的原始新名称，网络重试或重放不因后续改名改变载荷。
 - ZCode Windows：每次原生 hook 按精确会话 ID 只读查询 `%USERPROFILE%/.zcode/cli/db/db.sqlite` 的 `session.title/title_source/parent_id`。默认占位名称不作为真实名称，显式父会话过滤。改名没有独立配置钩子，下一次真实事件同步新名称；缺库、未知结构或锁竞争不阻断事件，首次无名称显示未命名。Windows 3.18.2 的真实改名及下一轮事件已验证，详见开发记录。

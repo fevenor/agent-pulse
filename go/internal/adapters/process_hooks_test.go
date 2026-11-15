@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,63 @@ func TestSetupVerifiesActualHooksAndRespectsDisabledSwitch(t *testing.T) {
 	}
 	if verifySetupHooks(c, bridgePath, "zcode") == nil {
 		t.Fatal("只凭安装记录不能报告实际钩子存在")
+	}
+}
+
+func TestProcessHookSameFileVariantsAreReplacedAndDisabledWithoutDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "中文 空格 bridge.json")
+	if err := os.WriteFile(cfg, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "同文件.json")
+	if runtime.GOOS == "windows" {
+		alias = `\\?\` + cfg
+	} else if err := os.Link(cfg, alias); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.json")
+	if err := os.WriteFile(other, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "new", "bridge.exe")
+	oldExe := filepath.Join(dir, "old", "bridge.exe")
+	handler := func(path, command string) map[string]any {
+		return map[string]any{"type": "process", "command": command, "args": []any{"dispatch", "--config", path, "--adapter", "zcode", "--hook", "Stop"}}
+	}
+	p := Package{Manifest: Manifest{ID: "zcode", ConfigStyle: "process-hooks", Hooks: map[string]string{"Stop": ""}}}
+	root := map[string]any{"keep": "用户配置", "hooks": map[string]any{"enabled": true, "events": map[string]any{"Stop": []any{map[string]any{"hooks": []any{handler(cfg, oldExe), handler(alias, oldExe), handler(other, oldExe), handler(cfg, "user.exe")}}}}}}
+	raw, err := processHookConfig(root, exe, cfg, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), `"dispatch"`) != 3 {
+		t.Fatal("等价路径没有去掉重复自有钩子", string(raw))
+	}
+	if !strings.Contains(string(raw), "用户配置") || !strings.Contains(string(raw), "other.json") || !strings.Contains(string(raw), "user.exe") {
+		t.Fatal("其他授权或用户钩子被改动")
+	}
+	if json.Unmarshal(raw, &root) != nil {
+		t.Fatal("配置无效")
+	}
+	again, err := processHookConfig(root, exe, alias, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(again), `"dispatch"`) != 3 {
+		t.Fatal("再次同步重复登记", string(again))
+	}
+	if json.Unmarshal(again, &root) != nil {
+		t.Fatal("配置无效")
+	}
+	disabled, err := updateProcessHookConfig(root, exe, cfg, p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(disabled), `"dispatch"`) != 2 {
+		t.Fatal("停用没有移除等价路径自有条目", string(disabled))
+	}
+	if sameHookConfigFile(other, cfg) || sameHookConfigFile(12, cfg) || sameHookConfigFile("relative.json", cfg) {
+		t.Fatal("不应认领其他配置或非路径")
 	}
 }

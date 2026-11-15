@@ -97,6 +97,19 @@ jobs:
           name: 容器验证结果
           path: dist/verification/containers-*.json
           if-no-files-found: error
+      - name: 导出发布者专用 Hub 构建，不发布第三个公开镜像
+        run: |
+          mkdir -p dist/hub-build
+          docker buildx build --platform linux/amd64,linux/arm64 --target hub \
+            -f deploy/docker/Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --output type=oci,dest=dist/hub-build/hub-build.tar .
+          (cd dist/hub-build && sha256sum hub-build.tar > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hub-build
+          path: dist/hub-build/*
+          if-no-files-found: error
+          retention-days: 14
       - name: 登录 GitHub 镜像仓库
         if: github.event_name == 'push'
         uses: docker/login-action@v4
@@ -110,15 +123,12 @@ jobs:
           IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
         run: |
           image_repository="${IMAGE_REPOSITORY,,}"
-          for component in hub relay; do
-            image="$image_repository/$component"
-            if [[ "$component" == hub ]]; then image="$image-base"; fi
-            tags=(--tag "$image:sha-$GITHUB_SHA")
-            if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-              tags+=(--tag "$image:$GITHUB_REF_NAME")
-            fi
-            docker buildx build --platform linux/amd64,linux/arm64 --target "$component" \
-              -f deploy/docker/Dockerfile "${tags[@]}" \
-              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-              --label "org.opencontainers.image.revision=$GITHUB_SHA" --push .
-          done
+          image="$image_repository-relay"
+          tags=(--tag "$image:sha-$GITHUB_SHA")
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tags+=(--tag "$image:$GITHUB_REF_NAME")
+          fi
+          docker buildx build --platform linux/amd64,linux/arm64 --target relay \
+            -f deploy/docker/Dockerfile "${tags[@]}" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" --push .

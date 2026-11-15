@@ -137,7 +137,7 @@ if ((setup)); then
   systemctl --user enable --now agent-pulse-bridge
   for attempt in {1..10}; do
     if curl --fail --silent --show-error http://127.0.0.1:18702/healthz; then
-      printf '\n%s\n' '安装与配置操作已完成，Bridge 服务已启动。请按上面的启动要求使用 Agent，并用真实事件在 Hub 验收会话与提醒。'; exit 0
+      printf '\n%s\n' '安装与配置已完成，Bridge 服务已启动，可以正常使用所选 Agent。'; exit 0
     fi
     sleep 1
   done

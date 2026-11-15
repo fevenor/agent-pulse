@@ -463,7 +463,12 @@ func Run(ctx context.Context, c config.Bridge, path string) {
 	defer ticker.Stop()
 	for {
 		if time.Now().After(next) {
-			lastErr = Sync(ctx, c, path)
+			selected, readErr := currentAdapterSelection(c, path)
+			if readErr != nil {
+				lastErr = readErr
+			} else {
+				lastErr = Sync(ctx, selected, path)
+			}
 			interval := c.Adapters.PollSeconds
 			if interval == 0 {
 				interval = 300
@@ -622,4 +627,20 @@ func Disable(c config.Bridge, id, configPath string) error {
 		return err
 	}
 	return os.Remove(journal)
+}
+
+// 向导可能仍在展示最终报告；后台同步须沿用磁盘上的最新选择，不能重新装回刚停用的钩子。
+// 运行身份、目录或监听变化交由 Tray 重载，不在旧接入进程中跨配置接管服务。
+func currentAdapterSelection(running config.Bridge, path string) (config.Bridge, error) {
+	latest, err := config.LoadBridge(path)
+	if err != nil {
+		return running, errors.New("本机配置不可读取，已暂停适配包同步")
+	}
+	if latest.SourceID != running.SourceID || latest.Listen != running.Listen || latest.Adapters.Directory != running.Adapters.Directory {
+		return running, errors.New("本机运行配置已变化，等待接入重新加载")
+	}
+	running.Adapters.Managed = latest.Adapters.Managed
+	running.Adapters.Pins = latest.Adapters.Pins
+	running.Adapters.Exclude = latest.Adapters.Exclude
+	return running, nil
 }
