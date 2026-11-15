@@ -570,3 +570,12 @@ Qoder 新转换产物在 Linux 只读对照用户报告的既有会话元数据�
 最新 Windows 完整检查通过 Go 测试/vet、Web/OpenCode 类型与测试、Rust 格式/严格 Clippy/测试、真实 Hub/Relay 联调及内置 Bridge 原生重载；便携发布包重新构建并通过签名仓库准备回归。草稿再次覆盖时同步更新发布说明，不只覆盖二进制附件。最终流水线、分发校验及空闲观察结果另记，不将尚未完成检查写成通过。
 
 Linux 最终同份源码的 `go test -race ./...` 与 `go vet ./...` 通过，仍使用独立临时工作目录，不覆盖日常源码。
+
+
+### 滚动候选的 ZIP 可复现性修复
+
+提交 33dae42f38ead484d2756f0fc963079e5c79ce2b 的 [RC2 草稿工作流](https://github.com/fevenor/agent-pulse/actions/runs/43702887374)、[Linux 检查](https://github.com/fevenor/agent-pulse/actions/runs/43702879350)、[Windows 检查](https://github.com/fevenor/agent-pulse/actions/runs/43702879357) 均成功。草稿的 10 个附件重新下载后摘要、Windows 四文件清单和五个适配 ZIP 成员核验通过，仍为未转正候选。
+
+实际升级逐包复核发现 OpenCode 0.3.2 被同版本不可变规则拒绝。对照旧/新预构建 ZIP 后确认：唯一 index.js 成员的字节完全一致，差异仅为 ZIP 成员保留了不同构建时间；不能以安装器退出成功代替逐包检查。打包器改用固定成员时间，回归验证只改变源修改时间或目录不改变摘要，而实际文件内容变化仍改变摘要。不放宽客户端校验，不承诺跨编译器或不同依赖的二进制可复现。
+
+固定时间会改变首次采用它的压缩包字节，因此五个包均递增：Antigravity 0.2.8、Codex/Qoder 0.2.6、OpenCode 0.3.3、ZCode 0.1.4；继续沿用原公钥并递增签名索引。新的流水线及分发复核另记。实例配置、回滚材料和安装快照只保留在私有部署记录，不写为公开项目现状。

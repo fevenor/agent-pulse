@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const BridgeVersion = "0.5.0"
@@ -221,6 +222,8 @@ func BuildPackage(source, repository string, m Manifest) (Package, error) {
 		if err != nil {
 			return err
 		}
+		// 构建时间不属于包内容；相同文件重新打包必须保持相同摘要。
+		header.Modified = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 		header.Name = filepath.ToSlash(rel)
 		header.Method = zip.Deflate
 		out, err := writer.CreateHeader(header)
