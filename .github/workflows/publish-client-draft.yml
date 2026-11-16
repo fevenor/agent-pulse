@@ -1,0 +1,63 @@
+name: 核验并发布已构建的客户端候选草稿
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: '已存在且不移动的客户端候选标签'
+        required: true
+        default: 'v0.5.0-rc.4'
+        type: string
+      candidate_commit:
+        description: '候选构建的完整提交摘要'
+        required: true
+        type: string
+      build_run_id:
+        description: 'Linux和Windows均成功的构建工作流编号'
+        required: true
+        type: string
+      reuse_release:
+        description: '继续使用的公开Hub、Relay与适配包版本'
+        required: true
+        default: 'v0.5.0-rc.3'
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: client-draft-${{ inputs.candidate_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: 复用已通过的客户端构建，核验后生成草稿
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          REUSE_RELEASE: ${{ inputs.reuse_release }}
+          GOTOOLCHAIN: local
+        run: |
+          uv run --offline --no-project python scripts/check/test_client_rc_draft.py
+          uv run --offline --no-project python scripts/release/create_client_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$BUILD_RUN_ID" --tag "$CANDIDATE_TAG" --commit "$CANDIDATE_COMMIT" --reuse-release "$REUSE_RELEASE" --output dist/rc-clients
+      - uses: actions/upload-artifact@v7
+        with:
+          name: 客户端草稿发布结果
+          path: dist/rc-clients/release-result.json
+          if-no-files-found: error
+          retention-days: 14

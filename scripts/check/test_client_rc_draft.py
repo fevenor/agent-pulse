@@ -38,6 +38,17 @@ class ClientDraftTests(unittest.TestCase):
             with self.assertRaises(ValueError):module.validate_client_changes([{"filename":name}])
         with self.assertRaises(ValueError):module.validate_client_changes([{"filename":"safe.txt","previous_filename":"adapters/codex/manifest.json"}])
 
+    def test_passed_builds_are_reusable_even_if_publication_failed(self):
+        run={"headSha":"a"*40,"conclusion":"failure","jobs":[{"name":name,"status":"completed","conclusion":"success"} for name in ("linux","windows / windows")]}
+        module.validate_build_run(run,"a"*40)
+        for changed in ({**run,"headSha":"b"*40},{**run,"jobs":run["jobs"][:1]}):
+            with self.assertRaises(ValueError):module.validate_build_run(changed,"a"*40)
+
+    def test_trimpath_does_not_require_missing_linker_flags(self):
+        tag="v0.5.0-rc.4";commit="a"*40
+        module.validate_cross_compiled_version(b"binary\0"+tag.encode()+b"\0"+commit.encode(),tag,commit)
+        for raw in (b"binary",tag.encode()):
+            with self.assertRaises(ValueError):module.validate_cross_compiled_version(raw,tag,commit)
     def test_client_workflow_never_builds_or_publishes_images(self):
         text=(ROOT/".github/workflows/release-clients.yml").read_text(encoding="utf-8")
         for forbidden in ("images.yml","docker/","docker build","docker login","package-adapters","hub-build"):

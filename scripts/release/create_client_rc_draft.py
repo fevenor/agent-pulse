@@ -39,6 +39,15 @@ def validate_client_assets(paths):
     expected={"agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","install-bridge.sh","candidate-manifest.json","trial-guide.md","SHA256SUMS.txt"}
     if {p.name for p in paths}!=expected or len(paths)!=len(expected):
         raise ValueError("客户端候选只能包含Bridge、Tray和对应说明/校验文件")
+def validate_build_run(run,commit):
+    jobs={j.get("name"):j for j in run.get("jobs",[])}
+    if run.get("headSha")!=commit or any(jobs.get(name,{}).get("conclusion")!="success" or jobs.get(name,{}).get("status")!="completed" for name in ("linux","windows / windows")):
+        raise ValueError("必须复用同一提交且Linux/Windows构建均成功的产物")
+
+def validate_cross_compiled_version(raw,tag,commit):
+    # trimpath会省略构建信息中的ldflags；非本机架构核对注入字符串，运行验证由amd64承担。
+    if tag.encode() not in raw or commit.encode() not in raw:
+        raise ValueError("交叉构建Bridge缺少候选版本或提交")
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository",required=True)
@@ -52,6 +61,14 @@ def main():
     common.validate_tag(args.tag,version)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",args.repository) or not re.fullmatch(r"[0-9a-f]{40}",args.commit) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?",args.reuse_release) or args.reuse_release==args.tag:
         raise ValueError("仓库、提交或复用版本无效")
+    if not re.fullmatch(r"[0-9]+",args.run_id): raise ValueError("构建工作流编号无效")
+    reference=json.loads(common.command("gh","api",f"repos/{args.repository}/git/ref/tags/{args.tag}").stdout)["object"]
+    if reference.get("type")=="tag":
+        reference=json.loads(common.command("gh","api",f"repos/{args.repository}/git/tags/{reference['sha']}").stdout)["object"]
+    if reference.get("type")!="commit" or reference.get("sha")!=args.commit:
+        raise ValueError("候选标签不指向已核验的构建提交")
+    build=json.loads(common.command("gh","run","view",args.run_id,"--repo",args.repository,"--json","headSha,jobs").stdout)
+    validate_build_run(build,args.commit)
     changes=json.loads(common.command("gh","api",f"repos/{args.repository}/compare/{args.reuse_release}...{args.commit}").stdout)
     validate_client_changes(changes.get("files",[]))
     output=args.output.resolve();output.mkdir(parents=True,exist_ok=False)
@@ -66,9 +83,8 @@ def main():
     bridges=common.bridge_artifacts(output/"linux")
     for artifact in bridges:
         shutil.copyfile(artifact["path"],assets/artifact["name"])
-        metadata=common.command("go","version","-m",artifact["path"]).stdout
-        if "main.buildVersion="+args.tag not in metadata or "main.buildCommit="+args.commit not in metadata:
-            raise ValueError("LinuxBridge未注入当前候选版本和提交")
+        if artifact["platform"]=="linux/arm64":
+            validate_cross_compiled_version(artifact["path"].read_bytes(),args.tag,args.commit)
         if artifact["platform"]=="linux/amd64":
             info=json.loads(common.command(artifact["path"],"version","--json").stdout)
             validate_version(info,args.tag,args.commit,artifact["sha256"],artifact["platform"])
@@ -82,7 +98,7 @@ def main():
         raise ValueError("Windows内置Bridge摘要无效")
     shutil.copyfile(windows,assets/"windows-amd64.zip")
     shutil.copyfile(ROOT/"scripts/install/bridge.sh",assets/"install-bridge.sh")
-    manifest={"tag":args.tag,"commit":args.commit,"workflow_run_id":args.run_id,"draft":True,"prerelease":True,
+    manifest={"tag":args.tag,"commit":args.commit,"workflow_run_id":args.run_id,"publication_workflow_run_id":os.getenv("GITHUB_RUN_ID",""),"draft":True,"prerelease":True,
               "updated_components":["bridge","tray"],"reuse_release":args.reuse_release,
               "reused_components":{"hub":baseline["hub"],"relay":baseline["relay"],"adapter_packages":baseline["packages"]},
               "bridge_assets":[{k:v for k,v in p.items() if k!="path"} for p in bridges],"windows_embedded_bridge":embedded}
@@ -121,7 +137,8 @@ Windows正常退出Tray，备份后只替换EXE并保留tray.yaml与data/；内�
 本次不迁移、清空数据，不修改私人Agent配置、手机渠道或自动部署服务，不批量重发历史任务。已有原生事件、主子/记忆过滤、computer use/RDP等未验边界不因客户端修复草稿自动改为通过。arm64只核验交叉构建、格式、摘要与注入元数据，不冒充真机运行。
 
 来源提交：{args.commit}
-[客户端候选流水线](https://github.com/{args.repository}/actions/runs/{args.run_id})
+[客户端构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
+[草稿发布维护](https://github.com/{args.repository}/actions/runs/{os.getenv("GITHUB_RUN_ID",args.run_id)})
 """
     (assets/"trial-guide.md").write_text(notes,encoding="utf-8")
     sums=[hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name for p in sorted(assets.iterdir())]
