@@ -125,4 +125,17 @@ RC3源码已实现安装/JSONC、手机格式、原生内容及必要状态恢�
 - Antigravity App 2.32.1在WSL Debian中使用当前界面已选的Gemini3.8 Flash执行两轮隔离原生任务：开始/活动/结束及多选问题、问题与选项正文、回复后的活动恢复进入无手机渠道的隔离Hub。实际Stop与PostInvocation用户hook均未发送最终回答或模型输出字段；内部描述符有字段不能当作用户hook提供能力，完成正文保持受限，不读transcript或思考补内容。
 - App原生注解将title与查看时间放在同一行，修复标题字符串提取；通过后续真实事件确认名称可得，并补充单行注解回归。App索引仅按精确ID读取标题、父身份和必要来源元数据，不读preview或全文索引。App全工具匹配的PreToolUse在真实审批前触发，提供run_command的BypassSandbox/CommandLine/toolSummary，用户仅允许一次后PostToolUse与Stop恢复正常。新增该请求转换与普通命令不误报回归；最终Antigravity0.3.2包已在原生审批前将approval.required及命令/说明、原生会话名递交隔离Hub；最终包的真实请求进入等待批准，用户仅允许一次后PostToolUse、活动恢复和Stop正常入库，命令退出码0；完成正文仍受App用户hook缺字段限制。本次未发送手机通知，不将授权闭环扩写为主子、记忆或全部桌面场景已验。
 
-仍须验收：最新各适配包的真实主任务、原生问题/批准及取消恢复、主子/记忆过滤、computer use与RDP真人输入判别、特定RDP问题主机、多屏/DPI体验及当前手机目标的实际标题/正文实收。已有后述Antigravity App原生任务验证，但没有实际手机发送结果，不将本地接收器或HTTP成功记为手机完成。GitHub同提交流水线、签名候选镜像及RC3 Release草稿尚未执行/产出；公开RC2附件、标签、latest及正式服务未改动。
+仍须验收：最新各适配包的真实主任务、原生问题/批准及取消恢复、主子/记忆过滤、computer use与RDP真人输入判别、特定RDP问题主机、多屏/DPI体验及当前手机目标的实际标题/正文实收。已有后述Antigravity App原生任务验证，但没有实际手机发送结果，不将本地接收器或HTTP成功记为手机完成。本地实现阶段的记录与后述GitHub流水线、签名镜像及RC3草稿验收分开；公开RC2附件、标签、latest及正式服务未改动。
+
+
+## 2026-11-16 RC3草稿与完整候选镜像验收
+
+[v0.5.0-rc.3草稿](https://github.com/fevenor/agent-pulse/releases/tag/untagged-e70ec41eeca87311f753)保持draft=true、prerelease=true，未公开；构建提交为`766011f12892fa1201176bff19faf16ec10d4d74`。同提交[候选流水线](https://github.com/fevenor/agent-pulse/actions/runs/43869999165)、[Windows检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990091)与[Linux检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990126)全部成功。
+
+- 10个真实草稿附件回下载后，文件大小、GitHub资产摘要与SHA256SUMS全部一致；Windows ZIP只有用户入口、两个配置示例与使用说明。七个来源/平台包的版本、平台、ZIP及摘要与同提交清单一致。
+- 原发布者公钥与当前Hub一致，未生成替代生产密钥。完整候选Hub使用递增正式索引序号6；通过复制后验签，七包及公钥随镜像交付，私钥及未签名索引不进入镜像。Hub多架构索引摘要为`sha256:c586ed8860eefd9cb865c3d32c5f5aeef2da5f5f2b821bb9647a400685e565f0`。
+- Hub与Relay的RC3索引支持匿名读取并包含Linux amd64/arm64；在无Docker登录配置下匿名拉取amd64镜像、核对构建revision并隔离运行通过。完整Hub网页、健康、公钥发现、序号6索引、七包真实下载及发布工具验签通过；Relay健康及无凭据业务401通过。ARM本次只复核匿名索引，其运行证据来自CI模拟，不是ARM真机。
+- 镜像分发复核曾遇到短时连接中断，经有限重试通过；未降低摘要、鉴权或签名检查。隔离容器清理后原容器清单不变，不升级正式服务、不修改正式手机模板或批量重发任务。
+- Release正文明确完整Hub已签名发布与现有实机限制；附件内的构建清单、指南及未签名仓库保留CI构建快照，不据其signed_repository=false误判成品镜像未签名。草稿附件不能匿名下载，默认安装仍指向公开RC2。
+
+Antigravity最终0.3.2包的WSL App原生多选与授权闭环已有前述证据；其他Agent全部事件、主子/记忆过滤、真实computer use/RDP输入、问题主机RDP/多屏及目标手机新格式实收仍需后续专项验收，不因候选成功而改写为已完成。RC2公开发布、标签与10个附件保持不变，稳定latest未推广。原始材料留项目忽略目录，不包含于发布文档或附件。
