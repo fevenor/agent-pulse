@@ -173,3 +173,14 @@ Antigravity最终0.3.2包的WSL App原生多选与授权闭环已有前述证据
 RC4 构建流水线的 Linux 和 Windows 构建、完整回归、版本与 Windows 内置 Bridge 摘要核验均成功；初次发布步骤错误地要求 trimpath 构建信息保留 ldflags，造成维护脚本误判。实际 amd64 候选的 version --json 返回正确 RC4、构建提交与 Go 1.27.4；arm64 保留候选标签与提交字符串，格式/摘要/编译器按交叉构建核验，不冒充真机运行。
 
 维护脚本改为实际运行 amd64 版本查询并核验自摘要，arm64 采用已核验源码构建、格式/摘要与注入字符串证据；增加同提交且 Linux/Windows 成功的构建来源核对。新增不重建的客户端草稿发布维护工作流，复用既有已通过产物；不移动 RC4 标签，不将发布维护脚本修正当成产品二进制变化。维护回归七项通过，最终发布结果仍待维护工作流完成后记录。
+## 2026-11-16 RC4 客户端草稿交付验收
+
+RC4候选固定于构建提交 `a7fc8f75c48c19d8042d386fa34ee6c3ad036240`。只交付Linux Bridge与Windows Tray（内置Bridge），Hub/Relay与七个适配包复用RC3；[候选构建与测试](https://github.com/fevenor/agent-pulse/actions/runs/43895669473)的Linux和Windows作业均成功，首轮仅发布校验步骤失败；[独立发布维护](https://github.com/fevenor/agent-pulse/actions/runs/43899071575)修复校验后复用原产物成功，标签和二进制未移动或重建。
+
+- 草稿保持draft=true、prerelease=true，七个附件为两架构Bridge、WindowsZIP、安装脚本、构建清单、中文指南和SHA256SUMS；不含Hub/Relay、发布工具或未签名适配仓库。回下载核对GitHub名称、大小、摘要和SHA256SUMS通过。
+- Linux amd64运行版本查询返回RC4、候选提交与Go1.27.4，自摘要匹配；arm64格式、摘要、编译器和注入标签/提交字符串通过，不声明真机运行。Windows构建内置Bridge版本查询通过，从Tray EXE的实际PE字节中提取到的Bridge摘要与清单一致。
+- 客户端草稿及维护回归最终八项通过；完整向导JSONC缓存恢复、同索引修正重试、坏包隔离及Windows路径别名去重在前述Go全量/竞态及原生回归中通过。
+- Hub/Relay RC3多架构索引仍在，Hub摘要保持 `sha256:c586ed8860eefd9cb865c3d32c5f5aeef2da5f5f2b821bb9647a400685e565f0`；没有创建RC4服务器镜像。RC2/RC3发布状态、说明、构建目标和全部附件保持不变，原公钥/仓库不重签，稳定latest不推广。
+- 发布维护脚本的后续提交仅修正trimpath元数据读取及Actions下载后执行位恢复，不是候选程序的新提交。原始诊断、下载和私有记录只在忽略的tmp中；没有修改使用者私人配置或自动部署服务。
+
+另一台WSL实例的OpenCode实际恢复、桌面配置真实去重，以及原生权限、主子/记忆、computer use/RDP等原有边界仍由后续使用验证。此处的完整向导和原生服务回归不能冒充真实Agent模型事件或手机实收；草稿公开仍须使用者明确确认。

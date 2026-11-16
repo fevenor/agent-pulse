@@ -2,7 +2,7 @@
 
 本文件维护需求、设计和工程调整历史。功能实现和验证状态见 [开发记录](docs/development-status.md)；设计调整不表示功能已经交付。
 
-## 待构建：v0.5.0-rc.4（仅 Bridge／Tray）
+## v0.5.0-rc.4（客户端修复草稿）
 
 - 增加 Bridge `version`／`--version` 和结构化 JSON 查询，发布构建注入候选标签与提交，查询当前程序摘要；未标注开发构建明确显示 dev。
 - RC4 仅发布 Linux Bridge 与 Windows Tray（内置 Bridge），Hub/Relay及七个适配包复用公开 RC3；新增独立客户端草稿流程，候选标签不再自动触发全量镜像发布。
