@@ -1,5 +1,5 @@
 {
-  "version": "0.2.9",
+  "version": "0.3.2",
   "format": 1,
   "protocol": 1,
   "platform": "linux/amd64",
@@ -9,13 +9,13 @@
   "id": "antigravity",
   "command": "agy",
   "agent_min": "1.5.2",
-  "agent_max": "1.5.3",
+  "agent_max": "2.32.1",
   "hooks": {
     "SessionStart": "",
     "PreInvocation": "",
     "Stop": "",
-    "PreToolUse": "ask_question|ask_permission",
-    "PostToolUse": "ask_question|ask_permission"
+    "PreToolUse": "ask_question|ask_permission|run_command",
+    "PostToolUse": ""
   },
   "direct_hooks": [
     "SessionStart",

@@ -290,7 +290,7 @@ impl Bridge {
             .as_u64()
             .ok_or_else(|| "本机接入健康响应缺少待发数量".into())
     }
-    pub fn run_setup(settings: &agent_pulse_tray::settings::Settings) -> Result<(), String> {
+    pub fn run_setup(settings: &agent_pulse_tray::settings::Settings) -> Result<bool, String> {
         use std::os::windows::process::CommandExt;
         let executable = std::env::current_exe().map_err(|_| "无法定位客户端程序")?;
         let status = std::process::Command::new(executable)
@@ -299,22 +299,22 @@ impl Bridge {
             .creation_flags(0x00000010) // CREATE_NEW_CONSOLE：独立窗口保留最终报告，等待用户确认。
             .status()
             .map_err(|_| "无法打开本机 Agent 配置向导")?;
-        if !status.success() {
+        if !status.success() && status.code() != Some(3) {
             return Err(format!("配置向导退出，状态码 {:?}", status.code()));
         }
         if !settings.bridge_enabled {
             agent_pulse_tray::settings::Settings::set_bridge_enabled(&settings.config_path, true)?;
         }
-        Ok(())
+        Ok(status.code() == Some(3))
     }
 
     /// 独立控制台宿主；不取得单实例锁，也不启动桌面窗口和后台接入服务。
-    pub fn setup_console(config_path: &std::path::Path) -> bool {
+    pub fn setup_console(config_path: &std::path::Path) -> i32 {
         unsafe {
             // 发布版是 GUI 子系统，需要主动创建控制台；调试版已由父进程创建。
             let _ = windows::Win32::System::Console::AllocConsole();
         }
-        let result = (|| -> Result<(), String> {
+        let result = (|| -> Result<i32, String> {
             let settings = agent_pulse_tray::settings::Settings::load(Some(config_path))?;
             let executable = extract_bridge(&settings.data_dir)?;
             let config = settings.bridge_config_path();
@@ -333,11 +333,14 @@ impl Bridge {
                 .arg(config)
                 .status()
                 .map_err(|_| "无法运行本机 Agent 配置向导")?;
-            if !status.success() {
+            if !status.success() && status.code() != Some(3) {
                 return Err(format!("配置向导退出，状态码 {:?}", status.code()));
             }
             println!("\n配置已保存，关闭此向导后 Tray 会自动应用本机接入配置。");
-            Ok(())
+            if status.code() == Some(3) {
+                println!("部分Agent接入未完成；Bridge仍将应用有效配置，请按上方报告排查。");
+            }
+            Ok(status.code().unwrap_or(1))
         })();
         if let Err(error) = &result {
             eprintln!("\n本机 Agent 配置未完成：{error}");
@@ -345,7 +348,7 @@ impl Bridge {
         println!("\n请查看上方配置报告，按 Enter 关闭此窗口并返回 Tray。");
         let mut confirmation = String::new();
         let _ = std::io::stdin().read_line(&mut confirmation);
-        result.is_ok()
+        result.unwrap_or(1)
     }
 
     pub fn stop(&mut self) {
@@ -613,6 +616,45 @@ pub fn place_detail(w: &Window) {
         );
     }
 }
+// GPUI在显示器断开时会自动显示/还原窗口；DPI、移动和尺寸消息已完成布局更新。
+// 阻止这一自动还原入口，保留用户原有隐藏/最小化状态，不改变其他窗口消息。
+pub fn preserve_display_visibility(window: &Window) {
+    unsafe {
+        let _ = windows::Win32::UI::Shell::SetWindowSubclass(
+            handle(window),
+            Some(display_visibility_proc),
+            0x415050,
+            0,
+        );
+    }
+}
+unsafe extern "system" fn display_visibility_proc(
+    hwnd: HWND,
+    msg: u32,
+    w: windows::Win32::Foundation::WPARAM,
+    l: windows::Win32::Foundation::LPARAM,
+    _id: usize,
+    _data: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    if msg == WM_DISPLAYCHANGE {
+        return windows::Win32::Foundation::LRESULT(0);
+    }
+    if msg == WM_NCDESTROY {
+        unsafe {
+            let _ = windows::Win32::UI::Shell::RemoveWindowSubclass(
+                hwnd,
+                Some(display_visibility_proc),
+                0x415050,
+            );
+        }
+    }
+    unsafe { windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, w, l) }
+}
+
+#[cfg(test)]
+#[path = "display_guard_tests.rs"]
+mod display_guard_tests;
+
 #[cfg(test)]
 mod bridge_tests {
     use super::{Bridge, bridge_health_url};

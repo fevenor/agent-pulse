@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,10 @@ import (
 func main() {
 	if err := run(); err != nil {
 		slog.Error("Bridge 操作失败", "原因", err)
+		var partial *adapters.SetupIncompleteError
+		if errors.As(err, &partial) {
+			os.Exit(3)
+		}
 		os.Exit(1)
 	}
 }
@@ -40,6 +45,17 @@ func run() error {
 			return err
 		}
 		return adapters.SetupInteractive(context.Background(), *path, os.Stdin, os.Stdout)
+	case "check-config":
+		path := fs.String("config", defaultConfigPath(), "Bridge YAML 配置路径")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		c, err := config.LoadBridge(*path)
+		if err != nil {
+			return err
+		}
+		fmt.Println("http://" + c.Listen + "/healthz")
+		return nil
 	case "dispatch":
 		reply := map[string]any{}
 		defer func() { _ = json.NewEncoder(os.Stdout).Encode(reply) }()
@@ -157,6 +173,7 @@ func printHelp(w io.Writer) {
 
 用法：
   agent-pulse-bridge setup [--config 路径]       扫描已安装 Agent 并交互配置钩子
+  agent-pulse-bridge check-config [--config 路径] 验证配置并输出本机健康地址
   agent-pulse-bridge serve [--config 路径]       启动 Bridge 服务
   agent-pulse-bridge sync-adapters [--config 路径] 手动检查并更新适配包
   agent-pulse-bridge emit [--address host:port]   从标准输入发送事件 JSON

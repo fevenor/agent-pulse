@@ -96,5 +96,11 @@ func (h *Hub) claimPush(ctx context.Context) (protocol.Event, config.Channel, bo
 		status = "skipped"
 	}
 	_, err = h.db.ExecContext(ctx, `UPDATE push_jobs SET status=?,attempts=attempts+1 WHERE event_id=? AND channel=?`, status, e.EventID, channel)
+	if err == nil && !skipped {
+		var name, host, environment string
+		_ = h.db.QueryRowContext(ctx, `SELECT title FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&name)
+		_ = h.db.QueryRowContext(ctx, `SELECT CASE WHEN display_name<>'' THEN display_name ELSE default_name END,environment FROM hosts WHERE source_id=?`, e.SourceID).Scan(&host, &environment)
+		e = notify.PhoneEvent(e, name, host, environment)
+	}
 	return e, ch, err == nil && !skipped
 }

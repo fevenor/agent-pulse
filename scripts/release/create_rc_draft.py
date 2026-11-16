@@ -14,7 +14,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SCOPE = {("codex", "linux/amd64"), ("antigravity", "linux/amd64"),
-                  ("qoderclicn", "linux/amd64"), ("opencode", "any"), ("zcode", "windows/amd64")}
+                  ("qoderclicn", "linux/amd64"), ("opencode", "any"), ("zcode", "windows/amd64"),
+                  ("codex", "windows/amd64"), ("antigravity", "windows/amd64")}
 
 
 def command(*args, allow_failure=False):
@@ -32,7 +33,7 @@ def validate_tag(tag, version):
 def validate_scope(packages):
     actual = {(p["id"], p["platform"]) for p in packages}
     if actual != EXPECTED_SCOPE or len(packages) != len(EXPECTED_SCOPE):
-        raise ValueError("候选适配包范围不符：Windows 仅 ZCode，Linux 保留四类来源")
+        raise ValueError("候选适配包范围不符：Windows 为 ZCode、Codex/ChatGPT和Antigravity，Linux 保留四类来源")
 
 
 def require_draft(release, tag, commit):
@@ -156,32 +157,32 @@ def main():
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notes = f"""# AgentPulse {args.tag} 试运行草稿
 
-本草稿由同一提交的 Linux 与 Windows 工作流成功后生成，等待发布者人工运行数日后再决定发布；不会自动转正，也不更新稳定 latest 镜像别名。
+本草稿绑定同一提交的Linux与Windows流水线产物，不自动公开，不修改RC2，也不更新稳定latest。
 
-## 本轮范围
+## 候选范围
 
-- Windows 本机接入只支持 ZCode 图形界面；Windows Codex CLI 和 ChatGPT Windows 桌面端仅规划。
-- Linux 保留 Codex、Qoder、Antigravity CLI 与 OpenCode。
-- 本候选修复时间线折叠/空白、同版本缺失钩子、同文件双登记与配置向导假成功；配置完成即时重载本机接入，托盘使用固定图标身份，补齐 Qoder 列表展示名称。正常 Agent 直接启动不要求包装器。
-- Windows 本地已验证 ZCode 3.18.2 的两轮短对话和改名后下一次真实事件同步；ACP 完整宿主任务、真实子代理及长期桌面场景仍按开发记录保留边界。
-- 事件时间线自动增量延展：顶部跟随最新，历史与长正文阅读保持位置，底部提供回到最新。ZCode/Qoder/Antigravity及OpenCode的原生内容按当前事件覆盖表采集；Codex未提供内容的hook明确受限。
-- 主机快捷偏好、唤醒退出、通知分流及悬浮入口的剩余检查留到试运行中观察。
-- 编译器 Go 1.27.4、x/sys 0.44.0；ARM 镜像运行为模拟验证，不代表真机。
+- Linux：Codex、Qoder中国CLI、Antigravity CLI/WSL桌面执行器、OpenCode；Windows：ZCode、Codex/ChatGPT本地任务、Antigravity App。共七类来源/平台包，平台与版本以candidate-manifest.json为准。
+- 补齐原生完成正文、授权动作/目标/原因、提问及处理结果、可见失败摘要；局部工具错误不伪装成主任务最终失败。内部/子代理按明确身份过滤，不读取历史正文补内容。
+- 手机标题使用原生会话名，正文包含友好主机/环境、中文事件类型和本事件内容；最终模板文本按渠道实测上限截短，避免重复状态标题。私人渠道模板变更和实收验收另按部署授权执行。
+- OpenCode合法JSONC保留注释、尾逗号和原始数值，拒绝重复键；有效Bridge配置的部分接入失败不阻断其他接入及服务启动。
+- Windows新增来源可单独Go构建，不要求Rust/MSVC；Tray与完整便携包仍使用原有工具链。Windows和WSL各自运行Bridge，不由Tray代管WSL服务，不重复安装同家族App/CLI hook。
+- Tray默认10分钟无可信真人输入视为离开，可调或关闭；可识别的软件注入不保持在场，未知/离开不累计自动已读。显示变化保留隐藏窗口状态，不自动显示或还原。
 
-## 试运行文件与镜像
+## 产物及签名
 
-- windows-amd64.zip：单入口便携包，私人 tray.yaml 与 data/ 不包含在附件中；升级前自行备份并保留现有配置。
-- adapters-unsigned.tar.gz：五包未签名仓库。序号 1 是占位值；在更新现有设备之前，发布者须使用既有长期私钥、递增正式索引序号签名，不能生成替代公钥。
-- agent-pulse-adapters-linux-amd64：Linux 发布工具，下载后赋予可执行权限；私钥保持在发布者机器，不进入 CI 或附件。
-- agent-pulse-bridge-linux-amd64 / agent-pulse-bridge-linux-arm64：已完成构建的 Bridge；用户无需安装编译器。Bridge arm64 不代表当前命令适配包已支持 arm64。
-- install-bridge.sh：自动识别 Linux 架构、下载并校验 Bridge 的用户安装入口；Release 草稿不能匿名下载，公开后才可使用 --version 指向本候选版本。
-- hub-build.tar：发布者专用的同提交双架构 OCI 构建，不含签名仓库、不单独发布到镜像仓库，普通用户无需安装。
-- Hub 成品目标：{manifest['hub']}。发布者完成签名组装后才可部署；草稿生成不表示它已发布。
-- Relay 成品目标：{manifest['relay']}。须另外核对实际镜像发布记录；本草稿生成不表示该标签已发布。
+- windows-amd64.zip：单入口便携包，不含私人tray.yaml与data/；升级保留原配置和数据。
+- adapters-unsigned.tar.gz：七包未签名仓库，序号1仅为占位；发布者必须沿用原长期私钥及公钥，以递增正式索引序号签名，不生成替代生产公钥。
+- agent-pulse-adapters-linux-amd64：发布维护工具，私钥不进入CI或附件。
+- 两架构Linux Bridge与install-bridge.sh：安装只使用预构建；草稿不能匿名下载，无参数默认仍指向脚本标注的公开版本，不冒充已安装RC3。
+- hub-build.tar：发布者专用的同提交双架构OCI基准构建，未附加正式签名仓库，不发布第三个公开镜像。
+- Hub成品目标：{manifest['hub']}。需要发布者核验同提交构建并附加正式签名仓库后发布；草稿生成不代表该镜像已经存在。
+- Relay目标：{manifest['relay']}。实际发布状态须单独核对，不以草稿清单代替。
 
-本候选不承诺旧候选通讯/存储兼容，试运行应使用同一现行构建与隔离数据目录，保留已有数据备份，不清空日常数据。测试新适配包时，在 Linux 发布机按 docs/images.md 使用既有长期密钥签名，再用 scripts/release/prepare-hub-release.py 将签名仓库附加到同提交的 hub-build.tar，并仅发布 Hub 成品镜像；无需将私钥上传 GitHub。升级服务前备份数据库，先 Hub/Relay、后 Bridge/Tray，再下发包索引。
+## 验证边界
 
-Windows 完整仓库准备目录仍有拒绝访问的验证边界，签名与完整镜像准备沿用 Linux 流程。草稿不是新的真实宿主或手机实收证明；运行期间保留实际事件、提醒和异常证据，公开反馈不包含私人配置、令牌或会话正文。
+Go1.27.4、Rust1.99.1、Node24.14.1/pnpm10.33.2按锁定依赖构建。ARM运行采用模拟，不代表ARM真机。自动回归、版本探测、消息探针与真实宿主任务、权限恢复、记忆/子代理过滤、RDP/多屏和手机实收分别记录；最新可复现证据见docs/development-status.md，未验事项不得写成通过。草稿不是实际手机送达证明。
+
+试运行使用匹配的现行组件，保留配置和数据库备份，不自动迁移或清空正式数据，不批量重发历史失败消息。完整Hub组装见docs/images.md；发布者只在本机保管签名私钥。
 
 来源提交：{args.commit}
 工作流：https://github.com/{args.repository}/actions/runs/{args.run_id}

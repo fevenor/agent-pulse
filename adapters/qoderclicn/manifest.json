@@ -1,5 +1,5 @@
 {
-  "version": "0.2.7",
+  "version": "0.2.8",
   "format": 1,
   "protocol": 1,
   "platform": "linux/amd64",
@@ -19,6 +19,9 @@
     "PermissionRequest": "",
     "PreToolUse": "AskUserQuestion|ask_user_question",
     "PostToolUse": "",
-    "Notification": "elicitation_dialog"
+    "PermissionDenied": "",
+    "PostToolUseFailure": "",
+    "Elicitation": "",
+    "ElicitationResult": ""
   }
 }

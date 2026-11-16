@@ -48,11 +48,11 @@ class DraftTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.require_draft(release, "v0.5.0-rc.1", "b" * 40)
 
-    def test_windows_only_zcode(self):
+    def test_windows_scope_has_three_native_sources(self):
         packages = [{"id": i, "platform": p} for i, p in module.EXPECTED_SCOPE]
         module.validate_scope(packages)
         with self.assertRaises(ValueError):
-            module.validate_scope(packages + [{"id": "codex", "platform": "windows/amd64"}])
+            module.validate_scope(packages + [{"id": "qoderclicn", "platform": "windows/amd64"}])
 
     def test_bridge_assets_are_complete_and_bound_to_hash_and_architecture(self):
         with tempfile.TemporaryDirectory() as value:

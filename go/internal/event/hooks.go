@@ -37,6 +37,14 @@ type Hook struct {
 	LastAssistant    json.RawMessage `json:"last_assistant_message"`
 	ToolInput        json.RawMessage `json:"tool_input"`
 	Message          json.RawMessage `json:"message"`
+	Reason           string          `json:"reason"`
+	Action           string          `json:"action"`
+	RequestID        string          `json:"requestId"`
+	ElicitationID    string          `json:"elicitation_id"`
+	RequestedSchema  json.RawMessage `json:"requested_schema"`
+	TranscriptCamel  string          `json:"transcriptPath"`
+	ThreadSource     string          `json:"thread_source"`
+	IsInterrupt      bool            `json:"is_interrupt"`
 	ToolCall         struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"args"`
@@ -52,12 +60,11 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 	if h.Event != "" && h.Event != hook {
 		return nil, errors.New("hook 事件名不匹配")
 	}
-	if h.AgentID != "" || h.AgentType != "" || strings.HasPrefix(hook, "Subagent") {
+	if h.AgentID != "" || h.AgentType != "" || h.ParentSession != "" || h.ParentID != "" || h.ThreadSource == "memory_consolidation" || h.ThreadSource == "subagent" || strings.HasPrefix(hook, "Subagent") {
 		return nil, nil
 	}
-	// ZCode 3.17.2 默认主会话不带 agentName；子代理显式带 zcode-* 名称。
-	// 只接入已核验归属字段的生命周期及提问工具；明确子代理仍被过滤。
-	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "" || (hook != "SessionStart" && hook != "UserPromptSubmit" && hook != "Stop" && hook != "PreToolUse" && hook != "PostToolUse")) {
+	// ZCode主会话不带agentName；权限和工具错误仍结合本地父会话元数据过滤。
+	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "") {
 		return nil, nil
 	}
 	kind := ""
@@ -87,16 +94,32 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 				kind = "run.failed"
 			}
 		case "PermissionRequest":
-			// Codex 工具 hook 可能沿用父会话 ID，公开契约没有稳定的主线程归属字段。
-			if agent == "qoderclicn" && !isQuestionTool(h.Tool) {
+			// 真实请求才记等待批准，提问工具不重复报批准。
+			if !isQuestionTool(h.Tool) {
 				kind = "approval.required"
 			}
 		case "PreToolUse":
-			if (agent == "qoderclicn" || agent == "zcode") && isQuestionTool(h.Tool) {
+			if isQuestionTool(h.Tool) {
 				kind = "input.required"
 			}
 		case "PostToolUse":
-			if agent == "qoderclicn" || (agent == "zcode" && isQuestionTool(h.Tool)) {
+			if h.Tool != "" {
+				kind = "activity.observed"
+			}
+		case "PostToolUseFailure":
+			if agent != "codex" {
+				kind = "tool.failed"
+			}
+		case "PermissionDenied":
+			if agent == "qoderclicn" {
+				kind = "activity.observed"
+			}
+		case "Elicitation":
+			if agent == "qoderclicn" {
+				kind = "input.required"
+			}
+		case "ElicitationResult":
+			if agent == "qoderclicn" {
 				kind = "activity.observed"
 			}
 		case "Notification":
@@ -126,6 +149,12 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 				kind = "input.required"
 			case "ask_permission":
 				kind = "approval.required"
+			case "run_command":
+				// App在执行前hook明确发送脱离沙箱请求；不是所有命令都需要批准。
+				var request struct{ BypassSandbox bool }
+				if json.Unmarshal(h.ToolCall.Arguments, &request) == nil && request.BypassSandbox {
+					kind = "approval.required"
+				}
 			}
 		case "PostToolUse":
 			kind = "activity.observed"
@@ -170,18 +199,21 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 		}
 		e.SessionTitle = name
 	case "codex":
+		if codexInternalSession(h.SessionID, h.Transcript) {
+			return nil, nil
+		}
 		e.SessionTitle = codexSessionTitle(h.SessionID)
 	case "qoderclicn":
 		e.SessionTitle = qoderSessionTitle(h.SessionID, h.CWD, h.Transcript)
 	case "antigravity":
-		name, internal := antigravitySessionMetadata(h.SessionID)
+		name, internal := antigravityMetadataAt(h.SessionID, h.TranscriptCamel)
 		if internal {
 			return nil, nil
 		}
 		e.SessionTitle = name
 	}
 	// 仅采集本事件的最终回答或提问字段，不读思考、用户提示词、历史正文或任意工具参数。
-	if agent == "zcode" || agent == "qoderclicn" || agent == "antigravity" {
+	{
 		switch kind {
 		case "turn.completed":
 			var reply string
@@ -192,14 +224,8 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 			if json.Unmarshal(rawReply, &reply) == nil {
 				e.Body = visibleBody(reply)
 			}
-		case "run.failed":
-			var failure string
-			if json.Unmarshal(h.ErrorContent, &failure) == nil {
-				e.Body = visibleBody(failure)
-			}
-			if e.Body == "" && h.ErrorType != "" {
-				e.Body = visibleBody(h.ErrorType)
-			}
+		case "run.failed", "tool.failed":
+			e.Body = nativeFailureBody(h.ErrorContent, h.ErrorType)
 		case "approval.required":
 			input := h.ToolInput
 			name := h.Tool
@@ -208,6 +234,9 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 				name = h.ToolCall.Name
 			}
 			e.Body = approvalBody(name, input)
+			if h.Reason != "" {
+				e.Body = visibleBody(e.Body + "\n原因：" + h.Reason)
+			}
 		case "input.required":
 			if hook == "PreToolUse" {
 				input := h.ToolInput
@@ -215,12 +244,48 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 					input = h.ToolCall.Arguments
 				}
 				e.Body = questionBody(input)
+			} else if hook == "Elicitation" {
+				e.Body = elicitationBody(h.Message, h.RequestedSchema)
 			} else {
 				var message string
 				if json.Unmarshal(h.Message, &message) == nil {
 					e.Body = visibleBody(message)
 				}
 			}
+		}
+	}
+	if hook == "SessionEnd" && h.Reason != "" {
+		e.Body = visibleBody("结束原因：" + h.Reason)
+	}
+	if hook == "PermissionDenied" {
+		e.Title = agent + " · 授权已拒绝"
+		e.Body = visibleBody("授权已拒绝：" + h.Tool + "\n" + h.Reason)
+	}
+	if hook == "ElicitationResult" {
+		e.Title = agent + " · 输入请求已处理"
+		e.Body = elicitationResultBody(h.Action)
+	}
+	if hook == "PostToolUseFailure" {
+		// 工具返回会结束其等待；不把局部错误当作主任务最终失败。
+		e.Kind = "activity.observed"
+		e.Title = agent + " · 工具执行失败"
+		if h.IsInterrupt {
+			e.Kind = "observation.lost"
+			e.Title = agent + " · 工具中断，主任务状态待确认"
+		}
+	}
+	if hook == "PostToolUse" && agent == "antigravity" {
+		var failure string
+		if json.Unmarshal(h.ErrorContent, &failure) == nil && failure != "" {
+			e.Kind = "activity.observed"
+			e.Title = agent + " · 工具执行失败"
+			e.Body = visibleBody(failure)
+		}
+	}
+	if hook == "StopFailure" && len(h.LastAssistant) > 0 {
+		var reply string
+		if json.Unmarshal(h.LastAssistant, &reply) == nil && reply != "" {
+			e.Body = visibleBody(e.Body + "\n\n失败前的可见输出：\n" + reply)
 		}
 	}
 	if err := e.Validate(); err != nil {

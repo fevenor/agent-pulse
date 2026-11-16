@@ -34,7 +34,7 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 
 推送 `v<工程版本>-rc.<序号>` 标签触发 `release-draft.yml`。同一提交的 Linux 与 Windows 检查成功后创建 Release 草稿，保持预发布与未转正状态。已有正式发布不由重跑覆盖，旧草稿不会自动更新。
 
-草稿附 Windows 单入口便携包、五包未签名仓库、两架构 Linux Bridge、安装脚本、发布工具、`candidate-manifest.json` 构建清单、`trial-guide.md` 中文说明、校验清单及发布者专用 `hub-build.tar`。上传后检查实际附件名称和大小；所有文件均使用稳定 ASCII 名称，内容和标签说明保持中文。
+草稿附 Windows 单入口便携包、按当前清单的未签名仓库（RC3为七包）、两架构 Linux Bridge、安装脚本、发布工具、`candidate-manifest.json` 构建清单、`trial-guide.md` 中文说明、校验清单及发布者专用 `hub-build.tar`。上传后检查实际附件名称和大小；所有文件均使用稳定 ASCII 名称，内容和标签说明保持中文。
 
 草稿中的构建归档与未签名包仅供发布者准备完整成品，不能让安装用户自行签名。新的适配包试运行需与同一现行 Hub/Relay/Bridge 构建配套，使用隔离数据并保留旧数据备份；不承诺旧候选通讯/存储兼容，不自动清空日常数据。正式公开和稳定版本推广仍由发布者明确决定。
 
@@ -43,7 +43,7 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 以下操作只面向官方发布维护者。先下载同一候选的构建归档和两平台适配包，按校验清单验证摘要。未签名仓库可来自 RC 附件或现有合并工具，不能混用不同候选的程序与包。首次正式发布才生成一套长期密钥，后续沿用已有密钥，不创建替代公钥。
 
 ```sh
-# 使用已有长期密钥及新的正式索引序号签署本次五包仓库。
+# 使用已有长期密钥及新的正式索引序号签署本次完整平台包仓库。
 # index-input.json 中的序号必须高于现有正式索引，草稿序号1只是占位值。
 ./bin/agent-pulse-adapters publish --repository ./dist/repository-combined \
   --private /安全目录/publisher.key --index ./dist/repository-combined/index-input.json
@@ -65,7 +65,7 @@ uv run --offline --no-project python scripts/release/publish-hub-release.py \
 
 发布采用 Linux 原生环境；Windows 可以进行脚本与目录准备回归，但不能替代 Linux 容器验收。已经由发布者验证的本地基准镜像仍可显式使用 `--base-image <镜像或digest>`，仅是维护入口，不作为第三种用户交付物。
 
-完整 Hub 的发布步骤会核对候选提交与五包签名仓库、推送横杠成品的 RC 标签和不可变提交标签，并回读远端摘要及 amd64/arm64 平台索引。只在本地构建或装载不代表 GHCR Packages 已创建；须保留 publish-result.json 与远端验证结果。旧的 agent-pulse/hub、hub-base、relay 包不会因更改工作流自动删除，删除须使用者另行确认，不能把旧包误写成当前发布目标。
+完整 Hub 的发布步骤会核对候选提交与完整平台签名仓库、推送横杠成品的 RC 标签和不可变提交标签，并回读远端摘要及 amd64/arm64 平台索引。只在本地构建或装载不代表 GHCR Packages 已创建；须保留 publish-result.json 与远端验证结果。旧的 agent-pulse/hub、hub-base、relay 包不会因更改工作流自动删除，删除须使用者另行确认，不能把旧包误写成当前发布目标。
 
 镜像仓库授权沿用现有 GitHub/容器工具登录，不另建账号服务。CI 的 Relay 推送使用仓库 `GITHUB_TOKEN` 的 packages 写权限；完整 Hub 推送使用发布者已有授权，私钥无需上传 GitHub。公开镜像可匿名拉取；尚未公开的草稿/镜像须已有读取权限。本地构建通过不表示远端工作流或公开发布已完成。
 

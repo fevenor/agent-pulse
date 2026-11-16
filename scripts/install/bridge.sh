@@ -4,14 +4,15 @@ set -euo pipefail
 umask 077
 usage() {
   printf '%s\n' \
-    '用法：bash bridge.sh [--version v版本] [--setup] [--dry-run]' \
-    '默认安装 GitHub 最新稳定发布，自动选择 Linux amd64/arm64 并校验 SHA-256。' \
+    '用法：bash bridge.sh [--version v版本] [--setup|--install-only] [--dry-run]' \
+    '默认安装脚本标注的已公开推荐版本，并交互配置、启动用户服务；自动校验架构及SHA-256。' \
     '--version 指定已发布版本，包括已公开的预发布候选版本；草稿不能匿名下载。' \
-    '--setup 安装后交互选择 Agent 并启用当前用户的 systemd 服务。' \
+    '--setup 显式选择交互部署（默认）；--install-only 只安装、不配置或启动服务。' \
     '测试/离线：--version v版本 --file 预构建二进制 --sha256 已核验摘要。' \
     '缺少发布物时明确失败，不回退到用户本机编译；不覆盖已有 Bridge 配置。'
 }
-version=latest local_file='' checksum='' setup=0 dry_run=0
+# 草稿不能匿名安装；RC3公开后才调整这个公开推荐值。
+version=v0.5.0-rc.2 local_file='' checksum='' setup=1 dry_run=0
 while (($#)); do
   case "$1" in
     --version|--file|--sha256)
@@ -19,6 +20,7 @@ while (($#)); do
       case "$1" in --version) version="$2" ;; --file) local_file="$2" ;; --sha256) checksum="$2" ;; esac
       shift 2 ;;
     --setup) setup=1; shift ;;
+    --install-only) setup=0; shift ;;
     --dry-run) dry_run=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -132,11 +134,24 @@ if ((setup)); then
     service_path="${service_path//\"/\\\"}"
     printf 'PATH="%s"\n' "$service_path" > "$config_dir/environment"
   fi
-  "$destination" setup --config "$config_dir/bridge.yaml" </dev/tty
+  setup_status=0
+  "$destination" setup --config "$config_dir/bridge.yaml" </dev/tty || setup_status=$?
+  if ((setup_status != 0 && setup_status != 3)); then
+    fail "接入配置未能完成（退出码 $setup_status），未启动服务；请按配置报告排查。"
+  fi
+  health_url="http://127.0.0.1:18702/healthz"
+  # raw入口仍需安装当前公开RC2；只有提供配置检查命令的产物才使用它。
+  if "$destination" help | grep -q 'check-config'; then
+    health_url="$("$destination" check-config --config "$config_dir/bridge.yaml")" || fail 'Bridge配置无效，未启动服务。'
+  fi
   systemctl --user daemon-reload
   systemctl --user enable --now agent-pulse-bridge
   for attempt in {1..10}; do
-    if curl --fail --silent --show-error http://127.0.0.1:18702/healthz; then
+    if curl --fail --silent --show-error "$health_url"; then
+      if ((setup_status == 3)); then
+        printf '\n%s\n' 'Bridge服务已启动，但部分Agent接入未完成；请按上述报告排查，其他接入继续运行。' >&2
+        exit 3
+      fi
       printf '\n%s\n' '安装与配置已完成，Bridge 服务已启动，可以正常使用所选 Agent。'; exit 0
     fi
     sleep 1

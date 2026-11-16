@@ -8,7 +8,7 @@ import (
 )
 
 func isQuestionTool(name string) bool {
-	return name == "AskUserQuestion" || name == "ask_user_question"
+	return name == "AskUserQuestion" || name == "ask_user_question" || name == "request_user_input" || name == "functions.request_user_input"
 }
 
 // 保留事件的可见正文；超出既有上限时明确截断，不让长回答吞掉完成状态。
@@ -41,6 +41,8 @@ func questionBody(raw json.RawMessage) string {
 		Questions []struct {
 			Question    string            `json:"question"`
 			MultiSelect bool              `json:"multiSelect"`
+			NativeMulti bool              `json:"is_multi_select"`
+			Header      string            `json:"header"`
 			Options     []json.RawMessage `json:"options"`
 		} `json:"questions"`
 	}
@@ -57,7 +59,10 @@ func questionBody(raw json.RawMessage) string {
 		if text == "" {
 			continue
 		}
-		if q.MultiSelect {
+		if q.Header != "" {
+			text = q.Header + "\n" + text
+		}
+		if q.MultiSelect || q.NativeMulti {
 			text += "（可多选）"
 		}
 		for n, raw := range q.Options {
@@ -95,7 +100,7 @@ func approvalBody(tool string, raw json.RawMessage) string {
 	_ = json.Unmarshal(raw, &input)
 	parts := []string{"请求批准：" + tool}
 	for _, field := range []struct{ key, label string }{
-		{"description", "说明"}, {"reason", "原因"}, {"command", "命令"}, {"file_path", "文件"}, {"path", "路径"},
+		{"description", "说明"}, {"CommandLine", "命令"}, {"toolSummary", "说明"}, {"Action", "动作"}, {"Target", "目标"}, {"Reason", "原因"}, {"action", "动作"}, {"target", "目标"}, {"reason", "原因"}, {"command", "命令"}, {"file_path", "文件"}, {"path", "路径"},
 	} {
 		var value string
 		if json.Unmarshal(input[field.key], &value) == nil && strings.TrimSpace(value) != "" {
@@ -103,4 +108,19 @@ func approvalBody(tool string, raw json.RawMessage) string {
 		}
 	}
 	return visibleBody(strings.Join(parts, "\n"))
+}
+
+// 错误可能是原生字符串或结构化message，仅取可见摘要，不展开堆栈、响应或凭据。
+func nativeFailureBody(raw json.RawMessage, errorType string) string {
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		var value struct{ Message string }
+		if json.Unmarshal(raw, &value) == nil {
+			text = value.Message
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		text = errorType
+	}
+	return visibleBody(text)
 }

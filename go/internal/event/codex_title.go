@@ -1,12 +1,17 @@
 package event
 
 import (
+	"agent-pulse/internal/sqlitepath"
 	"bufio"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -67,4 +72,47 @@ func codexSessionTitle(sessionID string) string {
 		return ""
 	}
 	return name
+}
+
+// 按精确会话或宿主给出的日志路径查询身份，不打开日志正文，不按标题猜记忆任务。
+func codexInternalSession(id, transcript string) bool {
+	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if home == "" {
+		user, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		home = filepath.Join(user, ".codex")
+	}
+	file := filepath.Join(home, "state_5.sqlite")
+	if _, err := os.Stat(file); err != nil {
+		return false
+	}
+	db, err := sql.Open("sqlite", sqlitepath.URI(file)+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(30)")
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	var source string
+	if transcript != "" {
+		_ = db.QueryRowContext(ctx, "SELECT source FROM threads WHERE rollout_path=?", transcript).Scan(&source)
+	}
+	if source == "" {
+		_ = db.QueryRowContext(ctx, "SELECT source FROM threads WHERE id=?", id).Scan(&source)
+	}
+	if strings.HasPrefix(source, "internal_") || strings.HasPrefix(source, "subagent_") {
+		return true
+	}
+	var origin map[string]json.RawMessage
+	if json.Unmarshal([]byte(source), &origin) == nil {
+		if len(origin["subagent"]) > 0 || len(origin["internal"]) > 0 {
+			return true
+		}
+	}
+	var threadSource string
+	_ = db.QueryRowContext(ctx, "SELECT thread_source FROM threads WHERE id=?", id).Scan(&threadSource)
+	return threadSource == "memory_consolidation" || threadSource == "subagent" || threadSource == "guardian_review"
 }

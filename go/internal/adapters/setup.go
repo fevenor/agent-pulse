@@ -19,6 +19,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// 接入部分失败时Bridge配置已有效保存，调用方可启动服务但必须保留失败报告。
+type SetupIncompleteError struct{ Reason string }
+
+func (e *SetupIncompleteError) Error() string { return e.Reason }
+
 type setupAgent struct {
 	ID, Name, Command, ConfigPath string
 	Manifest                      Manifest
@@ -239,12 +244,12 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	printSetupSummary(out, agents, paths, results, absolute, changed["codex"] != "" && results["codex"] == "接入配置已完成")
 	for id := range changed {
 		if results[id] != "接入配置已完成" {
-			return errors.New("部分 Agent 接入配置未完成，请按上面的结果排查后重新运行 setup")
+			return &SetupIncompleteError{Reason: "部分 Agent 接入配置未完成，请按上面的结果排查后重新运行 setup"}
 		}
 	}
 	for _, result := range results {
 		if strings.HasPrefix(result, "停用失败：") {
-			return errors.New("部分 Agent 停用失败，原有设置已保留")
+			return &SetupIncompleteError{Reason: "部分 Agent 停用失败，原有设置已保留"}
 		}
 	}
 	return nil
@@ -282,7 +287,11 @@ func defaultOpenCodeConfigPath(home string) string {
 // 按当前平台的确认范围列出来源，避免 Windows 扫描无计划的终端产品。
 func setupAgentCatalog(home, platform string) []setupAgent {
 	if platform == "windows" {
-		return []setupAgent{{ID: "zcode", Name: "ZCode", Command: "ZCode.exe", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "ZCode.exe"}}}
+		return []setupAgent{
+			{ID: "zcode", Name: "ZCode", Command: "ZCode.exe", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "ZCode.exe"}},
+			{ID: "codex", Name: "Codex / ChatGPT本地任务", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
+			{ID: "antigravity", Name: "Antigravity", Command: "Antigravity.exe", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "Antigravity.exe"}},
+		}
 	}
 	return []setupAgent{
 		{ID: "codex", Name: "Codex CLI", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},

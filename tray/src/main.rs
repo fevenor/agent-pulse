@@ -40,6 +40,7 @@ enum Command {
     MenuSession(String),
     ToggleFloat,
     HostPolicy(String, bool),
+    AwayMinutes(u64),
     ToggleEvent(String),
     ReportVisible(String),
     ResetFloat,
@@ -48,7 +49,7 @@ enum Command {
     Autostart(bool),
     StartupSettings,
     BridgeSetup,
-    BridgeSetupFinished(Result<(), String>),
+    BridgeSetupFinished(Result<bool, String>),
     Read(Vec<String>),
     ReadAll(SessionKey),
     Manage(Box<Session>, &'static str, serde_json::Value),
@@ -77,9 +78,12 @@ fn main() {
         .get(1)
         .is_some_and(|arg| arg == "--bridge-setup-console")
     {
-        let success =
-            args.len() == 3 && platform::Bridge::setup_console(std::path::Path::new(&args[2]));
-        std::process::exit(if success { 0 } else { 1 });
+        let code = if args.len() == 3 {
+            platform::Bridge::setup_console(std::path::Path::new(&args[2]))
+        } else {
+            1
+        };
+        std::process::exit(code);
     }
     if let Err(e) = run() {
         eprintln!("AgentPulse：{e}");
@@ -137,6 +141,7 @@ fn window(
     cx.open_window(options, move |w, cx| {
         w.set_window_title(title);
         platform::set_window_icon(w);
+        platform::preserve_display_visibility(w);
         if popup {
             platform::borderless(w, kind == Kind::Float || kind == Kind::Card);
         } else if kind == Kind::Settings {
@@ -227,6 +232,8 @@ fn run() -> Result<(), String> {
                 StartupStatus::Off
             }
         });
+    let away_minutes = settings.away_after_minutes;
+    agent_pulse_tray::desktop::configure(if demo_mode { 0 } else { away_minutes });
     let (updates_tx, updates_rx) = async_channel::unbounded();
     let (view, input, worker) = if demo_mode {
         #[cfg(feature = "dev-demo")]
@@ -295,6 +302,7 @@ fn run() -> Result<(), String> {
         power_status: "未请求保持唤醒".into(),
         emphasis: false,
         bridge_setup_running: false,
+        away_minutes,
         #[cfg(feature = "dev-demo")]
         demo_dark: false,
     }));
@@ -356,14 +364,15 @@ fn run() -> Result<(), String> {
                     let detail_visible = detail
                         .update(cx, |_, w, _| platform::readable(platform::handle(w)))
                         .unwrap_or(false);
-                    let visible_reads = if detail_visible {
-                        shared
-                            .borrow_mut()
-                            .advance_read_visibility(Duration::from_millis(tick_ms))
-                    } else {
-                        shared.borrow_mut().visible_events.clear();
-                        Vec::new()
-                    };
+                    let visible_reads =
+                        if detail_visible && agent_pulse_tray::desktop::status().0 == Some(false) {
+                            shared
+                                .borrow_mut()
+                                .advance_read_visibility(Duration::from_millis(tick_ms))
+                        } else {
+                            shared.borrow_mut().visible_events.clear();
+                            Vec::new()
+                        };
                     if !visible_reads.is_empty() {
                         let _ = tx.try_send(Command::Read(visible_reads));
                     }
@@ -702,6 +711,24 @@ fn run() -> Result<(), String> {
                             Command::Drag(x, y) => {
                                 floating.begin_drag(windows::Win32::Foundation::POINT { x, y })
                             }
+                            Command::AwayMinutes(minutes) => {
+                                let result = Settings::set_away_minutes(
+                                    &setup_settings.config_path,
+                                    minutes,
+                                );
+                                let mut data = shared.borrow_mut();
+                                match result {
+                                    Ok(()) => {
+                                        setup_settings.away_after_minutes = minutes;
+                                        agent_pulse_tray::desktop::configure(minutes);
+                                        data.away_minutes = minutes;
+                                        data.startup_message = "离开检测设置已保存并生效。".into();
+                                    }
+                                    Err(error) => data.startup_message = error,
+                                }
+                                drop(data);
+                                notify(settings_window, cx);
+                            }
                             Command::Settings => {
                                 if let Some(registration) = &autostart {
                                     shared.borrow_mut().startup_status = registration.status();
@@ -754,7 +781,8 @@ fn run() -> Result<(), String> {
                             }
                             Command::BridgeSetupFinished(result) => {
                                 // 只刷新本机接入，不重建网络工作线程、托盘或窗口，也不清理离线已读。
-                                let result = result.and_then(|()| {
+                                let partial = matches!(result, Ok(true));
+                                let result = result.and_then(|_| {
                                     platform::Bridge::apply_config(&mut bridge, &mut setup_settings)
                                 });
                                 let mut data = shared.borrow_mut();
@@ -764,6 +792,10 @@ fn run() -> Result<(), String> {
                                     .map(|b| b.status())
                                     .unwrap_or_else(|| "本机接入未启用".into());
                                 data.startup_message = match result {
+                                    Ok(()) if partial => {
+                                        "Bridge已加载，但部分Agent接入未完成，请查看向导报告。"
+                                            .into()
+                                    }
                                     Ok(()) => {
                                         "Agent 配置已生效，本机接入已重新加载，无需重启 Tray。"
                                             .into()

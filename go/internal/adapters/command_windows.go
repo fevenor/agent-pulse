@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -11,15 +12,14 @@ import (
 	"unicode/utf16"
 )
 
-const powershellCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "
-const powershellInput = "$OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $payload = [Console]::In.ReadToEnd(); $payload | & "
-
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// 外层命令只有固定开关和 Base64，避免 cmd、PowerShell 或 Bash 再次解释路径。
-func hookCommand(prefix, event string) string {
-	return powershellCommand + encodePowerShell(powershellInput+prefix+quote(event))
+// 宿主直接调用预构建EXE，不为hook再套编码PowerShell。
+func hookCommandPrefix(exe, cfg, id string) string {
+	return quoteCMD(exe) + " dispatch --config " + quoteCMD(cfg) + " --adapter " + quoteCMD(id) + " --hook "
 }
+func quoteCMD(s string) string                { return "\"" + s + "\"" }
+func hookCommand(prefix, event string) string { return prefix + quoteCMD(event) }
 func encodePowerShell(script string) string {
 	units := utf16.Encode([]rune(script))
 	raw := make([]byte, len(units)*2)
@@ -43,17 +43,12 @@ func hostCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd
 }
-func ownsHookCommand(command, prefix string) bool {
-	if !strings.HasPrefix(command, powershellCommand) {
-		return false
+func ownsHookCommand(command, prefix string) bool { return strings.HasPrefix(command, prefix) }
+
+// 命令字符串宿主会展开百分号/延迟变量；不允许把这类路径误解释成其他程序。
+func validateHookPaths(exe, cfg string) error {
+	if strings.ContainsAny(exe+cfg, "%!\r\n\x00") {
+		return errors.New("宿主命令hook路径不能含百分号、感叹号或控制字符；请使用普通便携目录")
 	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(command, powershellCommand))
-	if err != nil || len(raw)%2 != 0 {
-		return false
-	}
-	units := make([]uint16, len(raw)/2)
-	for i := range units {
-		units[i] = binary.LittleEndian.Uint16(raw[2*i:])
-	}
-	return strings.HasPrefix(string(utf16.Decode(units)), powershellInput+prefix)
+	return nil
 }

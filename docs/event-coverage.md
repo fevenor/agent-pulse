@@ -6,11 +6,11 @@
 
 | Agent | 完成 | 等待输入 | 等待批准 | 失败、中断及结束 | 受限原因 |
 | --- | --- | --- | --- | --- | --- |
-| ZCode Windows | Stop 的 last_assistant_message | 仅 AskUserQuestion/ask_user_question 的 PreToolUse：问题、选项、说明；PostToolUse 恢复活动 | 不采集普通权限；提问不重复报批准 | 当前无稳定取消、失败或关闭 hook；不推断 | 原生 Stop 不保证强制取消/崩溃触发。普通工具主/子归属未验证，只接入提问并过滤明确父/子身份；不扩展到所有工具 |
-| Qoder 中国 CLI | Stop 的 last_assistant_message | 提问工具 questions；elicitation_dialog 的 message | PermissionRequest 的工具名、命令/路径及说明白名单；提问权限请求忽略避免重复 | StopFailure 的 error/错误类型；SessionEnd 只记结束状态 | 任意工具响应、error_details、MCP 元数据不全量序列化；缺失内容保留状态。并非所有中断都有可配置原生事件 |
-| Antigravity CLI | Stop 的 finalModelOutput | ask_question 的 toolCall.args.questions，支持原生字符串选项 | ask_permission 的 toolCall.args 可见动作白名单 | error 终止值用 error；取消/中断只采用终止值，无详细原因时只记状态；未知终止值标待确认 | 完成须符合完全空闲规则；不读取 modelThinking、lastUserInput 或 transcript。ACP与明确子代理过滤；hook 字段缺失不证明全部内部归属 |
-| OpenCode | 观察原生 session.text.ended，按助手消息和 ordinal 汇总最后一个助手消息，在 execution.succeeded 发送；不采集 reasoning/delta | form.created 的表单标题、可见字段、说明、选项；表单回复/取消后恢复活动 | permission.asked 的 action 与 message，不传权限资源/元数据 | execution.failed 的 error.message，不传原始 response.body；interrupted/deleted 只记对应状态 | 完成事件本身只有 sessionID；插件错过文本事件或启动于本轮中途时不从历史回填，明确提示未取得正文。动态条件字段缺当前答案时不猜是否可见，隐藏/条件字段不展示 |
-| Codex CLI | 当前 Stop 仅提供 session_id、turn_id，无原生最终回答字段；只记完成状态 | 当前不接工具提问 | 当前不接工具批准 | Interrupt/SessionEnd 只记状态，原生载荷无详细内容 | 已验证安装基线的 Stop 仅有身份和轮次；工具 hook 可能共享父会话ID，尚无可靠主/子归属，因此不增加通知。不给缺口编造回答，不读取完整 transcript 补内容 |
+| ZCode Windows | Stop的last_assistant_message | 提问工具的问题、选项、说明 | PermissionRequest的工具动作/目标及reason；不代替批准 | 普通工具完成/失败有记录；失败不等于主任务失败 | 强制取消、崩溃、关闭仍缺稳定主任务结束hook；原生工具归属与状态恢复必须实测 |
+| Qoder 中国 CLI | Stop回答；StopFailure可附失败前可见输出 | 原生Elicitation表单及提问工具；ElicitationResult处理结果，不传用户答案 | PermissionRequest；PermissionDenied保留原因并恢复活动 | SessionEnd保留原生原因；工具失败只作普通记录 | 不传完整工具响应、error_details或认证URL；同请求不再重复混合弹框通知 |
+| Antigravity CLI / App | CLI仅使用实际提供的finalModelOutput；App 2.32.1的WSL原生Stop未发送回答字段，不从历史补读；仍遵循完全空闲规则 | ask_question的问题、选项及is_multi_select | ask_permission的动作/目标/原因；App的run_command明确BypassSandbox请求的CommandLine/toolSummary，普通命令不报批准 | Stop错误/中断；PostToolUse的工具错误为普通记录 | App/CLI/IDE按原生路径隔离元数据，ACP及内部会话过滤；App 2.32.1的WSL实测确认多选及工具前后事件；内部描述符字段不等于用户hook载荷 |
+| OpenCode | 本轮最后助手消息的text.ended缓存；全部截断有提示 | 表单标题/字段/说明/选项；可按原生默认值确定的条件字段 | 批准摘要及明确路径目标；结果区分允许/拒绝 | 失败摘要、中断原因；工具/步骤/整理错误及重试提示为普通记录 | 不从历史补回答，不传用户答案、完整response.body或任意权限元数据；不可确定的条件字段明确受限 |
+| Codex CLI / 本地桌面 | 使用Stop原生last_assistant_message；字段缺失只记状态 | request_user_input等已支持原生提问工具 | PermissionRequest的命令/可见原因 | Interrupt与SessionEnd；工具返回恢复活动 | 精确查询本地会话来源及宿主日志路径的身份元数据，不读日志正文；子代理/记忆/后台审查过滤需实际宿主验证，旧0.167基线不冒充较新能力 |
 
 所有等待记录仍以宿主实际发生、主会话归属可用为前提；界面展示已有正文不意味着宿主的所有事件都已产生 hook。内容为空时状态仍保留，文档中的字段来源与真实验证范围分开。
 

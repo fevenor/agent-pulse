@@ -11,7 +11,7 @@ func TestNativeHookSemantics(t *testing.T) {
 	tests := []struct{ agent, hook, json, kind string }{
 		{"codex", "Stop", `{"session_id":"s","turn_id":"t","hook_event_name":"Stop"}`, "turn.completed"},
 		{"codex", "Interrupt", `{"session_id":"s"}`, "run.interrupted"},
-		{"codex", "PostToolUse", `{"session_id":"s","tool_name":"Bash","tool_response":{"exit_code":1}}`, ""},
+		{"codex", "PostToolUse", `{"session_id":"s","tool_name":"Bash","tool_response":{"exit_code":1}}`, "activity.observed"},
 		{"codex", "SubagentStop", `{"session_id":"s","agent_id":"child"}`, ""},
 		{"qoderclicn", "StopFailure", `{"session_id":"s","error_type":"rate_limit","error":"秘密"}`, "run.failed"},
 		{"qoderclicn", "PermissionRequest", `{"session_id":"s","agent_id":"child"}`, ""},
@@ -24,8 +24,8 @@ func TestNativeHookSemantics(t *testing.T) {
 		{"zcode", "Stop", `{"session_id":"child","agent_type":"zcode-explore"}`, ""},
 		{"zcode", "Stop", `{"session_id":"child","agentName":"zcode-explore"}`, ""},
 		{"zcode", "Stop", `{"session_id":"child","parentSessionId":"main"}`, ""},
-		{"zcode", "PermissionRequest", `{"session_id":"child","tool_name":"Bash"}`, ""},
-		{"zcode", "PostToolUseFailure", `{"session_id":"s","error":"工具报错"}`, ""},
+		{"zcode", "PermissionRequest", `{"session_id":"main","tool_name":"Bash"}`, "approval.required"},
+		{"zcode", "PostToolUseFailure", `{"session_id":"s","error":"工具报错"}`, "activity.observed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent+tt.hook, func(t *testing.T) {
@@ -39,7 +39,7 @@ func TestNativeHookSemantics(t *testing.T) {
 				}
 				return
 			}
-			if e == nil || e.Kind != tt.kind || (e.Body != "" && !(tt.agent == "zcode" && tt.hook == "Stop") && !(tt.agent == "qoderclicn" && (tt.hook == "StopFailure" || tt.hook == "PermissionRequest"))) || e.Scope != "main" {
+			if e == nil || e.Kind != tt.kind || strings.Contains(e.Body, "私有提示词") || e.Scope != "main" {
 				t.Fatal(e)
 			}
 		})

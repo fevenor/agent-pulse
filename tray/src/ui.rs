@@ -41,6 +41,7 @@ pub struct Shared {
     pub power_status: String,
     pub emphasis: bool,
     pub bridge_setup_running: bool,
+    pub away_minutes: u64,
     #[cfg(feature = "dev-demo")]
     pub demo_dark: bool,
 }
@@ -625,6 +626,11 @@ impl Render for Surface {
             let remove_startup = sender.clone();
             let bridge_setup = sender.clone();
             let bridge_setup_running = data.bridge_setup_running;
+            let less = sender.clone();
+            let more = sender.clone();
+            let reset_away = sender.clone();
+            let disable_away = sender.clone();
+            let minutes = data.away_minutes;
             let body = div()
                 .p_5()
                 .flex()
@@ -655,6 +661,15 @@ impl Render for Surface {
                         let _ = reset.try_send(Command::ResetFloat);
                     }),
                 )
+                .child(div().mt_3().child("离开检测"))
+                .child(if minutes==0 {"离开检测已关闭".to_string()} else {format!("无真人输入 {minutes} 分钟后视为离开")})
+                .child(div().flex().gap_2()
+                    .child(button("away-less","减少1分钟",t).on_click(move|_,_,_|{let _=less.try_send(Command::AwayMinutes(minutes.saturating_sub(1)));}))
+                    .child(button("away-more","增加1分钟",t).on_click(move|_,_,_|{let _=more.try_send(Command::AwayMinutes((minutes+1).min(1440)));}))
+                    .child(button("away-reset","恢复10分钟",t).on_click(move|_,_,_|{let _=reset_away.try_send(Command::AwayMinutes(10));}))
+                    .child(button("away-disable","关闭",t).on_click(move|_,_,_|{let _=disable_away.try_send(Command::AwayMinutes(0));})))
+                .child(div().text_color(rgb(t.muted)).child("仅按可信真人输入时间判断；可识别的软件注入不会保持在场，不记录按键或坐标。"))
+                .child(div().text_color(rgb(t.muted)).child(agent_pulse_tray::desktop::presence_label()))
                 .child(div().mt_3().child("开机自动启动"))
                 .child(div().text_color(rgb(t.muted)).child(data.startup_status.label()))
                 .when(!data.demo, |body| {

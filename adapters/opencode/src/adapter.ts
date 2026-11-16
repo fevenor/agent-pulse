@@ -23,7 +23,8 @@ export type PulseEvent = {
 export const eventTypes = [
   "session.created", "session.deleted", "session.renamed", "session.execution.started",
   "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted",
-  "session.text.ended",
+  "session.text.ended", "session.tool.failed", "session.step.failed", "session.compaction.failed",
+  "session.retry.scheduled", "session.status",
   "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
 ] satisfies NativeEvent["type"][];
 
@@ -40,6 +41,11 @@ const kinds: Record<string, [string, string]> = {
   "form.created": ["input.required", "等待输入"],
   "form.replied": ["activity.observed", "输入已提交"],
   "form.cancelled": ["activity.observed", "输入请求已取消"],
+  "session.tool.failed": ["tool.failed", "工具执行失败"],
+  "session.step.failed": ["tool.failed", "执行步骤失败"],
+  "session.compaction.failed": ["tool.failed", "上下文整理失败"],
+  "session.retry.scheduled": ["tool.failed", "模型请求重试"],
+  "session.status": ["tool.failed", "执行提示"],
 };
 
 const BODY_LIMIT = 32 << 10;
@@ -60,7 +66,7 @@ export function visibleBody(value: string, limit = BODY_LIMIT): string {
 
 // 只缓存原生 text.ended 的最后一个助手消息，不缓存 reasoning、用户输入或历史对话。
 export class FinalOutput {
-  private readonly sessions = new Map<string, { message: string; parts: Map<number, string> }>();
+  private readonly sessions = new Map<string, { message: string; parts: Map<number, string>; truncated: boolean }>();
   observe(event: NativeEvent): void {
     const id = sessionID(event);
     if (!id) return;
@@ -68,31 +74,41 @@ export class FinalOutput {
     if (event.type !== "session.text.ended") return;
     const { assistantMessageID, ordinal, text } = event.data;
     let current = this.sessions.get(id);
-    if (!current || current.message !== assistantMessageID) current = { message: assistantMessageID, parts: new Map() };
-    if (current.parts.size >= 64 && !current.parts.has(ordinal)) return;
+    if (!current || current.message !== assistantMessageID) current = { message: assistantMessageID, parts: new Map(), truncated: false };
+    if (current.parts.size >= 64 && !current.parts.has(ordinal)) { current.truncated = true; return; }
         const used = [...current.parts].filter(([key]) => key !== ordinal).reduce((sum,[,part]) => sum + Buffer.byteLength(part) + 1, 0);
-    if (BODY_LIMIT - used < 100) return;
+    if (BODY_LIMIT - used < 100) { current.truncated = true; return; }
     current.parts.set(ordinal, visibleBody(text, BODY_LIMIT - used));
     this.sessions.set(id, current);
     if (this.sessions.size > 128) this.sessions.delete(this.sessions.keys().next().value!);
   }
   take(id: string): string {
     const current = this.sessions.get(id);this.sessions.delete(id);
-    return current ? visibleBody([...current.parts].sort(([a],[b]) => a-b).map(([,text]) => text).join("\n")) : "";
+    if (!current) return "";
+    let text = [...current.parts].sort(([a],[b])=>a-b).map(([,part])=>part).join("\n");
+    if (current.truncated && !text.includes("已截断")) text += "\n\n[内容超过事件长度上限，已截断]";
+    return visibleBody(text);
   }
 }
 
 function formBody(form: Extract<NativeEvent,{type:"form.created"}>["data"]["form"]): string {
   const lines = [form.title];
+  const defaults = new Map(form.fields.filter(f => "default" in f && f.default !== undefined).map(f => [f.key, "default" in f ? f.default : undefined]));
+  let unknownCondition = false;
   for (const field of form.fields) {
     // 无当前表单答案，不能把依赖条件的隐藏/未来字段当作当前正在问的问题。
-    if (("hidden" in field && field.hidden) || ("when" in field && field.when?.length)) continue;
-    if (field.title) lines.push(field.title + (field.type === "multiselect" ? "（可多选）" : ""));
+    if ("hidden" in field && field.hidden) continue;
+    if ("when" in field && field.when?.length) {
+      if (field.when.some(c=>!defaults.has(c.key))) { unknownCondition=true; continue; }
+      if (!field.when.every(c=>c.op==="eq" ? defaults.get(c.key)===c.value : defaults.get(c.key)!==c.value)) continue;
+    }
+    lines.push((field.title || field.key) + (field.type === "multiselect" ? "（可多选）" : ""));
     if (field.description) lines.push(field.description);
     if ("options" in field && field.options) {
       for (const [index, option] of field.options.entries()) lines.push(`${index + 1}. ${option.label}${option.description ? " — " + option.description : ""}`);
     }
   }
+  if (unknownCondition) lines.push("部分条件字段需在Agent中查看。");
   return visibleBody(lines.filter(Boolean).join("\n"));
 }
 
@@ -107,11 +123,17 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
   const mapping = kinds[event.type];
   const id = sessionID(event);
   if (!mapping || !session || session.parentID || !id || session.id !== id || !("created" in event) || typeof event.created !== "number") return;
+  if (event.type === "session.status" && (!event.data.status || event.data.status.type !== "retry" || !event.data.status.action)) return;
+  if ((event.type === "session.execution.failed" || event.type === "session.tool.failed" || event.type === "session.step.failed" || event.type === "session.compaction.failed" || event.type === "session.retry.scheduled") && (!event.data.error || typeof event.data.error.message !== "string")) return;
   const nativeTitle = event.type === "session.renamed" ? event.data.title : session.title;
   let body = mapping[1];
   if (event.type === "session.execution.succeeded") body = finalOutput || "本轮完成；原生正文未取得，请在 Agent 中查看。";
-  if (event.type === "session.execution.failed") body = `失败原因：${event.data.error.message}`;
-  if (event.type === "permission.asked") body = [`需要批准：${event.data.action}`, event.data.message || ""].filter(Boolean).join("\n");
+  if (event.type === "session.execution.failed" || event.type === "session.tool.failed" || event.type === "session.step.failed" || event.type === "session.compaction.failed") body = `失败原因：${event.data.error.message || event.data.error.type}`;
+  if (event.type === "session.retry.scheduled") body = `第${event.data.attempt}次重试：${event.data.error.message || event.data.error.type}`;
+  if (event.type === "session.status" && event.data.status.type === "retry") body = [event.data.status.message,event.data.status.action?.title,event.data.status.action?.message,event.data.status.action?.label].filter(Boolean).join("\n");
+  if (event.type === "session.execution.interrupted") body = ({user:"用户中断",shutdown:"宿主关闭",superseded:"已被新的执行替代",inactivity:"闲置中断"})[event.data.reason];
+  if (event.type === "permission.replied") body = ({once:"已允许本次请求",always:"已允许后续同类请求",reject:"已拒绝请求"})[event.data.reply];
+  if (event.type === "permission.asked") body = [`需要批准：${event.data.action}`, event.data.message || "", ...event.data.resources.filter(target=> /^(?:[A-Za-z]:[\\/]|\/|\.\.?\/)/.test(target) && !/[\r\n]/.test(target)).slice(0,8).map(target=>`目标：${target}`)].filter(Boolean).join("\n");
   if (event.type === "form.created") body = formBody(event.data.form);
   // 不推送原始错误、命令、权限资源列表，避免无意携带敏感上下文。
   return {

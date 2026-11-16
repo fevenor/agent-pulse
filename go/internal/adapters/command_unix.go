@@ -15,3 +15,9 @@ func hostCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
 func quote(s string) string                       { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 func hookCommand(prefix, event string) string     { return prefix + quote(event) }
 func ownsHookCommand(command, prefix string) bool { return strings.HasPrefix(command, prefix) }
+
+func hookCommandPrefix(exe, cfg, id string) string {
+	return quote(exe) + " dispatch --config " + quote(cfg) + " --adapter " + quote(id) + " --hook "
+}
+
+func validateHookPaths(exe, cfg string) error { return nil }

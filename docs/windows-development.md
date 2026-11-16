@@ -53,7 +53,7 @@ Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 W
 
 ## Windows 钩子链路与适用范围
 
-本轮 Windows RC 只支持 ZCode 原生进程钩子：程序路径和参数数组分开传入，版本探测直接读取 EXE 资源，两者不经过 PowerShell。Windows Codex CLI 和 ChatGPT Windows 桌面端只列后续规划，不默认扫描、不构建或发布其包；旧登记保留但不重新探测或更新命令型/插件型来源。
+RC3提供ZCode原生参数数组hook，以及Codex/ChatGPT、Antigravity的直接EXE命令hook。桌面版本探测不启动界面；新增来源不要求用户额外CLI。仅Go适配器可运行 `./scripts/build/build-adapters.ps1`，不调用Rust/MSVC；修改Tray或完整便携包仍使用原有构建入口。命令字符串入口对可能被宿主展开的特殊路径明确拒绝，ZCode参数数组仍保持原有路径能力。
 
 旧命令字符串回显和批处理版本探测曾执行编码 PowerShell，现已随非本轮功能移出当前执行回归。保留的命令构造/所有权纯测试只用于旧配置识别，不启动脚本。旧超时与防护反馈不改写为已解决，也不作为 ZCode 已有正常生命周期的失败证据；后续恢复对应来源时需重新设计并验收其真实链路，不恢复隔离文件或关闭防护。
 
@@ -65,7 +65,7 @@ Windows 普通测试包含安装器回归，但没有 `go test -race`。Go 的 W
 
 ## 自动构建
 
-`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和 ZCode 一个未签名 Windows 原生适配包，保留 14 天；Linux 来源及通用 OpenCode 插件保持由 Linux Workflow 构建，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。OpenCode 通用包不代表本轮支持 Windows 宿主。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
+`.github/workflows/windows.yml` 在 Windows Server 2022 runner 使用锁定工具链执行上述检查、本地 Hub/Relay 联调、发布和演示构建，以及二进制隔离和便携 ZIP 内容检查。构建产物包含便携 ZIP 和 三类未签名Windows原生适配包，保留 14 天；Linux 来源及通用 OpenCode 插件保持由 Linux Workflow 构建，按 [适配包发布说明](adapters.md#发布者构建与签名) 合并。OpenCode 通用包不代表本轮支持 Windows 宿主。不上传原始测试日志、私钥或本机配置，不签名发布适配包，也不替代真实桌面交互验收。当前运行结果以对应提交的 Actions 为准，不能把 Workflow 文件存在视为已经通过。
 
 ## Debian 与容器
 
@@ -83,7 +83,7 @@ docker build --target relay -t agent-pulse-relay:windows-dev -f deploy/docker/Do
 uv run --no-project python tests/e2e/relay_containers.py --arch amd64 --hub-image agent-pulse-hub:windows-dev --relay-image agent-pulse-relay:windows-dev
 ```
 
-也可以将 Go 检查放入官方 Go 容器；测试副本须同时包含 `go/` 和 `protocol/`，否则契约测试找不到样例。临时 Shell 脚本必须使用 LF。Docker 上下文排除 `.cache` 和 `tray/target`，避免传输本机缓存。
+也可以将 Go 检查放入官方 Go 容器；测试副本须同时包含 `go/`、`protocol/`及`deploy/`，否则契约测试找不到样例。临时 Shell 脚本必须使用 LF。Docker 上下文排除 `.cache` 和 `tray/target`，避免传输本机缓存。
 
 跨 Windows / Debian Bridge 检查先构建 Windows 程序和上述镜像，再在 PowerShell 中准备 Linux Bridge：
 
@@ -110,7 +110,7 @@ uv run --offline --no-project python tests/e2e/windows_wsl.py
 
 继续沿用 Rust + GPUI，不因一次构建或网络故障切换框架。只有出现无法合理解决的关键桌面行为或维护障碍时，按已确认方案评估 Go + Walk。Bridge 保持 Go，不提前重写其他组件。
 
-桌面实测仍需覆盖：锁屏/解锁、睡眠唤醒、真实全屏、卡片外观、托盘点击/菜单、多显示器/DPI、远程桌面和长期运行。当前状态轮询的延迟、失联期间卡片行为需与实际使用体验一起验收。宿主方面只验证本轮 ZCode 图形界面的实际加载；Windows Codex CLI 后置；不自动改写日常配置或调用真实模型、手机渠道。
+桌面实测仍需覆盖：锁屏/解锁、睡眠唤醒、真实全屏、卡片外观、托盘点击/菜单、多显示器/DPI、远程桌面和长期运行。当前状态轮询的延迟、失联期间卡片行为需与实际使用体验一起验收。宿主方面逐项验证ZCode、Codex/ChatGPT及Antigravity的真实加载与内容；不自动改写日常配置或调用真实模型、手机渠道。
 
 详情快捷偏好、唤醒退出、通知分流及悬浮入口的剩余原生检查在 RC 发布后长期运行中补验，不作本轮发布阻断，不能因此改写已有未验收结论。
 

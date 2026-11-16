@@ -159,6 +159,18 @@ func hostCompatibility(raw string, m Manifest) (string, error) {
 }
 
 func Detect(ctx context.Context, m Manifest) (string, error) {
+	if m.ID == "antigravity" {
+		if v, err := antigravityDesktopVersion(); err == nil {
+			return v, nil
+		}
+	}
+	if m.ID == "codex" {
+		if _, pathErr := exec.LookPath(m.Command); pathErr != nil {
+			if path := codexDesktopCommand(); path != "" {
+				m.Command = path
+			}
+		}
+	}
 	if m.ID == "zcode" {
 		return zcodeDesktopVersion()
 	}
@@ -305,7 +317,7 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 	}
 	for _, p := range index.Packages {
 		// Windows RC 只安装原生进程钩子，保留旧登记但不重新探测或更新后置的命令/插件来源。
-		if runtime.GOOS == "windows" && (p.Kind != "executable" || p.ConfigStyle != "process-hooks") {
+		if runtime.GOOS == "windows" && (p.Kind != "executable" || (p.ConfigStyle != "process-hooks" && p.ID != "codex" && p.ID != "antigravity")) {
 			continue
 		}
 		if c.Adapters.Managed[p.ID] == "" {

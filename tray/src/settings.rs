@@ -18,6 +18,8 @@ pub struct Settings {
     pub relay_url: String,
     pub relay_token: String,
     pub state_file: PathBuf,
+    #[serde(default = "default_away_minutes")]
+    pub away_after_minutes: u64,
     pub bridge_enabled: bool,
     pub bridge_config: PathBuf,
     #[serde(skip)]
@@ -25,6 +27,10 @@ pub struct Settings {
     #[serde(skip)]
     pub data_dir: PathBuf,
 }
+fn default_away_minutes() -> u64 {
+    10
+}
+
 impl Settings {
     pub fn load(path: Option<&Path>) -> Result<Self, String> {
         Self::load_at(
@@ -51,6 +57,9 @@ impl Settings {
         let mut settings: Self =
             serde_yaml::from_slice(&fs::read(&config).map_err(|_| "无法读取客户端配置")?)
                 .map_err(|_| "客户端配置格式无效或包含未知配置项")?;
+        if settings.away_after_minutes > 1440 {
+            return Err("离开检测时间须为0至1440分钟；0表示关闭".into());
+        }
         settings.host_name = settings.host_name.trim().to_owned();
         if settings.host_name.is_empty() {
             settings.host_name = Self::default_host_name();
@@ -191,6 +200,30 @@ impl Settings {
 
     /// 只修改 tray.yaml 中的 bridge_enabled，保留其余设置和行尾注释。
     pub fn set_bridge_enabled(path: &Path, enabled: bool) -> Result<(), String> {
+        Self::set_scalar(
+            path,
+            "bridge_enabled",
+            if enabled { "true" } else { "false" },
+            serde_yaml::Value::Bool(enabled),
+        )
+    }
+    pub fn set_away_minutes(path: &Path, minutes: u64) -> Result<(), String> {
+        if minutes > 1440 {
+            return Err("离开检测时间须为0至1440分钟".into());
+        }
+        Self::set_scalar(
+            path,
+            "away_after_minutes",
+            &minutes.to_string(),
+            serde_yaml::Value::Number(minutes.into()),
+        )
+    }
+    fn set_scalar(
+        path: &Path,
+        key: &str,
+        value: &str,
+        scalar: serde_yaml::Value,
+    ) -> Result<(), String> {
         let raw = fs::read_to_string(path).map_err(|_| "无法读取便携配置")?;
         let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
         let mut lines: Vec<String> = raw
@@ -199,22 +232,21 @@ impl Settings {
             .collect();
         let mut found = None;
         for (index, line) in lines.iter().enumerate() {
-            if line.starts_with("bridge_enabled:") && found.replace(index).is_some() {
-                return Err("tray.yaml 中 bridge_enabled 出现重复配置".into());
+            if line.starts_with(&format!("{key}:")) && found.replace(index).is_some() {
+                return Err(format!("tray.yaml 中 {key} 出现重复配置"));
             }
         }
-        let value = if enabled { "true" } else { "false" };
         if let Some(index) = found {
             let line = &lines[index];
             let comment = line.find('#').map(|at| line[at..].trim_start());
             lines[index] = match comment {
                 Some(comment) if !comment.is_empty() => {
-                    format!("bridge_enabled: {value}  {comment}")
+                    format!("{key}: {value}  {comment}")
                 }
-                _ => format!("bridge_enabled: {value}"),
+                _ => format!("{key}: {value}"),
             };
         } else {
-            lines.push(format!("bridge_enabled: {value}"));
+            lines.push(format!("{key}: {value}"));
         }
         let mut updated = lines.join(newline);
         if raw.ends_with('\n') || !raw.is_empty() {
@@ -224,17 +256,14 @@ impl Settings {
         let mut expected: serde_yaml::Value =
             serde_yaml::from_str(&raw).map_err(|_| "便携配置格式无效，未修改")?;
         let mapping = expected.as_mapping_mut().ok_or("便携配置必须为对象")?;
-        mapping.insert(
-            serde_yaml::Value::String("bridge_enabled".into()),
-            serde_yaml::Value::Bool(enabled),
-        );
+        mapping.insert(serde_yaml::Value::String(key.into()), scalar.clone());
         if serde_yaml::from_str::<serde_yaml::Value>(&updated)
             .ok()
             .as_ref()
             != Some(&expected)
         {
             if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                json["bridge_enabled"] = serde_json::Value::Bool(enabled);
+                json[key] = serde_json::to_value(&scalar).map_err(|_| "无法编码便携配置")?;
                 updated =
                     serde_json::to_string_pretty(&json).map_err(|_| "无法生成便携配置")? + "\n";
             } else {
@@ -282,6 +311,28 @@ struct BridgeBootstrap<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn away_minutes_default_and_save_preserve_other_configuration() {
+        let defaults: super::Settings = serde_yaml::from_str("hub_url: \"\"\n").unwrap();
+        assert_eq!(defaults.away_after_minutes, 10);
+        let dir = std::env::temp_dir().join(format!("pulse-away-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("tray.yaml");
+        let original = "# 保留说明\nhub_url: \"http://127.0.0.1:1\"\ntoken: \"fixture-token\"\n";
+        std::fs::write(&path, original).unwrap();
+        super::Settings::set_away_minutes(&path, 30).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("# 保留说明") && after.contains("fixture-token"));
+        let parsed: super::Settings = serde_yaml::from_str(&after).unwrap();
+        assert_eq!(parsed.away_after_minutes, 30);
+        super::Settings::set_away_minutes(&path, 0).unwrap();
+        assert!(super::Settings::set_away_minutes(&path, 1441).is_err());
+        let parsed: super::Settings =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed.away_after_minutes, 0);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
     use super::*;
     #[test]
     fn portable_defaults_follow_executable_and_preserve_config() {

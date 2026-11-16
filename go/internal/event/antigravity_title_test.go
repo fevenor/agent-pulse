@@ -1,6 +1,7 @@
 package event
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -157,5 +158,41 @@ func TestAntigravityOnlyExplicitInternalMetadataFiltersNormalHooks(t *testing.T)
 		if err != nil || (e == nil) != tc.filtered {
 			t.Fatal("只有明确且匹配ID的内部标记才否决普通会话", e, err)
 		}
+	}
+}
+
+func TestAntigravityAppAnnotationAllowsOtherFieldsOnSameLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "annotation.pbtxt")
+	raw := "title:\"App原生会话名\" last_user_view_time:{seconds:123 nanos:0}"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := antigravityAnnotationTitle(path); got != "App原生会话名" {
+		t.Fatalf("单行注解标题未取得：%q", got)
+	}
+}
+
+func TestAntigravityAppDatabaseMetadataOnlyReadsTitleAndParent(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "conversation_summaries.db")
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec("CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,parent_conversation_id TEXT,nesting_depth INTEGER,source TEXT,preview TEXT)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO conversation_summaries VALUES(?,?,?,?,?,?),(?,?,?,?,?,?)", "main", "原生名称", "", 0, "app", "不应读取的预览", "child", "子任务", "main", 1, "app", "不应读取的预览")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, internal := antigravityDatabaseMetadata(p, "main")
+	if name != "原生名称" || internal {
+		t.Fatal(name, internal)
+	}
+	_, internal = antigravityDatabaseMetadata(p, "child")
+	if !internal {
+		t.Fatal("父会话身份未过滤")
 	}
 }

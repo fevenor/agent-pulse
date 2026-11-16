@@ -76,6 +76,8 @@ func TestSetupListsDetectedAndPreviouslyManagedAgentsOnly(t *testing.T) {
 }
 
 func TestSetupExamplePromptsHubAndPreservesEnvironmentReferences(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("ProgramFiles", t.TempDir())
@@ -157,7 +159,7 @@ func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
 		platform string
 		want     []string
 	}{
-		{"windows", []string{"zcode"}},
+		{"windows", []string{"zcode", "codex", "antigravity"}},
 		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode"}},
 	} {
 		t.Run(tc.platform, func(t *testing.T) {
@@ -284,6 +286,8 @@ func TestSetupSummaryListsNamesVersionsPathsAndOnlyRemindsEnabledCodex(t *testin
 }
 
 func TestSetupAnnouncesConfigurationBeforePromptsAndFinishesWithMaintenanceHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("ProgramFiles", t.TempDir())

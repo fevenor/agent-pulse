@@ -80,7 +80,7 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ## Windows 接入范围
 
-本轮 RC 的 Windows 本机来源只纳入 ZCode 图形界面；Windows Codex CLI 与 ChatGPT Windows 桌面端均后置。其他产品的现有 CLI/插件接入保持在 Linux/WSL，不要求它们在 Windows 原生终端运行。后续 Windows 支持优先核实图形界面产品的官方入口，不预先建设通用桌面采集平台。默认向导仅检测 ZCode，已有其他来源配置不会因范围收敛自动删除。
+RC3源码接入ZCode、Codex/ChatGPT本地任务及Antigravity App；公开RC2附件不因此改变。向导检测这些原生宿主；Windows用Tray内置Bridge，WSL执行器用发行版独立Bridge。一个家族不重复安装App/CLI两份hook，其他Windows终端产品不自动扩大范围。
 
 ## Windows 窗口手工验收要点
 
@@ -133,8 +133,14 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ## Windows 适配包
 
-`scripts/build/package-adapters.ps1` 生成 `dist/repository-windows/` 的 ZCode 一个 Windows amd64 原生包及未签名索引；OpenCode 通用包由 Linux 构建，不代表本轮支持 Windows OpenCode 宿主。发布者仍需签名后分发。当前候选的组件和适配包按同一现行结构构建，不维护旧接收器最低版本门槛。
+`scripts/build/package-adapters.ps1` 生成 `dist/repository-windows/` 的ZCode、Codex与Antigravity三类Windows amd64原生包及未签名索引；OpenCode 通用包由 Linux 构建，不代表本轮支持 Windows OpenCode 宿主。发布者仍需签名后分发。当前候选的组件和适配包按同一现行结构构建，不维护旧接收器最低版本门槛。
 
-安装器使用系统锁、临时文件同步替换与不可变包目录，保留用户其他配置，更新不覆盖正在执行的包。ZCode 3.17.2 已通过无项目任务、GLM-5.3-Flash 与内置 Bridge 的实际链路测试，接入方法及异常退出限制见 [适配器说明](adapters.md)。Windows Codex CLI 和 ChatGPT Windows 桌面端不属于本轮 RC，后续规划单独核实能力；Qoder、Antigravity、OpenCode 的 Windows 终端接入不在当前范围，通用转换测试存在不等于承诺这些宿主已经接入。
+安装器使用系统锁、临时文件同步替换与不可变包目录，保留用户其他配置，更新不覆盖正在执行的包。ZCode 3.17.2 已通过无项目任务、GLM-5.3-Flash 与内置 Bridge 的实际链路测试，接入方法及异常退出限制见 [适配器说明](adapters.md)。Codex/ChatGPT和Antigravity的RC3实现仍须原生验收；Qoder、OpenCode的Windows终端接入不在当前范围，通用转换测试存在不等于承诺这些宿主已经接入。
 
 交互规则见源码文档 `docs/windows-desktop-design.md`；自动检查、原生验收摘要及待验收项见 `docs/development-status.md`。设计预览和自动化测试不能代替真实桌面的视觉、多屏、焦点与长期使用验收。
+
+## 离开检测与显示变化
+
+设置中的离开检测默认10分钟，可逐分钟修改、恢复默认或关闭；0关闭。仅可信真人输入更新时间，可识别的软件注入不保持在场，不记录按键/坐标。未观察到真人或监测失败保持未知；未知、锁屏、离开时不累计自动已读、不投递桌面卡片，手机依Hub的全部设备判断。该功能不是实际锁屏，也不干扰Agent保持唤醒。驱动/硬件模拟与RDP输入仍需实测，不保证绝对识别人是否在场。
+
+显示变化不自动显示或还原隐藏/最小化窗口，DPI/移动/尺寸消息继续处理布局。消息探针不等于真实RDP验收。向导部分接入失败时仍应用有效Bridge配置，并保留部分失败报告，不显示全部Agent已完成。

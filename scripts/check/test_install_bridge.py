@@ -56,7 +56,7 @@ else:out.write_bytes(pathlib.Path(os.environ['FIXTURE_FILE']).read_bytes())
         path.chmod(0o755)
 
     def run_install(self, *args, success=True, env=None):
-        result = subprocess.run(["bash", str(INSTALLER), *args], env={**self.env, **(env or {})}, capture_output=True, text=True)
+        result = subprocess.run(["bash", str(INSTALLER), "--install-only", *args], env={**self.env, **(env or {})}, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
         else:
@@ -88,10 +88,11 @@ else:out.write_bytes(pathlib.Path(os.environ['FIXTURE_FILE']).read_bytes())
         self.run_install("--version", "v0.5.0", env={"FIXTURE_ARCH": "aarch64", "FIXTURE_ASSET": "agent-pulse-bridge-linux-arm64", "FIXTURE_HASH": hashlib.sha256(raw).hexdigest()})
         self.assertIn("agent-pulse-bridge-linux-arm64", (self.root / "requests").read_text())
 
-    def test_default_follows_latest_stable_release(self):
+    def test_default_selects_documented_public_recommendation(self):
         self.run_install()
-        self.assertIn("/releases/latest", (self.root / "requests").read_text())
-        self.assertIn("/releases/download/v0.5.0/", (self.root / "requests").read_text())
+        self.assertNotIn("/releases/latest", (self.root / "requests").read_text())
+        self.assertIn("/releases/download/v0.5.0-rc.2/", (self.root / "requests").read_text())
+        self.assertIn("setup=1", INSTALLER.read_text(encoding="utf-8"))
 
     def test_missing_release_never_builds_or_writes(self):
         result = self.run_install("--version", "v0.5.0-rc.1", success=False, env={"FIXTURE_MODE": "unavailable"})
@@ -159,7 +160,7 @@ else:out.write_bytes(pathlib.Path(os.environ['FIXTURE_FILE']).read_bytes())
         self.assertIn("可以正常使用所选 Agent", text)
 
     def test_latest_stable_does_not_silently_select_prerelease(self):
-        self.run_install(success=False, env={"FIXTURE_LATEST": "v0.5.0-rc.1"})
+        self.run_install("--version", "latest", success=False, env={"FIXTURE_LATEST": "v0.5.0-rc.1"})
         self.assert_untouched()
 
     def test_unsafe_version_and_local_missing_checksum_are_rejected(self):

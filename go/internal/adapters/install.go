@@ -17,6 +17,9 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 
 // 禁用与安装共用所有权匹配，只移除本 Bridge 配置所属的钩子。
 func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte, enable bool) ([]byte, error) {
+	if p.Kind == "opencode-plugin" {
+		return updateOpenCodeJSONC(c, p, raw, enable)
+	}
 	root := map[string]any{}
 	if len(raw) > 0 {
 		if json.Unmarshal(raw, &root) != nil || root == nil {
@@ -31,37 +34,16 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 	if err != nil {
 		return nil, err
 	}
-	prefix := quote(exe) + " dispatch --config " + quote(cfg) + " --adapter " + quote(p.ID) + " --hook "
+	if p.ConfigStyle != "process-hooks" {
+		if err := validateHookPaths(exe, cfg); err != nil {
+			return nil, err
+		}
+	}
+	prefix := hookCommandPrefix(exe, cfg, p.ID)
 	if p.ConfigStyle == "process-hooks" {
 		return updateProcessHookConfig(root, exe, cfg, p, enable)
 	}
-	if p.Kind == "opencode-plugin" {
-		loader := filepath.Join(c.Adapters.Directory, "loaders", p.ID)
-		entries := []any{}
-		if value, exists := root["plugins"]; exists {
-			var ok bool
-			entries, ok = value.([]any)
-			if !ok {
-				return nil, errors.New("plugins 必须为数组")
-			}
-		}
-		found := false
-		kept := []any{}
-		for _, entry := range entries {
-			if plugin, ok := entry.(map[string]any); ok && plugin["package"] == loader {
-				found = true
-				if !enable {
-					continue
-				}
-				plugin["options"] = map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}
-			}
-			kept = append(kept, entry)
-		}
-		if enable && !found {
-			kept = append(kept, map[string]any{"package": loader, "options": map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}})
-		}
-		root["plugins"] = kept
-	} else {
+	{
 		key := "hooks"
 		if p.ConfigStyle == "named-hooks" {
 			key = "agent-pulse-" + p.ID

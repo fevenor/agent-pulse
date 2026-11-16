@@ -171,11 +171,11 @@ type fixtureTransport func(*http.Request) (*http.Response, error)
 
 func (f fixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestMeowEmptyBodyUsesTitleAtSendBoundaryAndReportsBusinessFailure(t *testing.T) {
+func TestMeowEmptyBodyUsesExplicitNoticeAndReportsBusinessFailure(t *testing.T) {
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	e := protocol.Event{Title: "Codex 本轮完成", Body: ""}
-	for _, tc := range []struct{ host, expected string }{{"api.chuckfang.com", e.Title}, {"other.example.invalid", ""}} {
+	for _, tc := range []struct{ host, expected string }{{"api.chuckfang.com", "原生正文未取得，请在Agent中查看。"}, {"other.example.invalid", ""}} {
 		http.DefaultTransport = fixtureTransport(func(r *http.Request) (*http.Response, error) {
 			var fields map[string]string
 			if json.NewDecoder(r.Body).Decode(&fields) != nil || fields["msg"] != tc.expected {

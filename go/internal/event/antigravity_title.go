@@ -1,16 +1,20 @@
 package event
 
 import (
+	"agent-pulse/internal/sqlitepath"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
-// antigravitySessionTitle 随真实 hook 读取默认 CLI 明确持久化的名称，不轮询。
+// antigravitySessionTitle 随真实hook读取宿主明确持久化的名称，不轮询。
 // 用户名称优先读同 ID 的注解文件，避免依赖改名后 JSON 缓存何时刷新。
 func antigravitySessionTitle(sessionID string) string {
 	name, _ := antigravitySessionMetadata(sessionID)
@@ -19,6 +23,10 @@ func antigravitySessionTitle(sessionID string) string {
 
 // 普通运行不要求绑定文件；只用明确 is_internal=true 否决内部会话，false/缺失不作为认主证明。
 func antigravitySessionMetadata(sessionID string) (string, bool) {
+	return antigravityMetadataAt(sessionID, "")
+}
+
+func antigravityMetadataAt(sessionID, transcript string) (string, bool) {
 	if sessionID == "" || sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, "/\\\x00\r\n") {
 		return "", false
 	}
@@ -27,13 +35,28 @@ func antigravitySessionMetadata(sessionID string) (string, bool) {
 		return "", false
 	}
 	root := filepath.Join(home, ".gemini", "antigravity-cli")
+	for _, surface := range []string{"antigravity", "antigravity-cli", "antigravity-ide"} {
+		candidate := filepath.Join(home, ".gemini", surface)
+		relative, err := filepath.Rel(candidate, transcript)
+		if transcript != "" && err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			root = candidate
+			break
+		}
+	}
 	cached, internal := antigravityCachedMetadata(filepath.Join(root, "cache", "conversation_metadata.json"), sessionID)
 	if internal {
+		return "", true
+	}
+	databaseName, child := antigravityDatabaseMetadata(filepath.Join(root, "conversation_summaries.db"), sessionID)
+	if child {
 		return "", true
 	}
 	name := antigravityAnnotationTitle(filepath.Join(root, "annotations", sessionID+".pbtxt"))
 	if strings.TrimSpace(name) == "" {
 		name = cached
+	}
+	if strings.TrimSpace(name) == "" {
+		name = databaseName
 	}
 	name = strings.TrimSpace(name)
 	if len(name) > 1024 {
@@ -75,7 +98,7 @@ func antigravityAnnotationTitle(path string) string {
 		if !strings.HasPrefix(quoted, `"`) {
 			return ""
 		}
-		name, err = strconv.Unquote(quoted)
+		name, err = unquoteAnnotationTitle(quoted)
 		if err != nil || !utf8.ValidString(name) {
 			return ""
 		}
@@ -117,4 +140,52 @@ func antigravityCachedMetadata(path, sessionID string) (string, bool) {
 	}
 
 	return name, false
+}
+
+// App将title与最后查看时间写在同一行；只解析第一个原生引号字符串，不读取其余字段。
+func unquoteAnnotationTitle(raw string) (string, error) {
+	if len(raw) < 2 || raw[0] != '"' {
+		return "", strconv.ErrSyntax
+	}
+	escaped := false
+	for i := 1; i < len(raw); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if raw[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if raw[i] == '"' {
+			return strconv.Unquote(raw[:i+1])
+		}
+	}
+	return "", strconv.ErrSyntax
+}
+
+// App持久化索引可提供标题及父子身份；只按精确ID取必要元数据，不读preview或全文索引。
+func antigravityDatabaseMetadata(path, id string) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	db, err := sql.Open("sqlite", sqlitepath.URI(path)+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(30)")
+	if err != nil {
+		return "", false
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	var name, parent, source sql.NullString
+	var depth sql.NullInt64
+	err = db.QueryRowContext(ctx, "SELECT title,parent_conversation_id,nesting_depth,source FROM conversation_summaries WHERE conversation_id=?", id).Scan(&name, &parent, &depth, &source)
+	if err != nil {
+		return "", false
+	}
+	if parent.String != "" || depth.Int64 > 0 || source.String == "memory_consolidation" || source.String == "internal" {
+		return "", true
+	}
+	return name.String, false
 }

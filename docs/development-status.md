@@ -111,3 +111,18 @@ Windows 使用 `scripts/check/check.ps1 -Tray -Integration` 与 `tests/e2e/windo
 115 条本地文档链接和锚点、28 个 Markdown 表格检查通过；全量文档扫描未检出已知私人绝对路径、真实内网地址、常见 GitHub token 或私钥格式，URL 人工复核仅见公开项目/官方资料、回环测试地址和明确占位符。扫描有已知格式边界，不宣称任意未知格式秘密都不存在。未重写 Git 历史，也未删除部署者的私有材料。
 
 脚本分类检查在 Windows UTF-8 模式下 3 项通过、1 项 POSIX 专用用例按原规则跳过；RC 草稿回归 8 项通过，diff 空白检查通过。仅修改文档，不重新构建候选、不改附件或标签，也不将本次文档检查当作新的模型/手机/桌面验收。
+
+
+## 2026-11-16 RC3源码实施与自动回归
+
+RC3源码已实现安装/JSONC、手机格式、原生内容及必要状态恢复、Windows两类新增来源、独立Go适配构建、离开检测与显示变化保护。变更范围见[CHANGELOG](../CHANGELOG.md)，现行规则见[实施与验收范围](rc3-assessment.md)。源码改动不改变公开RC2产物。
+
+- Go 1.27.4：Windows全量测试通过；Linux独立副本的go test -race ./...、go vet ./...通过。副本包含go、protocol及deploy，不能遗漏默认Hub配置测试所需目录。JSONC解析锁定hujson 2025-06-05版本，保留Go1.25源码底线；注释/尾逗号、超大数字、重复键及幂等/禁用保留回归通过。
+- Volta固定Node24.14.1/pnpm10.33.2：OpenCode类型、13项转换回归及bundle构建通过，Hub网页2项回归及构建通过。覆盖中断/拒绝结果、安全路径摘要、可判断条件字段、缓存边界截断；不上传用户答案或完整错误响应。
+- Rust1.99.1：严格clippy和单元测试通过；Windows真实本地Hub/Relay的离线已读与重启恢复、Bridge回载和待发队列保护联调通过。隐藏窗口的原生显示变化消息探针通过；这是受控消息路径，不是实际RDP或多屏/DPI完整实收。
+- Python/uv：Linux安装器14项、草稿维护8项、发布维护2项、仓库合并1项通过；脚本分类3项通过，1项POSIX专用用例在Windows按规则跳过。完整Hub准备工具校验仓库签名、包复制、私钥排除和损坏拒绝通过。
+- Windows只读版本探测从实际产物取得ZCode3.18.2、Codex0.169.0-alpha.11.1、Antigravity2.32.1；未启用这些探测用配置中的Agent。版本探测不代替原生hook采集。
+- Antigravity App 2.32.1在WSL Debian中使用当前界面已选的Gemini3.8 Flash执行两轮隔离原生任务：开始/活动/结束及多选问题、问题与选项正文、回复后的活动恢复进入无手机渠道的隔离Hub。实际Stop与PostInvocation用户hook均未发送最终回答或模型输出字段；内部描述符有字段不能当作用户hook提供能力，完成正文保持受限，不读transcript或思考补内容。
+- App原生注解将title与查看时间放在同一行，修复标题字符串提取；通过后续真实事件确认名称可得，并补充单行注解回归。App索引仅按精确ID读取标题、父身份和必要来源元数据，不读preview或全文索引。App全工具匹配的PreToolUse在真实审批前触发，提供run_command的BypassSandbox/CommandLine/toolSummary，用户仅允许一次后PostToolUse与Stop恢复正常。新增该请求转换与普通命令不误报回归；最终Antigravity0.3.2包已在原生审批前将approval.required及命令/说明、原生会话名递交隔离Hub；批准后的最终闭环结果另行补录。
+
+仍须验收：最新各适配包的真实主任务、原生问题/批准及取消恢复、主子/记忆过滤、computer use与RDP真人输入判别、特定RDP问题主机、多屏/DPI体验及当前手机目标的实际标题/正文实收。已有后述Antigravity App原生任务验证，但没有实际手机发送结果，不将本地接收器或HTTP成功记为手机完成。GitHub同提交流水线、签名候选镜像及RC3 Release草稿尚未执行/产出；公开RC2附件、标签、latest及正式服务未改动。

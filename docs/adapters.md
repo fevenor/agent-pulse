@@ -1,6 +1,6 @@
 # 来源接入与独立适配包
 
-适配器负责产品事件到统一协议的转换。Bridge 只负责本地入口、转发和适配包安装，不链接产品转换代码。Linux 接入覆盖 OpenCode、Codex、Antigravity CLI（`agy`）和 Qoder 中国版 CLI（`qoderclicn`）；本轮 Windows RC 仅覆盖 ZCode 图形界面；Windows Codex CLI 和 ChatGPT Windows 桌面端是后续规划，不纳入当前包与默认配置入口。其他 Windows 终端 Agent 不在本轮范围。后续 Windows 产品优先调研图形界面的官方接入能力。已验宿主版本、事件和限制见下文及开发记录。RC 原生适配包范围为 Linux amd64 和 Windows amd64；Hub 的 Linux arm64 镜像不代表该平台的 Agent 包可用。OpenCode 为通用 JavaScript 包，但本轮宿主支持范围在 Linux。
+适配器负责产品事件到统一协议的转换，Bridge负责本机入口、转发与安装。Linux支持OpenCode、Codex、Antigravity CLI/WSL桌面执行器与Qoder中国CLI；RC3源码增加Windows Codex/ChatGPT本地任务与Antigravity，保留ZCode。公开RC2的Windows附件仍只有ZCode，未发布源码不代表公开附件已更新。Windows与WSL按实际hook执行位置分别部署；不抓取界面或构建跨系统代理。实际宿主验证边界见开发记录，OpenCode通用包仍只承诺Linux宿主。
 
 ## 支持边界
 
@@ -33,7 +33,7 @@ bash scripts/build/package-adapters.sh ./dist/repository 1
 ./bin/agent-pulse-adapters publish --repository ./dist/repository --private /安全目录/publisher.key --index ./dist/repository/index-input.json
 ```
 
-`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建 Windows amd64 ZCode 包。候选统一使用当前格式，不设置旧接收器版本门槛。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
+`package-adapters.sh` 构建 Linux amd64 命令包和独立 OpenCode 插件包；`package-adapters.ps1` 构建Windows amd64的ZCode、Codex与Antigravity包，内部调用仅Go构建入口。候选统一使用当前格式，不设置旧接收器版本门槛。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode 包打包所需 SDK，安装时不执行包管理器或任意安装脚本。
 
 ZCode 使用 `process-hooks` 配置格式；当前候选的 Bridge 已实现该格式。结构变更按同一现行构建更新，不提供旧接收器兼容。
 
@@ -41,7 +41,7 @@ ZCode 使用 `process-hooks` 配置格式；当前候选的 Bridge 已实现该�
 
 同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
 
-Windows 侧执行 `./scripts/build/package-adapters.ps1`，只生成 ZCode 一个 Windows 原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。通用 OpenCode 包统一采用 Linux 仓库中的一次构建，当前支持 Linux 宿主。Windows Workflow 按相同单包清单验收，Linux Workflow 仍提供原有 Linux 来源及通用插件。
+Windows侧执行 `./scripts/build/package-adapters.ps1`，生成三类Windows原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。通用 OpenCode 包统一采用 Linux 仓库中的一次构建，当前支持 Linux 宿主。Windows Workflow按三包清单验收，Linux Workflow 仍提供原有 Linux 来源及通用插件。
 
 ```sh
 uv run --offline --no-project python scripts/release/merge_adapter_repositories.py \
@@ -64,7 +64,7 @@ Hub 未签名应用构建由工作流保存为发布者专用 OCI 归档 `hub-bu
 
 日常配置无需手动填写发布公钥。Bridge 首次通过配置的 Hub 地址直连获取公钥，并按 Hub 地址和本机指纹保存首次信任记录；之后若 Hub 返回不同公钥会停止自动更新并要求人工核验。首次信任不得经 Relay 建立。手动配置 `adapters.public_key` 仅用于管理员已通过独立渠道核验并固定公钥的部署。公网部署必须正确配置 HTTPS 和访问控制；可信个人内网可使用受控的 HTTP Hub。
 
-`managed` 是本机明确授权 Bridge 修改的文件范围，不扫描或修改其他产品配置。setup 发现已有配置时会优先沿用；Qoder 国际版的默认目录与中国版不同。配置必须为 JSON 对象；发现无法解析的 JSON/JSONC 时拒绝覆盖，应先人工整理为标准 JSON。保留用户其他 hook/plugin 条目，仅维护 AgentPulse 自己的命令。
+`managed` 是本机明确授权 Bridge 修改的文件范围，不扫描或修改其他产品配置。setup 发现已有配置时会优先沿用；Qoder 国际版的默认目录与中国版不同。配置根必须为JSON对象。OpenCode使用hujson保留注释、尾逗号、原始数值及非本软件插件；无效结构或重复键拒绝覆盖，不要求把合法JSONC转换为JSON。保留用户其他 hook/plugin 条目，仅维护 AgentPulse 自己的命令。
 
 高级部署可在 Bridge YAML 中调整适配包目录和版本策略：
 
@@ -97,7 +97,7 @@ Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 
 
 配置采用 `hooks.events` 中的 `type: process`，可执行路径和参数数组分开保存，避免 PowerShell/cmd 引号及编码转换。已有 `hooks.enabled: false` 会被尊重，需用户在 ZCode 中明确开启；没有该字段时安装器启用钩子。保留其他用户钩子、超时和错误策略，仅替换本软件同来源同配置的 dispatch 条目；配置路径按同文件身份核对，普通路径、扩展路径、短路径或不同大小写不会留下重复自有钩子。其他 Bridge 配置和用户钩子保留；升级内置 Bridge 的版本目录不会重复安装。
 
-开始和用户提交分别映射会话开始/继续，正常 Stop 映射本轮完成并读取原生 `last_assistant_message` 最终回答。仅对 `AskUserQuestion` / `ask_user_question` 登记 PreToolUse 和 PostToolUse：提问前显示等待输入及问题/选项，工具返回后恢复活动状态。普通工具及权限请求不纳入本轮 ZCode 采集；同一提问不另记等待批准。明确 `agent_id`、`agent_type`、`agentName` 或父会话的子代理输入仍被忽略，不通过缺少字段声称全部内部子代理已验证。强制取消、崩溃、模型异常不保证触发 Stop，不推断失败或关闭；可在详情人工修正状态。
+开始和用户提交分别映射会话开始/继续，正常 Stop 映射本轮完成并读取原生 `last_assistant_message` 最终回答。对提问工具登记PreToolUse，对所有工具登记PostToolUse和PostToolUseFailure：提问前显示等待输入及问题/选项，工具返回后恢复活动状态。RC3新增原生PermissionRequest的授权原因/工具目标及普通工具完成、工具错误记录；同一提问不另记等待批准。明确 `agent_id`、`agent_type`、`agentName` 或父会话的子代理输入仍被忽略，不通过缺少字段声称全部内部子代理已验证。强制取消、崩溃、模型异常不保证触发 Stop，不推断失败或关闭；可在详情人工修正状态。
 
 原始钩子输入上限为 8 MiB，转换后网络事件上限保持 64 KiB，正文最多 32 KiB并按 UTF-8 边界明确截断。不读取完整对话文件来补答案。真实测试流程见 [端到端测试](../tests/e2e/README.md#zcode-windows-桌面)。
 
@@ -122,3 +122,7 @@ ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）�
 - ZCode Windows：每次原生 hook 按精确会话 ID 只读查询 `%USERPROFILE%/.zcode/cli/db/db.sqlite` 的 `session.title/title_source/parent_id`。默认占位名称不作为真实名称，显式父会话过滤。改名没有独立配置钩子，下一次真实事件同步新名称；缺库、未知结构或锁竞争不阻断事件，首次无名称显示未命名。Windows 3.18.2 的真实改名及下一轮事件已验证，详见开发记录。
 
 不进行名称轮询；没有可接入改名事件的来源，等下一次真实事件读取名称。元数据不可用时不丢弃原事件，也不清除已知名称。已有非零名称序号时，旧序号和无序号载荷不能回滚新名称；普通无序号来源按到达顺序处理。服务、Bridge 和带名称能力的适配包均须更新，单独更新网页不能让旧包获取标题。正式发布与实际升级另行授权。
+
+## RC3命令型入口边界
+
+Windows命令型hook直接调用预构建EXE，不额外包裹编码PowerShell；宿主仍通过命令字符串执行，安装路径含百分号、感叹号或控制字符时明确拒绝，避免变量展开误执行。ZCode原生参数数组入口不受此限制。Codex/ChatGPT在宿主界面审核信任，安装器不绕过。Antigravity App/CLI共用一套受管理hook，WSL桌面执行器按版本目录探测，不以独立agy版本冒充App。

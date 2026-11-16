@@ -38,7 +38,7 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 ## 2. 在 Linux 主机安装 Bridge
 
-用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。默认选择最新稳定发布；指定 `--version` 可安装已公开的预发布版本。
+用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。Release内安装脚本保持该候选构建时的行为。
 
 安装当前公开 RC2 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
@@ -49,7 +49,7 @@ curl --fail --location --proto '=https' --proto-redir '=https' \
   | bash -s -- --version v0.5.0-rc.2 --setup
 ```
 
-若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。默认最新稳定入口不选择 RC，目前会因没有稳定发布而失败。不带 `--setup` 只安装二进制和用户服务定义，不自动启用服务或修改 Agent 配置；已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
+若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。源码/raw入口默认交互配置并启动用户服务，`--install-only`只安装程序与服务定义；显式latest在没有稳定版时仍失败。RC2附件脚本需保留--setup。已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
 
 其他候选若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
 
@@ -60,9 +60,9 @@ bash scripts/install/bridge.sh --version "v已构建版本" \
 
 该入口只复制预构建，仍校验摘要和架构；不要求目标用户安装 Go。Linux arm64 Bridge 的存在不表示当前 amd64 命令适配包可直接用于 arm64，受支持的适配包范围仍以清单为准。
 
-一键安装时使用 `--setup` 会自动进入配置；若选择只安装，则手动执行 `agent-pulse-bridge setup`。按提示填写 Hub 地址，再逐项选择启用、禁用或跳过的受支持 Agent。setup 会创建稳定随机主机指纹、默认采用系统主机名作为显示名，并列出本次修改的 Agent 配置文件。允许配置页面上的 Hub 地址为可信内网 HTTP；公网部署应使用 HTTPS 和访问控制。Relay 和适配包发布公钥均由 Bridge 直连 Hub 获取，公钥首次固定后若发生变化会停止同步并要求核验。
+源码/raw入口无参数或显式--setup会进入配置；若选择只安装，则手动执行 `agent-pulse-bridge setup`。按提示填写 Hub 地址，再逐项选择启用、禁用或跳过的受支持 Agent。setup 会创建稳定随机主机指纹、默认采用系统主机名作为显示名，并列出本次修改的 Agent 配置文件。允许配置页面上的 Hub 地址为可信内网 HTTP；公网部署应使用 HTTPS 和访问控制。Relay 和适配包发布公钥均由 Bridge 直连 Hub 获取，公钥首次固定后若发生变化会停止同步并要求核验。
 
-配置开始前先说明接下来的操作；逐项显示 Agent 名称、版本、自动识别的配置路径与当前状态，结束后给出结果清单，再提示以后可用 setup 修改。OpenCode 优先沿用已有 opencode.json，其次采用 opencode.jsonc，已有 Bridge 中的明确路径始终优先；不要求用户额外手填路径。仅本次启用且配置完成的 Codex CLI 需要在 `/hooks` 审核并信任钩子，不给其他正常接入增加额外授权提示。Antigravity 与其他 CLI 一样直接启动；ACP 调用和子代理运行不发送给用户。配置文件无法解析或含不支持的 JSONC 时，Bridge 仍拒绝覆盖，错误会说明接入未完成。
+配置开始前先说明接下来的操作；逐项显示 Agent 名称、版本、自动识别的配置路径与当前状态，结束后给出结果清单，再提示以后可用 setup 修改。OpenCode 优先沿用已有 opencode.json，其次采用 opencode.jsonc，已有 Bridge 中的明确路径始终优先；不要求用户额外手填路径。仅本次启用且配置完成的 Codex CLI 需要在 `/hooks` 审核并信任钩子，不给其他正常接入增加额外授权提示。Antigravity 与其他 CLI 一样直接启动；ACP 调用和子代理运行不发送给用户。RC3支持合法JSONC注释与尾逗号并保留非本软件内容；无效结构或重复键仍拒绝覆盖。有效Bridge配置的部分接入失败不阻断服务启动，报告保留失败。该修复不回写公开RC2产物。
 
 对于需要脚本化部署的高级使用者，可手工配置 `~/.config/agent-pulse/bridge.yaml`，其中 `source_id` 应沿用 setup 已生成的值：
 
@@ -134,7 +134,7 @@ AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 1. Hub 根地址显示管理页，设备列表出现当前 Bridge 和 Tray。
 2. 适配器页面中 `installed` 与预期版本一致；真实启动一次宿主后 `running` 也应更新。
 3. 用专用测试会话执行一轮短任务，核对来源、会话状态和桌面实收；合成 `emit` 只能验证网络入口，不能代替原生 hook 验证。
-4. 配置手机渠道后，分别验证接口接受、App 收件和系统通知；Tray 在线且未锁屏时手机任务会被跳过，这是当前通知规则。
+4. 配置手机渠道后，分别验证接口接受、App 收件和系统通知；Tray在线、状态可信且未锁屏/未离开时手机任务会被跳过，这是当前通知规则。
 5. 需要 Relay 时，用隔离测试 Bridge 配置不可达的 Hub 地址，验证中继投递及 `relay` 设备路径；不要为测试停掉正式 Hub。
 
 手机请求方法、参数、通用字符上限及本地测试接收器见 [Linux 运行说明](linux-quickstart.md#手机-http-渠道)。无手机渠道时保持 `push: []` 即可，不影响桌面通知。
@@ -149,3 +149,13 @@ AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 | 只有 App 收件、无系统通知 | 渠道/设备长度限制、App 前后台和系统权限，不能只看 HTTP 状态 |
 
 查看 `journalctl --user -u agent-pulse-bridge` 或 Compose 日志时不要公开密钥、完整渠道 URL 和原始事件正文。升级前记录镜像版本并备份配置、适配包和 SQLite；数据库使用在线备份能力或停服务复制数据库及 WAL，不只复制正在写入的主文件。当前开发阶段不保证不同结构间的数据互用；结构变化时经明确授权重建，备份只用于对应结构的恢复；不要运行 `down -v` 删除数据卷。Bridge 停止会丢失内存中尚未发送的事件，应先确认队列清空。
+
+## 源码/raw安装入口
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash
+# 固定公开候选
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.2
+```
+
+草稿不作为匿名默认下载目标。源代码变化不改变公开RC2二进制；RC3修复须使用经核验的RC3产物，不能把上述默认安装RC2写成已获得新功能。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。

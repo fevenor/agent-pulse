@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/build/package-adapters.ps1 -NativeOnly
-          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==1; assert {x['id'] for x in p}=={'zcode'}; assert all(x['platform']=='windows/amd64' for x in p)"
+          uv run --offline --no-project python -c "import json; from pathlib import Path; p=json.loads(Path('dist/repository-windows/index-input.json').read_text(encoding='utf-8-sig'))['packages']; assert len(p)==3; assert {x['id'] for x in p}=={'zcode','codex','antigravity'}; assert all(x['platform']=='windows/amd64' for x in p)"
           if ($LASTEXITCODE -ne 0) { throw 'Windows 命令适配包清单检查失败' }
           uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
           if ($LASTEXITCODE -ne 0) { throw 'Hub 镜像准备流程测试失败' }

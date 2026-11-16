@@ -42,7 +42,7 @@ def main():
     index = prepare.prepare(args.repository, args.public, "hub-build", args.output, args.tool,
                             args.archive, manifest["hub_build"]["sha256"])
     if index["packages"] != manifest["packages"]:
-        raise ValueError("签名仓库不是该候选的五包构建，不发布混合产物")
+        raise ValueError("签名仓库不是该候选的完整平台包构建，不发布混合产物")
     context = str(args.output.resolve())
     metadata = args.output.resolve() / "publish-metadata.json"
     subprocess.run(["docker", "buildx", "build", "--platform", "linux/amd64,linux/arm64",

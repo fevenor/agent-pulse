@@ -152,21 +152,15 @@ func TestWindowsNativeArgumentsAndUnicodeInput(t *testing.T) {
 
 // 仅检查旧命令构造及所有权，不创建或启动任何 shell 进程。
 func TestWindowsHookConstructionDoesNotExecuteShell(t *testing.T) {
-	exe := filepath.Join("测试目录 中文 & %PULSE% ! $", "bridge.exe")
-	config := filepath.Join("配置目录 中文 ' & %PULSE%", "bridge.yaml")
-	prefix := quote(exe) + " dispatch --config " + quote(config) + " --adapter 'sample' --hook "
+	exe := filepath.Join(t.TempDir(), "测试目录 中文 & $", "bridge.exe")
+	cfg := filepath.Join(t.TempDir(), "配置目录 中文 ' &", "bridge.yaml")
+	prefix := hookCommandPrefix(exe, cfg, "sample")
 	command := hookCommand(prefix, "Stop")
-	expected := powershellCommand + encodePowerShell(powershellInput+prefix+quote("Stop"))
-	if command != expected {
-		t.Fatal("钩子构造未保留规定的命令与编码边界")
+	if strings.Contains(command, "powershell") || strings.Contains(command, "EncodedCommand") || !strings.Contains(command, exe) || !ownsHookCommand(command, prefix) || ownsHookCommand(command, prefix+"other") {
+		t.Fatal("原生命令和所有权边界错误")
 	}
-	if !ownsHookCommand(command, prefix) || ownsHookCommand(command, prefix+"other") {
-		t.Fatal("钩子所有权边界错误")
-	}
-	for _, invalid := range []string{"echo keep", powershellCommand + "invalid-base64", powershellCommand + "AA=="} {
-		if ownsHookCommand(invalid, prefix) {
-			t.Fatalf("误认其他或损坏命令为本机钩子：%q", invalid)
-		}
+	if validateHookPaths(exe, cfg) != nil || validateHookPaths("bad%PATH%", cfg) == nil || validateHookPaths(exe, "bad!PATH!") == nil {
+		t.Fatal("命令变量路径未被明确拒绝")
 	}
 }
 
@@ -219,7 +213,7 @@ func TestWindowsSyncPreservesDeferredSourcesWithoutInstalling(t *testing.T) {
 		t.Fatal(err)
 	}
 	packages := []Package{
-		{Manifest: Manifest{ID: "codex", Version: "0.2.1", Format: 1, Protocol: 1, Platform: "windows/amd64", Kind: "executable", Entry: "adapter.exe", Command: "must-not-run", ConfigStyle: "hooks"}, SHA256: strings.Repeat("a", 64), Size: 1},
+		{Manifest: Manifest{ID: "qoderclicn", Version: "0.2.1", Format: 1, Protocol: 1, Platform: "windows/amd64", Kind: "executable", Entry: "adapter.exe", Command: "must-not-run", ConfigStyle: "hooks"}, SHA256: strings.Repeat("a", 64), Size: 1},
 		{Manifest: Manifest{ID: "opencode", Version: "0.3.0", Format: 1, Protocol: 1, Platform: "any", Kind: "opencode-plugin", Entry: "index.js", Command: "must-not-run"}, SHA256: strings.Repeat("b", 64), Size: 1},
 	}
 	// 签名流程验证真实包文件，使用合法辅助 EXE 而非伪装可执行文件；本测试不启动它。
@@ -260,14 +254,14 @@ func TestWindowsSyncPreservesDeferredSourcesWithoutInstalling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexPath, pluginPath := filepath.Join(root, "codex.json"), filepath.Join(root, "opencode.json")
+	qoderclicnPath, pluginPath := filepath.Join(root, "qoderclicn.json"), filepath.Join(root, "opencode.json")
 	before := []byte(`{"keep":true}`)
-	for _, path := range []string{codexPath, pluginPath} {
+	for _, path := range []string{qoderclicnPath, pluginPath} {
 		if err := os.WriteFile(path, before, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	c := config.Bridge{SourceID: "scope-test", HubURL: server.URL, Adapters: config.AdapterUpdates{Directory: filepath.Join(root, "state"), PublicKey: string(key), Managed: map[string]string{"codex": codexPath, "opencode": pluginPath}}}
+	c := config.Bridge{SourceID: "scope-test", HubURL: server.URL, Adapters: config.AdapterUpdates{Directory: filepath.Join(root, "state"), PublicKey: string(key), Managed: map[string]string{"qoderclicn": qoderclicnPath, "opencode": pluginPath}}}
 	if err := Sync(context.Background(), c, filepath.Join(root, "bridge.yaml")); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +269,7 @@ func TestWindowsSyncPreservesDeferredSourcesWithoutInstalling(t *testing.T) {
 	if err != nil || len(state.Installed) != 0 {
 		t.Fatalf("后置来源仍被探测或安装：%+v，错误=%v", state, err)
 	}
-	for _, path := range []string{codexPath, pluginPath} {
+	for _, path := range []string{qoderclicnPath, pluginPath} {
 		after, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(after, before) {
 			t.Fatal("后置来源用户配置被改写")

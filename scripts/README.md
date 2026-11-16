@@ -11,7 +11,7 @@
 
 ## 用户安装
 
-安装当前公开 [v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 时，源码目录中的 Linux 入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.2 --setup`；若下载 Release 附件则使用 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`。目前没有稳定发布，不带版本的默认入口不可用。安装器自动识别 Linux amd64/arm64，默认下载 GitHub 最新稳定发布；指定 `--version v版本` 可选择已公开的候选版本。二进制、同一 Release 的校验清单及架构验证通过后才安装；`--setup` 明确授权随后逐项配置 Agent 并启动用户服务：先说明进入配置，再展示 Agent 名称/版本/路径；配置结束后才说明以后如何用 setup 修改。OpenCode 自动识别已有配置，只有本次启用成功的 Codex CLI 提示额外授权。没有公开发布或附件缺失时会报错，不自动编译。
+安装当前公开 [v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 时，源码目录中的 Linux 入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.2 --setup`；若下载 Release 附件则使用 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`。源码/raw入口无版本时选择脚本标注的公开推荐版本，并进入交互配置；RC2附件脚本保持原行为。安装器自动识别Linux amd64/arm64；指定 `--version v版本` 可选择已公开的候选版本。二进制、同一 Release 的校验清单及架构验证通过后才安装；源码/raw入口默认或显式--setup逐项配置Agent并启动用户服务，--install-only仅安装程序：先说明进入配置，再展示 Agent 名称/版本/路径；配置结束后才说明以后如何用 setup 修改。OpenCode 自动识别已有配置，只有本次启用成功的 Codex CLI 提示额外授权。没有公开发布或附件缺失时会报错，不自动编译。
 
 本地预构建模式 `--version v版本 --file 文件 --sha256 摘要` 只用于维护者提供的测试或离线交付。两种方式都不需要 Go、Node.js、Rust。已有配置和自定义服务保留；运行中的 Bridge 先确认队列清空并停止。公网下载通过 GitHub HTTPS 和同发布摘要校验，下载本身不替代 Agent 钩子信任或真实通知验收。
 
@@ -27,3 +27,5 @@
 - Windows 构建、检查和便携打包分别见对应子目录，辅助工具 `windows-tools.ps1` 只属于开发构建。
 
 工程及文档统一使用上述按职责分类的路径，不维护含混的根目录脚本别名。开发记录中的复现命令使用现行入口，不表示历史宿主测试已重新执行。
+
+仅Windows Go适配器使用 `./scripts/build/build-adapters.ps1`，不调用Rust/MSVC。三类原生包由package-adapters.ps1打包；完整Tray仍用build.ps1。

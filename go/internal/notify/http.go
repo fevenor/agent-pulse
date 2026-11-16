@@ -35,19 +35,29 @@ func SendResult(ctx context.Context, ch config.Channel, e protocol.Event) Result
 		return Result{Status: "failed", Reason: "推送地址无法解析"}
 	}
 	bodyText := e.Body
-	// MeoW 的消息正文不能留空。只在该渠道发送边界用事件标题补齐，不改变 Hub 原事件。
+	// 空正文明确提示未取得内容，不重复事件标题。
 	if strings.EqualFold(u.Hostname(), "api.chuckfang.com") && strings.TrimSpace(bodyText) == "" {
-		bodyText = e.Title
+		bodyText = "原生正文未取得，请在Agent中查看。"
 	}
 	replace := strings.NewReplacer("${title}", limitChars(e.Title, ch.MaxTitleChars), "${body}", limitChars(bodyText, ch.MaxBodyChars))
+	render := func(template string) string {
+		value := replace.Replace(template)
+		if strings.Contains(template, "${body}") {
+			return limitChars(value, ch.MaxBodyChars)
+		}
+		if strings.Contains(template, "${title}") {
+			return limitChars(value, ch.MaxTitleChars)
+		}
+		return value
+	}
 	query := u.Query()
 	for k, v := range ch.Query {
-		query.Set(k, replace.Replace(v))
+		query.Set(k, render(v))
 	}
 	u.RawQuery = query.Encode()
 	fields := map[string]string{}
 	for k, v := range ch.Fields {
-		fields[k] = replace.Replace(v)
+		fields[k] = render(v)
 	}
 	var body io.Reader
 	contentType := ""
