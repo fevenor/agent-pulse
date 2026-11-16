@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"scripts/release"))
@@ -11,6 +13,13 @@ spec=importlib.util.spec_from_file_location("client_rc",ROOT/"scripts/release/cr
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
 class ClientDraftTests(unittest.TestCase):
+    def test_native_query_restores_artifact_execution_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"candidate";path.write_bytes(b"fixture-not-executed");path.chmod(0o600)
+            with patch.object(module.common,"command",return_value=SimpleNamespace(stdout='{"version":"v0.5.0-rc.4"}')) as run:
+                self.assertEqual(module.read_native_version(path)["version"],"v0.5.0-rc.4")
+                run.assert_called_once_with(path,"version","--json")
+                if sys.platform!="win32":self.assertTrue(path.stat().st_mode & 0o100)
     def test_version_is_bound_to_real_artifact_and_commit(self):
         good={"version":"v0.5.0-rc.4","commit":"a"*40,"sha256":"b"*64,"platform":"windows/amd64","go_version":"go1.27.4"}
         module.validate_version(good,good["version"],good["commit"],good["sha256"],good["platform"])

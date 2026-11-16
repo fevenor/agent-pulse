@@ -39,6 +39,10 @@ def validate_client_assets(paths):
     expected={"agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","install-bridge.sh","candidate-manifest.json","trial-guide.md","SHA256SUMS.txt"}
     if {p.name for p in paths}!=expected or len(paths)!=len(expected):
         raise ValueError("客户端候选只能包含Bridge、Tray和对应说明/校验文件")
+def read_native_version(path):
+    # Actions归档不保留执行位；只对前一步已核验的候选二进制恢复执行位，再运行只读查询。
+    path.chmod(0o700)
+    return json.loads(common.command(path,"version","--json").stdout)
 def validate_build_run(run,commit):
     jobs={j.get("name"):j for j in run.get("jobs",[])}
     if run.get("headSha")!=commit or any(jobs.get(name,{}).get("conclusion")!="success" or jobs.get(name,{}).get("status")!="completed" for name in ("linux","windows / windows")):
@@ -86,7 +90,7 @@ def main():
         if artifact["platform"]=="linux/arm64":
             validate_cross_compiled_version(artifact["path"].read_bytes(),args.tag,args.commit)
         if artifact["platform"]=="linux/amd64":
-            info=json.loads(common.command(artifact["path"],"version","--json").stdout)
+            info=read_native_version(artifact["path"])
             validate_version(info,args.tag,args.commit,artifact["sha256"],artifact["platform"])
     windows=common.unique_file(output/"windows","windows-amd64.zip")
     with zipfile.ZipFile(windows) as archive:
