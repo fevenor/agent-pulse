@@ -1,6 +1,6 @@
 # Linux 运行说明
 
-本文面向源码开发与本地联调。普通用户安装当前公开 RC2 请先按[部署指南](deployment.md)下载预构建和完整镜像，无需编译。提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
+本文面向源码开发与本地联调。普通用户安装当前公开 RC3 请先按[部署指南](deployment.md)下载预构建和完整镜像，无需编译。提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
 
 ## 准备和构建
 
@@ -76,7 +76,7 @@ push:
 
 每个渠道可独立设置 `max_title_chars`、`max_body_chars`，解决同一事件在不同渠道可接受长度不同的问题。0 或省略表示不限制，负数拒绝启动。上限按 Unicode 码点计数：普通中英文、换行和单码点 emoji 各计 1；组合 emoji 可能占多个码点，不按 UTF-8 字节数计算。超过上限时保留前面的字符，并以 `…` 结尾，省略号计入上限；上限为 1 时结果只有省略号。
 
-限制在 `${title}`、`${body}` 替换及 HTTP 编码之前执行，适用于 GET 查询、POST JSON 和表单。模板中额外写入的固定前后缀不计入该上限，需要自行留出空间。仅裁剪该渠道的发送文本，Hub 历史、Tray 正文及其他渠道保留各自内容，不修改原始事件。例如在渠道配置中设置：
+`${title}`、`${body}` 先按各自上限裁剪，最终模板展开后再按正文或标题上限裁剪，均在 HTTP 编码之前执行，适用于 GET 查询、POST JSON 和表单。额外前后缀占用同一额度。仅裁剪该渠道的发送文本，Hub 历史、Tray 正文及其他渠道保留各自内容，不修改原始事件。例如在渠道配置中设置：
 
 ```yaml
 max_title_chars: 40
@@ -146,7 +146,7 @@ docker compose -f deploy/compose/relay.yaml up -d --build
 
 Hub 用 `HUB_BIND_IP` 指定可信内网 IP；默认只绑定回环。编辑各自的 `*.runtime.yaml` 配置渠道和中继。Hub/Relay 镜像均以非 root 用户运行，SQLite 放在独立数据卷中；适配包目录只读挂载。Relay 端口仅绑定宿主回环，由 [Nginx 示例](../deploy/proxy/relay.nginx.conf) 终结 TLS。代理应覆盖 `X-Forwarded-Proto` 并正确转发 WebSocket，不将 token 写入日志。
 
-当前 RC2 的 Bridge 用户安装入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.2 --setup`，自动下载并校验当前 Linux 架构的预构建二进制，不调用 Go 或构建脚本；Release 附件缺失则明确失败。只安装时不加 `--setup`，保留已有 Bridge YAML 和用户服务。开发者测试已构建文件可显式使用 `--version 版本 --file 文件 --sha256 摘要`，目标使用者无需编译。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
+当前 RC3 的 Bridge 用户安装入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.3 --setup`，自动下载并校验当前 Linux 架构的预构建二进制，不调用 Go 或构建脚本；Release 附件缺失则明确失败。只安装时使用 `--install-only`，保留已有 Bridge YAML 和用户服务。开发者测试已构建文件可显式使用 `--version 版本 --file 文件 --sha256 摘要`，目标使用者无需编译。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
 
 `bash scripts/build/build-targets.sh` 交叉编译 Linux amd64/arm64 和 Windows amd64 程序，以及 Windows arm64 Bridge/测试客户端；交叉编译不等于目标环境验收。Windows 安装器和 Tray 不在这个脚本的交付范围。
 

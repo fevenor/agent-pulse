@@ -91,7 +91,7 @@ else:out.write_bytes(pathlib.Path(os.environ['FIXTURE_FILE']).read_bytes())
     def test_default_selects_documented_public_recommendation(self):
         self.run_install()
         self.assertNotIn("/releases/latest", (self.root / "requests").read_text())
-        self.assertIn("/releases/download/v0.5.0-rc.2/", (self.root / "requests").read_text())
+        self.assertIn("/releases/download/v0.5.0-rc.3/", (self.root / "requests").read_text())
         self.assertIn("setup=1", INSTALLER.read_text(encoding="utf-8"))
 
     def test_missing_release_never_builds_or_writes(self):

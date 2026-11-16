@@ -1,6 +1,6 @@
 # 来源接入与独立适配包
 
-适配器负责产品事件到统一协议的转换，Bridge负责本机入口、转发与安装。Linux支持OpenCode、Codex、Antigravity CLI/WSL桌面执行器与Qoder中国CLI；RC3源码增加Windows Codex/ChatGPT本地任务与Antigravity，保留ZCode。公开RC2的Windows附件仍只有ZCode，未发布源码不代表公开附件已更新。Windows与WSL按实际hook执行位置分别部署；不抓取界面或构建跨系统代理。实际宿主验证边界见开发记录，OpenCode通用包仍只承诺Linux宿主。
+适配器负责产品事件到统一协议的转换，Bridge负责本机入口、转发与安装。Linux支持OpenCode、Codex、Antigravity CLI/WSL桌面执行器与Qoder中国CLI；公开RC3提供Windows Codex/ChatGPT本地任务与Antigravity，并保留ZCode。Windows与WSL按实际hook执行位置分别部署；不抓取界面或构建跨系统代理。实际宿主验证边界见开发记录，OpenCode通用包仍只承诺Linux宿主。
 
 ## 支持边界
 

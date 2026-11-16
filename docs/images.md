@@ -4,10 +4,10 @@
 
 ## 当前公开版本
 
-[v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 已公开为预发布候选，Hub 与 Relay 均提供 Linux amd64/arm64 镜像：
+[v0.5.0-rc.3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3) 已公开为预发布候选，Hub 与 Relay 均提供 Linux amd64/arm64 镜像：
 
-- 完整 Hub：`ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.2`，包含官方签名仓库和公钥。
-- Relay：`ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.2`。
+- 完整 Hub：`ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.3`，包含官方签名仓库和公钥。
+- Relay：`ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.3`。
 
 两包均为公开包并关联本项目，支持匿名拉取。公开候选的标签和附件固定，不再沿用草稿滚动替换；后续变更应发布新版本。本版本不是稳定版，不推广稳定 `latest`。`candidate-manifest.json` 和 `trial-guide.md` 保留构建时快照，当前发布状态以 Release 页面为准。公开验证证据见[开发记录](development-status.md#2026-11-16-rc2-公开发布与完工检查)。
 

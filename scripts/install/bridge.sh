@@ -11,8 +11,8 @@ usage() {
     '测试/离线：--version v版本 --file 预构建二进制 --sha256 已核验摘要。' \
     '缺少发布物时明确失败，不回退到用户本机编译；不覆盖已有 Bridge 配置。'
 }
-# 草稿不能匿名安装；RC3公开后才调整这个公开推荐值。
-version=v0.5.0-rc.2 local_file='' checksum='' setup=1 dry_run=0
+# 默认采用已公开的RC3；草稿不作为匿名安装目标。
+version=v0.5.0-rc.3 local_file='' checksum='' setup=1 dry_run=0
 while (($#)); do
   case "$1" in
     --version|--file|--sha256)
@@ -140,7 +140,7 @@ if ((setup)); then
     fail "接入配置未能完成（退出码 $setup_status），未启动服务；请按配置报告排查。"
   fi
   health_url="http://127.0.0.1:18702/healthz"
-  # raw入口仍需安装当前公开RC2；只有提供配置检查命令的产物才使用它。
+  # 显式安装旧候选时可能没有配置检查命令；仅在产物提供时使用。
   if "$destination" help | grep -q 'check-config'; then
     health_url="$("$destination" check-config --config "$config_dir/bridge.yaml")" || fail 'Bridge配置无效，未启动服务。'
   fi

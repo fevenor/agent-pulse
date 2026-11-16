@@ -2,20 +2,20 @@
 
 AgentPulse 是供个人使用的多主机 Agent 会话通知工具。Hub（会话中心）保存会话与已读状态，Relay（公网中继）提供备用通路，Bridge（本地接入进程）采集事件，Tray（桌面小组件）显示提醒。
 
-Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、展开式时间线、系统通知、按主机静默/任务唤醒和离线已读恢复，使用 Rust + GPUI。Linux 接入 OpenCode、Codex、Antigravity CLI 和 qoderclicn；公开RC2的Windows附件只有ZCode；RC3源码增加Codex/ChatGPT本地任务与Antigravity原生/WSL接入、授权内容和离开检测，尚未发布；各来源及桌面行为的验证边界见开发记录。
+Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、手机 HTTP 推送和独立适配包更新。Windows 单入口客户端提供紧凑托盘菜单、可贴边悬浮图标、会话小窗/详情、归档与人工状态修正、展开式时间线、系统通知、按主机静默/任务唤醒和离线已读恢复，使用 Rust + GPUI。Linux 接入 OpenCode、Codex、Antigravity CLI 和 qoderclicn；公开RC3的Windows附件支持ZCode、Codex/ChatGPT本地任务与Antigravity；Windows原生和WSL独立接入，并提供授权内容与离开检测；各来源及桌面行为的验证边界见开发记录。
 
 ## 普通用户：开始使用
 
-开始使用需要一台运行 Hub 的服务器，以及至少一台安装了受支持 Agent 的主机。[v0.5.0-rc.2 已公开发布](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2)，是预发布候选版本，不是稳定版；目前没有稳定发布；RC2附件安装须显式选择版本，源码/raw入口按脚本标注的公开推荐版本选择。完整部署步骤和验收标准见[部署指南](docs/deployment.md)。
+开始使用需要一台运行 Hub 的服务器，以及至少一台安装了受支持 Agent 的主机。[v0.5.0-rc.3 已公开发布](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3)，是预发布候选版本，不是稳定版；目前没有稳定发布；Release附件安装须显式选择版本，源码/raw入口按脚本标注的公开推荐版本选择。完整部署步骤和验收标准见[部署指南](docs/deployment.md)。
 
-1. **部署 Hub**：使用 `ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.2`，镜像已包含默认配置、管理网页与官方签名适配包，在可信网络中启动。普通用户无需挂载仓库或配置适配公钥。Hub 保存会话、已读状态和主机名称；新主机首次连接后默认以系统主机名显示。之后可在 Hub 管理页面统一修改名称，所有 Tray 会在同步后看到新名称。
-2. **连接 Agent 主机**：下载本版本的[安装脚本](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.2/install-bridge.sh)，在运行 Agent 的 Linux 主机执行 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`；安装器按平台下载预构建并校验，普通用户不需要源码目录、Go、Node.js 或 Rust。也可只安装后再运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。官方签名适配包随完整 Hub 提供，无需自行构建或签名。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
-3. **使用 Windows Tray**：下载并解压 [Windows amd64 便携包](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.2/windows-amd64.zip)，在程序旁的配置文件中填写 Hub 地址后启动。Tray 默认只需 Hub 地址；有 Relay 时会从 Hub 自动发现配置。会话详情可调整当前主机的静默和任务期间保持唤醒设置。
-4. **按需部署 Relay**：只有需要跨公网或备用连接时才部署，镜像为 `ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.2`。将 Relay 地址与令牌配置到 Hub；Bridge 从 Hub 获取配置，Tray 也会自动同步。公网连接必须使用 HTTPS/WSS。
+1. **部署 Hub**：使用 `ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.3`，镜像已包含默认配置、管理网页与官方签名适配包，在可信网络中启动。普通用户无需挂载仓库或配置适配公钥。Hub 保存会话、已读状态和主机名称；新主机首次连接后默认以系统主机名显示。之后可在 Hub 管理页面统一修改名称，所有 Tray 会在同步后看到新名称。
+2. **连接 Agent 主机**：下载本版本的[安装脚本](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/install-bridge.sh)，在运行 Agent 的 Linux 主机执行 `bash install-bridge.sh --version v0.5.0-rc.3 --setup`；安装器按平台下载预构建并校验，普通用户不需要源码目录、Go、Node.js 或 Rust。也可只安装后再运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。官方签名适配包随完整 Hub 提供，无需自行构建或签名。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
+3. **使用 Windows Tray**：下载并解压 [Windows amd64 便携包](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/windows-amd64.zip)，在程序旁的配置文件中填写 Hub 地址后启动。Tray 默认只需 Hub 地址；有 Relay 时会从 Hub 自动发现配置。会话详情可调整当前主机的静默和任务期间保持唤醒设置。
+4. **按需部署 Relay**：只有需要跨公网或备用连接时才部署，镜像为 `ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.3`。将 Relay 地址与令牌配置到 Hub；Bridge 从 Hub 获取配置，Tray 也会自动同步。公网连接必须使用 HTTPS/WSS。
 
 Hub 和 Bridge 示例配置可从 [`config/`](config/) 目录查看。Agent 执行部署时，可先阅读[Bridge 示例配置](config/bridge.example.yaml)、[Hub 示例配置](config/hub.example.yaml)和[部署指南](docs/deployment.md)，其中给出了服务地址、适配包及 Relay 的配置形状。正式 RC 镜像内置相应签名仓库和公开公钥；Bridge 首次直连 Hub 后固定信任该公钥。发布者离线维护签名私钥，普通使用者无需处理签名仓库。所有示例地址、名称和令牌均为占位值，不可直接作为实际凭据使用。
 
-下载后按同版本的 [SHA256SUMS.txt](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.2/SHA256SUMS.txt) 核对摘要。已有安装升级前备份并保留配置、数据和固定公钥，不把测试数据可重建理解为可删除用户数据。Linux arm64 Bridge 已提供，但当前命令型 Agent 适配包不支持 Linux arm64。
+下载后按同版本的 [SHA256SUMS.txt](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/SHA256SUMS.txt) 核对摘要。已有安装升级前备份并保留配置、数据和固定公钥，不把测试数据可重建理解为可删除用户数据。Linux arm64 Bridge 已提供，但当前命令型 Agent 适配包不支持 Linux arm64。
 
 手机推送属于可选功能。Bridge 在线不代表 Agent 钩子已生效；请按部署指南运行一次真实 Agent 会话并核对 Hub 中收到的事件。事件正文最多 32 KiB，具体采集能力与受限原因见[事件内容覆盖表](docs/event-coverage.md)；本项目不提供完整对话同步。
 

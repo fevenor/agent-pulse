@@ -17,14 +17,14 @@
 
 ## 1. 部署 Hub
 
-当前公开版本为 [v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2)，属于预发布候选；目前没有最新稳定发布。以下命令显式选择该版本；安装其他版本时以对应发布说明为准。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
+当前公开版本为 [v0.5.0-rc.3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3)，属于预发布候选；目前没有最新稳定发布。以下命令显式选择该版本；安装其他版本时以对应发布说明为准。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
 
 ```sh
 docker volume create agent-pulse-hub-data
 docker run -d --name agent-pulse-hub --restart unless-stopped \
   -p 127.0.0.1:18700:18700 \
   -v agent-pulse-hub-data:/data \
-  ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.2
+  ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.3
 ```
 
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
@@ -40,16 +40,16 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。Release内安装脚本保持该候选构建时的行为。
 
-安装当前公开 RC2 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
+安装当前公开 RC3 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
 set -o pipefail
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.2/install-bridge.sh \
-  | bash -s -- --version v0.5.0-rc.2 --setup
+  https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/install-bridge.sh \
+  | bash -s -- --version v0.5.0-rc.3 --setup
 ```
 
-若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。源码/raw入口默认交互配置并启动用户服务，`--install-only`只安装程序与服务定义；显式latest在没有稳定版时仍失败。RC2附件脚本需保留--setup。已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
+若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.3 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。源码/raw入口默认交互配置并启动用户服务，`--install-only`只安装程序与服务定义；显式latest在没有稳定版时仍失败。Release附件脚本保留构建时的默认版本，安装RC3须显式--version v0.5.0-rc.3。已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
 
 其他候选若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
 
@@ -112,7 +112,7 @@ Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客�
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：
 
 ```dotenv
-AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.2
+AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.3
 AGENT_PULSE_RELAY_TOKEN=替换为生成的随机令牌
 ```
 
@@ -150,12 +150,44 @@ AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 
 查看 `journalctl --user -u agent-pulse-bridge` 或 Compose 日志时不要公开密钥、完整渠道 URL 和原始事件正文。升级前记录镜像版本并备份配置、适配包和 SQLite；数据库使用在线备份能力或停服务复制数据库及 WAL，不只复制正在写入的主文件。当前开发阶段不保证不同结构间的数据互用；结构变化时经明确授权重建，备份只用于对应结构的恢复；不要运行 `down -v` 删除数据卷。Bridge 停止会丢失内存中尚未发送的事件，应先确认队列清空。
 
+## 从公开 RC2 升级到 RC3
+
+本节仅适用于公开 `v0.5.0-rc.2` 到 `v0.5.0-rc.3`，不承诺任意旧开发版本的数据互用。本次未改变 Hub/Relay SQLite、Tray 本地状态/偏好或 Bridge 安装状态格式，不需要迁移、重建数据库或重新 setup。
+
+- **Hub/Relay**：备份配置与数据，替换对应镜像并保留原数据卷、配置和令牌；禁止 `down -v`。数据库备份使用在线一致性备份，或停服务后同时保留 SQLite 与 WAL/SHM。
+- **Tray**：正常退出后备份便携目录，替换 `agent-pulse-tray.exe`，保留 `tray.yaml`、Bridge 配置及 `data/`；尽量保持路径，自启动快捷方式无需重建。内置 Bridge 随 EXE 更新，适配包仍由 Hub 同步。新增 `away_after_minutes` 缺省为 10，无需手工补字段。
+- **Bridge**：先核对健康接口的 `pending` 为 0，再停止用户服务。安装器 `--install-only` 更新程序、备份旧二进制，保留既有 YAML 与服务；随后同步适配器并启动。队列只在内存，不能把直接强停当作无损升级。
+
+已有 Linux Bridge 可按以下步骤更新；健康地址使用自己配置的 listen，以下为默认端口。第一步返回的待发必须为零，非零时不要继续停止：
+
+```sh
+curl -fsS http://127.0.0.1:18702/healthz
+```
+
+人工确认健康、`pending: 0` 后执行以下更新段；子 shell 在任何步骤失败时停止，不影响当前交互 shell：
+
+```sh
+(
+  set -euo pipefail
+  systemctl --user stop agent-pulse-bridge
+  curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh \
+    | bash -s -- --version v0.5.0-rc.3 --install-only
+  "$HOME/.local/bin/agent-pulse-bridge" check-config --config "$HOME/.config/agent-pulse/bridge.yaml"
+  "$HOME/.local/bin/agent-pulse-bridge" sync-adapters --config "$HOME/.config/agent-pulse/bridge.yaml"
+  systemctl --user daemon-reload
+  systemctl --user start agent-pulse-bridge
+  curl -fsS http://127.0.0.1:18702/healthz
+)
+```
+
+各步失败时先按报告排查，不跳过失败继续启动。更新后检查签名索引和 installed；正常直接启动 Agent 后再核对 running、原生事件及实际通知，不盲目重发历史失败或 unknown 手机任务。
+
 ## 源码/raw安装入口
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash
 # 固定公开候选
-curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.2
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.3
 ```
 
-草稿不作为匿名默认下载目标。源代码变化不改变公开RC2二进制；RC3修复须使用经核验的RC3产物，不能把上述默认安装RC2写成已获得新功能。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。
+源码/raw入口默认推荐已公开RC3；Release附件脚本保持构建快照，使用时显式指定RC3版本。显式latest只选择稳定版，当前没有稳定发布；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。

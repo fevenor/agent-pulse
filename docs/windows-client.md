@@ -4,7 +4,7 @@ AgentPulse 使用 Rust + GPUI，Windows 用户只启动一个 Tray 程序。Hub�
 
 ## 运行与交互
 
-从[公开 RC2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2)下载 Windows amd64 便携包并核对摘要。解压到可写目录，双击 `agent-pulse-tray.exe` 即驻留托盘。程序默认读取自身目录的 `tray.yaml`；首次缺少该文件时创建未连接服务的空配置，不自动打开设置。可将 `tray.example.yaml` 复制为 `tray.yaml` 后填写 Hub 地址；源码开发时示例位于 `config/`。默认配置定位不依赖启动工作目录：
+从[公开 RC3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3)下载 Windows amd64 便携包并核对摘要。解压到可写目录，双击 `agent-pulse-tray.exe` 即驻留托盘。程序默认读取自身目录的 `tray.yaml`；首次缺少该文件时创建未连接服务的空配置，不自动打开设置。可将 `tray.example.yaml` 复制为 `tray.yaml` 后填写 Hub 地址；源码开发时示例位于 `config/`。默认配置定位不依赖启动工作目录：
 
 ```powershell
 ./agent-pulse-tray.exe
@@ -69,6 +69,12 @@ Tray 0.5.0 与 Bridge 均可从 Hub 直接取得 Relay 地址和令牌，省略 
 
 Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en-us/windows/experience/startup-boot/configure-startup-applications-in-windows)。删除整个便携目录前先关闭自动启动，或手动删除该快捷方式，避免留在系统中。
 
+## RC2 升级到 RC3
+
+正常退出 Tray 后备份便携目录，只替换新版本 `agent-pulse-tray.exe`，保留程序旁 `tray.yaml`、Bridge 配置和完整 `data/`（本地状态、离线已读、偏好及适配包）。本次这些持久化格式没有变化，不迁移或清空数据；新增离开检测设置缺省为十分钟。优先原目录更新，不重新创建来源身份或自启动快捷方式。内置 Bridge 随 EXE 更新，启用来源的适配包仍需从 Hub 同步，正常宿主任务后核对最近运行版本。
+
+本结论仅适用于公开 RC2 到 RC3，不代表任意旧开发版本互通。回退到 RC2 时优先恢复升级前的配置；若 RC3 已写入 away_after_minutes，旧 RC2 会拒绝该未知字段，不能只替换 EXE。升级与回滚前保存原目录；不因安装成功而重发历史任务，队列仍有待发时不要强制结束进程。
+
 ## 提醒与恢复
 
 - 正常桌面新提醒更新未读角标。悬浮图标关闭时发送 Windows 系统通知；图标贴边收起时自动露出并强调约 7 秒，已显示时以琥珀色边框和背景短时强调，随后恢复。均不抢焦点、不自动打开列表或详情；系统通知点击后进入“需关注”。系统接口拒绝时回退摘要卡片。通知关闭或超时不等于已读。
@@ -80,7 +86,7 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 
 ## Windows 接入范围
 
-RC3源码接入ZCode、Codex/ChatGPT本地任务及Antigravity App；公开RC2附件不因此改变。向导检测这些原生宿主；Windows用Tray内置Bridge，WSL执行器用发行版独立Bridge。一个家族不重复安装App/CLI两份hook，其他Windows终端产品不自动扩大范围。
+公开RC3接入ZCode、Codex/ChatGPT本地任务及Antigravity App。向导检测这些原生宿主；Windows用Tray内置Bridge，WSL执行器用发行版独立Bridge。一个家族不重复安装App/CLI两份hook，其他Windows终端产品不自动扩大范围。
 
 ## Windows 窗口手工验收要点
 

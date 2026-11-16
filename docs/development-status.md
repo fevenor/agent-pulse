@@ -4,7 +4,7 @@
 
 ## 当前公开候选
 
-[v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 已公开为预发布候选。构建提交为 `f4d84384c8c28e2ed4693e12b3e1f66fcd442087`，公开标签与附件固定，不再滚动替换，也未推广稳定 `latest`。
+[v0.5.0-rc.3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3) 已公开为预发布候选。构建提交为 `766011f12892fa1201176bff19faf16ec10d4d74`，公开标签与附件固定，不再滚动替换，也未推广稳定 `latest`。
 
 | 组件 | 已实现范围与边界 |
 | --- | --- |
@@ -13,8 +13,8 @@
 | Bridge | 回环接入、有界内存队列、重试、直连/中继、心跳、setup、签名包同步与稳定 dispatch；正常启动不要求包装；进程退出不恢复未交付内存事件 |
 | Hub Web | Vue/TypeScript 管理页面：原生会话名称、主机名称、来源/生效状态、未读、归档查询、设备、适配器和推送记录；备注不覆盖原生名称 |
 | Tray | Windows amd64、Rust + GPUI；便携单入口、内置 Bridge、托盘/悬浮/列表/详情、系统通知、离线已读、主机静默/唤醒、自动发现中继、自动追加时间线与历史阅读保位；特殊桌面场景仍有待验边界 |
-| 官方适配包 | Antigravity 0.2.9、Codex/Qoder 0.2.7、OpenCode 0.3.4、ZCode 0.1.5；签名索引递增、同版本内容不可变、配置保留、中断恢复及坏入口回滚 |
-| 架构与宿主 | Hub/Relay 为 Linux amd64/arm64；公开 Linux Bridge 提供两架构，当前命令型适配包仅 Linux amd64 与 Windows amd64；Windows 来源仅 ZCode，OpenCode 宿主范围在 Linux |
+| 官方适配包 | Antigravity 0.3.2、Codex/Qoder 0.2.8、OpenCode 0.3.5、ZCode 0.1.6；签名索引递增、同版本内容不可变、配置保留、中断恢复及坏入口回滚 |
+| 架构与宿主 | Hub/Relay 为 Linux amd64/arm64；公开 Linux Bridge 提供两架构，当前命令型适配包仅 Linux amd64 与 Windows amd64；Windows 来源为 ZCode、Codex/ChatGPT 本地任务与 Antigravity，OpenCode 宿主范围在 Linux |
 | 手机 HTTP | 通用 GET/JSON/表单发送，渠道独立字符上限及明确业务结果处理；已有一次实际手机收件确认。多渠道分别发送，不支持优先级/故障切换；新模型或手机测试仍须授权 |
 
 ## 2026-11-15 最终构建与自动检查
@@ -130,7 +130,7 @@ RC3源码已实现安装/JSONC、手机格式、原生内容及必要状态恢�
 
 ## 2026-11-16 RC3草稿与完整候选镜像验收
 
-[v0.5.0-rc.3草稿](https://github.com/fevenor/agent-pulse/releases/tag/untagged-e70ec41eeca87311f753)保持draft=true、prerelease=true，未公开；构建提交为`766011f12892fa1201176bff19faf16ec10d4d74`。同提交[候选流水线](https://github.com/fevenor/agent-pulse/actions/runs/43869999165)、[Windows检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990091)与[Linux检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990126)全部成功。
+公开前的 [v0.5.0-rc.3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3) 草稿验收阶段保持 draft=true、prerelease=true；构建提交为`766011f12892fa1201176bff19faf16ec10d4d74`。同提交[候选流水线](https://github.com/fevenor/agent-pulse/actions/runs/43869999165)、[Windows检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990091)与[Linux检查](https://github.com/fevenor/agent-pulse/actions/runs/43869990126)全部成功。
 
 - 10个真实草稿附件回下载后，文件大小、GitHub资产摘要与SHA256SUMS全部一致；Windows ZIP只有用户入口、两个配置示例与使用说明。七个来源/平台包的版本、平台、ZIP及摘要与同提交清单一致。
 - 原发布者公钥与当前Hub一致，未生成替代生产密钥。完整候选Hub使用递增正式索引序号6；通过复制后验签，七包及公钥随镜像交付，私钥及未签名索引不进入镜像。Hub多架构索引摘要为`sha256:c586ed8860eefd9cb865c3d32c5f5aeef2da5f5f2b821bb9647a400685e565f0`。
@@ -139,3 +139,15 @@ RC3源码已实现安装/JSONC、手机格式、原生内容及必要状态恢�
 - Release正文明确完整Hub已签名发布与现有实机限制；附件内的构建清单、指南及未签名仓库保留CI构建快照，不据其signed_repository=false误判成品镜像未签名。草稿附件不能匿名下载，默认安装仍指向公开RC2。
 
 Antigravity最终0.3.2包的WSL App原生多选与授权闭环已有前述证据；其他Agent全部事件、主子/记忆过滤、真实computer use/RDP输入、问题主机RDP/多屏及目标手机新格式实收仍需后续专项验收，不因候选成功而改写为已完成。RC2公开发布、标签与10个附件保持不变，稳定latest未推广。原始材料留项目忽略目录，不包含于发布文档或附件。
+
+## 2026-11-16 RC3 公开发布与升级检查
+
+使用者确认 Qoder 中文正文和 emoji 测试通过并明确授权后，[v0.5.0-rc.3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3) 于北京时间 2026-11-16 22:20:16 公开为预发布候选，`draft=false`、`prerelease=true`，未推广稳定 latest。此反馈只记录该短任务通过，不扩写为所有 Agent、手机标题、长度边界或所有设备系统通知均已验收。
+
+- RC3 标签仍固定于 `766011f12892fa1201176bff19faf16ec10d4d74`；10 个附件的身份、名称、大小和摘要保持，公开后逐个匿名下载并核对 SHA256SUMS 通过。RC2 的公开状态、说明、构建目标及 10 个附件保持不变。
+- 在临时 HOME 中通过公开 Release 安装脚本显式选择 RC3、仅安装真实 Linux amd64 二进制，摘要与配置检查通过；没有启动用户服务、连接正式渠道或发送事件。Release 内脚本与指南保持 CI 构建快照，公开状态以当前 Release 为准。
+- main 的 raw 安装推荐值改为公开 RC3，固定版本与无参数推荐版本的隔离安装回归 14 项通过；RC 草稿边界回归 8 项通过；Windows 脚本分类检查 3 项通过、1 项 POSIX 专用跳过，diff 空白检查通过。仅同步公开入口、推荐值、测试和说明，不重新构建候选或改附件。
+- 对比公开 RC2 和 RC3 的实现：Hub/Relay SQLite 初始化结构、Tray 状态/偏好与中继缓存格式、Bridge 安装状态类型均未变化；Tray 新离开检测配置有十分钟缺省值。对应版本升级不需要迁移或清空数据，保留配置和数据后替换程序/镜像即可，Bridge 仍需停止前排空队列并同步新适配包。该结论不用于任意旧开发版本或降级；RC3 保存新增设置后，回退 RC2 应恢复升级前配置，不能只换 EXE。
+- 原生事件、主子/记忆过滤、Windows/WSL 完整组合及 computer use/RDP 等后续实机范围仍按事件覆盖表和前述记录验收，不因公开发布自动改为通过。
+
+原始下载与安装证据只放项目忽略的 tmp，不把实例状态、私人配置或凭据提交公开仓库。本次公开发行不自动更新部署者的 Relay/Tray 或重新发送历史任务。
