@@ -123,6 +123,6 @@ RC3源码已实现安装/JSONC、手机格式、原生内容及必要状态恢�
 - Python/uv：Linux安装器14项、草稿维护8项、发布维护2项、仓库合并1项通过；脚本分类3项通过，1项POSIX专用用例在Windows按规则跳过。完整Hub准备工具校验仓库签名、包复制、私钥排除和损坏拒绝通过。
 - Windows只读版本探测从实际产物取得ZCode3.18.2、Codex0.169.0-alpha.11.1、Antigravity2.32.1；未启用这些探测用配置中的Agent。版本探测不代替原生hook采集。
 - Antigravity App 2.32.1在WSL Debian中使用当前界面已选的Gemini3.8 Flash执行两轮隔离原生任务：开始/活动/结束及多选问题、问题与选项正文、回复后的活动恢复进入无手机渠道的隔离Hub。实际Stop与PostInvocation用户hook均未发送最终回答或模型输出字段；内部描述符有字段不能当作用户hook提供能力，完成正文保持受限，不读transcript或思考补内容。
-- App原生注解将title与查看时间放在同一行，修复标题字符串提取；通过后续真实事件确认名称可得，并补充单行注解回归。App索引仅按精确ID读取标题、父身份和必要来源元数据，不读preview或全文索引。App全工具匹配的PreToolUse在真实审批前触发，提供run_command的BypassSandbox/CommandLine/toolSummary，用户仅允许一次后PostToolUse与Stop恢复正常。新增该请求转换与普通命令不误报回归；最终Antigravity0.3.2包已在原生审批前将approval.required及命令/说明、原生会话名递交隔离Hub；批准后的最终闭环结果另行补录。
+- App原生注解将title与查看时间放在同一行，修复标题字符串提取；通过后续真实事件确认名称可得，并补充单行注解回归。App索引仅按精确ID读取标题、父身份和必要来源元数据，不读preview或全文索引。App全工具匹配的PreToolUse在真实审批前触发，提供run_command的BypassSandbox/CommandLine/toolSummary，用户仅允许一次后PostToolUse与Stop恢复正常。新增该请求转换与普通命令不误报回归；最终Antigravity0.3.2包已在原生审批前将approval.required及命令/说明、原生会话名递交隔离Hub；最终包的真实请求进入等待批准，用户仅允许一次后PostToolUse、活动恢复和Stop正常入库，命令退出码0；完成正文仍受App用户hook缺字段限制。本次未发送手机通知，不将授权闭环扩写为主子、记忆或全部桌面场景已验。
 
 仍须验收：最新各适配包的真实主任务、原生问题/批准及取消恢复、主子/记忆过滤、computer use与RDP真人输入判别、特定RDP问题主机、多屏/DPI体验及当前手机目标的实际标题/正文实收。已有后述Antigravity App原生任务验证，但没有实际手机发送结果，不将本地接收器或HTTP成功记为手机完成。GitHub同提交流水线、签名候选镜像及RC3 Release草稿尚未执行/产出；公开RC2附件、标签、latest及正式服务未改动。
