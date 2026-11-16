@@ -39,6 +39,15 @@ func run() error {
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	switch os.Args[1] {
+	case "version", "--version":
+		asJSON := fs.Bool("json", false, "输出版本、提交、平台及摘要的JSON")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("版本查询不接受位置参数")
+		}
+		return printVersion(os.Stdout, *asJSON)
 	case "setup":
 		path := fs.String("config", defaultConfigPath(), "Bridge YAML 配置路径")
 		if err := fs.Parse(os.Args[2:]); err != nil {
@@ -172,6 +181,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, `AgentPulse Bridge：将本机 Agent 事件发送到 Hub。
 
 用法：
+  agent-pulse-bridge version [--json]          查询当前二进制版本、提交及摘要；也支持 --version
   agent-pulse-bridge setup [--config 路径]       扫描已安装 Agent 并交互配置钩子
   agent-pulse-bridge check-config [--config 路径] 验证配置并输出本机健康地址
   agent-pulse-bridge serve [--config 路径]       启动 Bridge 服务

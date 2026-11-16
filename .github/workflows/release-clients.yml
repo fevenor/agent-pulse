@@ -1,0 +1,97 @@
+name: 构建 Bridge 与 Tray 客户端候选草稿
+
+on:
+  workflow_dispatch:
+    inputs:
+      reuse_release:
+        description: '继续使用的公开 Hub、Relay 与适配包版本'
+        required: true
+        default: 'v0.5.0-rc.3'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: rc-clients-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 核对候选标签
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          [[ "$REF_TYPE" == tag && "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || { echo '只能从 RC 标签构建客户端草稿' >&2; exit 1; }
+  linux:
+    needs: validate
+    runs-on: ubuntu-24.04
+    env:
+      GOTOOLCHAIN: local
+      GOPROXY: https://proxy.golang.org
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Bridge 完整回归与发布边界检查
+        run: |
+          (cd go && go test -race ./... && go vet ./...)
+          uv run --offline --no-project python scripts/check/test_install_bridge.py
+          uv run --offline --no-project python scripts/check/test_rc_draft.py
+          uv run --offline --no-project python scripts/check/test_client_rc_draft.py
+          uv run --offline --no-project python scripts/check/test_script_layout.py
+      - name: 构建 Linux Bridge 两架构产物
+        run: bash scripts/build/package-bridge.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-bridge
+          path: dist/bridge-linux/*
+          if-no-files-found: error
+          retention-days: 14
+  windows:
+    needs: validate
+    uses: ./.github/workflows/windows.yml
+    with:
+      clients_only: true
+  draft:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: 核验客户端产物并创建草稿
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_RELEASE: ${{ inputs.reuse_release }}
+          GOTOOLCHAIN: local
+        run: |
+          uv run --offline --no-project python scripts/check/test_client_rc_draft.py
+          uv run --offline --no-project python scripts/release/create_client_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --reuse-release "$REUSE_RELEASE" --output dist/rc-clients
+      - uses: actions/upload-artifact@v7
+        with:
+          name: 客户端候选发布结果
+          path: dist/rc-clients/release-result.json
+          if-no-files-found: error
+          retention-days: 14

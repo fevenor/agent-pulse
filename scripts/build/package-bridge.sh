@@ -3,6 +3,12 @@
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 output="${1:-$project_root/dist/bridge-linux}"
+version="${AGENT_PULSE_BUILD_VERSION:-dev}"
+commit="${AGENT_PULSE_BUILD_COMMIT:-${GITHUB_SHA:-}}"
+if [[ "${GITHUB_REF_TYPE:-}" == tag && "$version" == dev ]]; then version="$GITHUB_REF_NAME"; fi
+[[ "$version" == dev || "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { printf '%s\n' '构建版本格式无效。' >&2; exit 1; }
+[[ -z "$commit" || "$commit" =~ ^[0-9a-f]{40}$ ]] || { printf '%s\n' '构建提交必须为完整摘要。' >&2; exit 1; }
+ldflags="-s -w -X main.buildVersion=$version -X main.buildCommit=$commit"
 [[ "$(go env GOVERSION)" == go1.27.4 ]] || { printf '%s\n' '发布构建需由开发方准备 Go 1.27.4，用户安装不需要 Go。' >&2; exit 1; }
 [[ ! -e "$output" ]] || { printf '%s\n' '输出目录已存在，请使用新目录，避免覆盖发布物。' >&2; exit 1; }
 mkdir -p "$(dirname -- "$output")"
@@ -12,7 +18,7 @@ trap 'rm -rf -- "$staging"' EXIT
 for arch in amd64 arm64; do
   (
     cd "$project_root/go"
-    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=false -ldflags '-s -w' -o "$staging/agent-pulse-bridge-linux-$arch" ./cmd/agent-pulse-bridge
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=false -ldflags "$ldflags" -o "$staging/agent-pulse-bridge-linux-$arch" ./cmd/agent-pulse-bridge
   )
   go version -m "$staging/agent-pulse-bridge-linux-$arch" > "$staging/build-info-$arch.txt"
 done

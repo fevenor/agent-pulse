@@ -7,6 +7,11 @@ on:
     tags: ['v*', '!v*-rc.*']
   workflow_dispatch:
   workflow_call:
+    inputs:
+      clients_only:
+        description: '仅打包Tray，跳过适配包和Hub发布准备'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +29,7 @@ jobs:
       GOTOOLCHAIN: 'local'
       GOPROXY: 'https://proxy.golang.org'
       CARGO_BUILD_JOBS: '2'
+      CLIENTS_ONLY: ${{ inputs.clients_only }}
       # 英文 Windows runner 的管道默认 cp1252，中文诊断必须显式使用 UTF-8。
       PYTHONUTF8: '1'
       PYTHONIOENCODING: 'utf-8'
@@ -69,7 +75,8 @@ jobs:
       - name: 检查与本地服务回归
         shell: pwsh
         run: |
-          ./scripts/check/check.ps1 -Tray -Integration
+          $clientsOnly = $env:CLIENTS_ONLY -eq 'true'
+          ./scripts/check/check.ps1 -GoOnly:$clientsOnly -Tray -Integration
           uv run --offline --no-project python scripts/check/test_script_layout.py
           uv run --offline --no-project python scripts/check/test_rc_draft.py
           if ($LASTEXITCODE -ne 0) { throw 'RC 草稿附件回归失败' }
@@ -86,7 +93,8 @@ jobs:
             cargo clippy --locked --profile preview --features dev-demo --all-targets -- -D warnings
             if ($LASTEXITCODE -ne 0) { throw '演示配置 Clippy 检查失败' }
           } finally { Pop-Location }
-      - name: 打包便携程序与适配包
+      - name: 打包适配包并检查Hub发布准备
+        if: ${{ !inputs.clients_only }}
         shell: pwsh
         run: |
           ./scripts/build/package-adapters.ps1 -NativeOnly
@@ -94,16 +102,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows 命令适配包清单检查失败' }
           uv run --offline --no-project python scripts/check/test_prepare_hub_release.py ./bin/dev/agent-pulse-adapters.exe
           if ($LASTEXITCODE -ne 0) { throw 'Hub 镜像准备流程测试失败' }
+      - name: 打包Windows便携程序并核验内置Bridge版本
+        shell: pwsh
+        run: |
           ./scripts/build/package-windows.ps1
           uv run --offline --no-project python -c "import runpy; runpy.run_path('tests/e2e/windows_desktop.py')['binary_boundary_check']()"
           if ($LASTEXITCODE -ne 0) { throw '发布与演示隔离检查失败' }
           uv run --offline --no-project python -c "import zipfile; z=zipfile.ZipFile('dist/windows-amd64.zip'); assert z.testzip() is None; assert sorted(z.namelist()) == sorted(['agent-pulse-tray.exe', 'bridge.example.yaml', 'tray.example.yaml', '使用说明.md'])"
           if ($LASTEXITCODE -ne 0) { throw '便携包内容检查失败' }
+          $version = (& ./.cache/build/windows/bridge.exe version --json | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0) { throw '内置Bridge版本查询失败' }
+          $expectedVersion = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $digest = (Get-FileHash ./.cache/build/windows/bridge.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($version.version -ne $expectedVersion -or $version.commit -ne $env:GITHUB_SHA -or $version.sha256 -ne $digest -or $version.platform -ne 'windows/amd64' -or $version.go_version -ne 'go1.27.4') { throw '内置Bridge发布元数据不符' }
+          $version | ConvertTo-Json | Set-Content -Encoding utf8 dist/bridge-version.json
       - uses: actions/upload-artifact@v7
         with:
           name: windows-amd64
           path: |
             dist/windows-amd64.zip
+            dist/bridge-version.json
             dist/repository-windows/index-input.json
             dist/repository-windows/packages/*.zip
           if-no-files-found: error

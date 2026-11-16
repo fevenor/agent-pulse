@@ -16,7 +16,7 @@ func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'
 
 // 宿主直接调用预构建EXE，不为hook再套编码PowerShell。
 func hookCommandPrefix(exe, cfg, id string) string {
-	return quoteCMD(exe) + " dispatch --config " + quoteCMD(cfg) + " --adapter " + quoteCMD(id) + " --hook "
+	return quoteCMD(normalizeHookPath(exe)) + " dispatch --config " + quoteCMD(normalizeHookPath(cfg)) + " --adapter " + quoteCMD(id) + " --hook "
 }
 func quoteCMD(s string) string                { return "\"" + s + "\"" }
 func hookCommand(prefix, event string) string { return prefix + quoteCMD(event) }
@@ -43,7 +43,44 @@ func hostCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd
 }
-func ownsHookCommand(command, prefix string) bool { return strings.HasPrefix(command, prefix) }
+
+// Rust的路径规范化会产生Windows加长路径；这与普通盘符/UNC路径指向同一文件。
+func normalizeHookPath(path string) string {
+	if strings.HasPrefix(path, `\\?\UNC\`) {
+		return `\\` + path[len(`\\?\UNC\`):]
+	}
+	if strings.HasPrefix(path, `\\?\`) && len(path) >= 7 && path[5] == ':' && path[6] == '\\' {
+		return path[4:]
+	}
+	return path
+}
+
+// 仅规范化双引号包围的已知文件路径形式；命令、配置身份与Agent仍须匹配。
+func normalizeQuotedHookPaths(command string) string {
+	var out strings.Builder
+	for {
+		start := strings.IndexByte(command, '"')
+		if start < 0 {
+			out.WriteString(command)
+			break
+		}
+		out.WriteString(command[:start+1])
+		command = command[start+1:]
+		end := strings.IndexByte(command, '"')
+		if end < 0 {
+			out.WriteString(command)
+			break
+		}
+		out.WriteString(normalizeHookPath(command[:end]))
+		out.WriteByte('"')
+		command = command[end+1:]
+	}
+	return out.String()
+}
+
+func ownsHookCommand(command, prefix string) bool {
+	return strings.HasPrefix(normalizeQuotedHookPaths(command), normalizeQuotedHookPaths(prefix))
+}
 
 // 命令字符串宿主会展开百分号/延迟变量；不允许把这类路径误解释成其他程序。
 func validateHookPaths(exe, cfg string) error {

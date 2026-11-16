@@ -373,6 +373,15 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 			continue
 		}
 		state.Installed[id] = old
+		// 旧Bridge会把JSONC解析失败记成坏包；只解除这条已知误判，且先核验当前配置。
+		// 入口不可启动、解包或摘要错误的隔离不在此处解除。
+		if p.Kind == "opencode-plugin" && state.Rejected[p.SHA256] == "宿主配置必须为 JSON 对象；不覆盖无效配置" {
+			if raw, readErr := os.ReadFile(c.Adapters.Managed[id]); readErr == nil {
+				if _, configErr := hookConfig(c, configPath, p, raw); configErr == nil {
+					delete(state.Rejected, p.SHA256)
+				}
+			}
+		}
 		if old.Package.Version == p.Version && old.Package.SHA256 == p.SHA256 {
 			if state.Rejected[p.SHA256] == "" {
 				old.Error = ""
@@ -434,7 +443,7 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 			state = before
 			old.Error = err.Error()
 			state.Installed[id] = old
-			state.Rejected[p.SHA256] = err.Error()
+			// 此时包已验签、校验并解包；宿主配置或文件写入失败不是坏包，允许后续重试。
 		}
 	}
 	return AtomicJSON(filepath.Join(dir, "state.json"), state)

@@ -9,6 +9,11 @@ function Invoke-Checked {
 }
 $previousToolchain = $env:GOTOOLCHAIN
 $previousEmbedded = $env:AGENT_PULSE_BRIDGE_BINARY
+$buildVersion = if ($env:AGENT_PULSE_BUILD_VERSION) { $env:AGENT_PULSE_BUILD_VERSION } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
+$buildCommit = if ($env:AGENT_PULSE_BUILD_COMMIT) { $env:AGENT_PULSE_BUILD_COMMIT } else { $env:GITHUB_SHA }
+if ($buildVersion -ne 'dev' -and $buildVersion -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$') { throw '构建版本格式无效' }
+if ($buildCommit -and $buildCommit -notmatch '^[0-9a-f]{40}$') { throw '构建提交必须为完整摘要' }
+$bridgeFlags = "-s -w -X main.buildVersion=$buildVersion -X main.buildCommit=$buildCommit"
 try {
     $env:GOTOOLCHAIN = 'local'
     $target = & go env GOOS GOARCH
@@ -17,11 +22,12 @@ try {
     New-Item -ItemType Directory -Force $internalOutput | Out-Null
     Push-Location (Join-Path $projectRoot 'go')
     try {
-        Invoke-Checked go @('build','-trimpath','-buildvcs=false','-ldflags','-s -w','-o', (Join-Path $internalOutput 'bridge.exe'),'./cmd/agent-pulse-bridge')
+        Invoke-Checked go @('build','-trimpath','-buildvcs=false','-ldflags',$bridgeFlags,'-o', (Join-Path $internalOutput 'bridge.exe'),'./cmd/agent-pulse-bridge')
         if ($DevelopmentTools) {
             $devOutput = Join-Path $projectRoot 'bin/dev'
             New-Item -ItemType Directory -Force $devOutput | Out-Null
-            Invoke-Checked go @('build','-trimpath','-buildvcs=false','-o', "$devOutput/", './cmd/agent-pulse-hub','./cmd/agent-pulse-relay','./cmd/agent-pulse-bridge','./cmd/agent-pulse-client','./cmd/agent-pulse-adapters','./cmd/agent-pulse-push-test')
+            Invoke-Checked go @('build','-trimpath','-buildvcs=false','-o', "$devOutput/", './cmd/agent-pulse-hub','./cmd/agent-pulse-relay','./cmd/agent-pulse-client','./cmd/agent-pulse-adapters','./cmd/agent-pulse-push-test')
+            Copy-Item -LiteralPath (Join-Path $internalOutput 'bridge.exe') -Destination (Join-Path $devOutput 'agent-pulse-bridge.exe')
             foreach ($adapter in @('zcode','codex','antigravity')) {
                 Invoke-Checked go @('build','-trimpath','-buildvcs=false','-ldflags',"-s -w -X main.adapterID=$adapter",'-o',(Join-Path $devOutput "agent-pulse-adapter-$adapter.exe"),'./cmd/agent-pulse-adapter')
             }
