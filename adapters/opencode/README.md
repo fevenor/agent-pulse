@@ -38,7 +38,8 @@ SDK 为开发/宿主依赖，不把整套 Node 服务部署进 Bridge。安装�
 | --- | --- |
 | `session.created` | `session.started` |
 | `session.execution.started` | `session.resumed` |
-| `session.execution.succeeded` | `turn.completed`，仅表示本轮执行完成 |
+| `session.text.ended` | 缓存当前最后助手消息的可见文本，不生成独立提醒 |
+| `session.execution.succeeded` | `turn.completed`，附已捕获的当前最终回答；仅表示本轮执行完成 |
 | `session.execution.failed` | `run.failed` |
 | `session.execution.interrupted` | `run.interrupted` |
 | `session.deleted` | `session.closed`，需已有可识别会话信息 |
@@ -46,7 +47,7 @@ SDK 为开发/宿主依赖，不把整套 Node 服务部署进 Bridge。安装�
 | `form.created` | `input.required` |
 | `permission.replied` / `form.replied` / `form.cancelled` | `activity.observed`，使旧等待提醒失效 |
 
-不将 `session.idle` 当作完成，不将单工具失败当作主会话失败，不复制错误详情或命令/权限资源列表进手机正文。事件 ID 由来源、Agent 名和原生事件 ID 计算，原生持久事件使用 `durable.seq`；批准/输入等待等实时事件无原生序号时按实时事件递交。
+不将 `session.idle` 当作完成，不将单工具失败当作主会话失败。表单只采集可见标题、字段、说明及选项；批准只采集 action/message，失败只采集 error.message，不复制完整响应、思考或权限资源。缓存错过本轮文本时不回读历史，明确提示未取得正文。具体白名单与有界缓存见[事件覆盖表](../../docs/event-coverage.md)。事件 ID 由来源、Agent 名和原生事件 ID 计算，原生持久事件使用 `durable.seq`；批准/输入等待等实时事件无原生序号时按实时事件递交。
 
 插件读取真实会话信息，有 `parentID` 即过滤；读失败、会话缺失、目录不匹配时忽略，不推断为主代理。每个实例只处理自己的目录；删除事件使用最多 1024 条的会话缓存，缓存缺失则忽略。获取会话和递交 Bridge 各限 200 毫秒，失败仅有限频诊断，不阻塞 Agent 操作或自动批准。
 
@@ -54,7 +55,7 @@ SDK 为开发/宿主依赖，不把整套 Node 服务部署进 Bridge。安装�
 
 `pnpm smoke` 使用本机真实 OpenCode，在临时目录生成配置，验证插件激活、创建会话、原生输入表单事件、Bridge 转发、Hub 已读和强制终止后恢复。测试代码见 [`test/smoke.ts`](test/smoke.ts)，主/子过滤和生命周期转换样例见 [`test/adapter.test.ts`](test/adapter.test.ts)。完成/失败/中断的映射经过 SDK 类型与样例测试，尚未用模型实际执行触发；真实子代理运行、热重载和多主机自动更新仍待验收。
 
-当前不自动修改用户 Agent 配置、不分发更新包。独立版本目录和自动更新属于后续实施；保留本插件为独立包，普通映射修改不需要升级 Bridge。
+当前已通过 Bridge 的受管理配置安装固定 loader，并经官方签名包自动更新；安装只维护 AgentPulse 自己的条目。常驻宿主仍需重新加载，普通映射修改不需要升级 Bridge。
 
 接口依据：锁定的 `@opencode/plugin` / `@opencode/client` 2.0.20 类型、本机真实事件，以及 [官方插件说明](https://opencode.ai/docs/plugins/)、[服务端插件 API](https://opencode.ai/docs/build/plugins/server/)。在线文档可能对应更高版本，应以锁定版本和运行结果为准。
 

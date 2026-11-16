@@ -17,14 +17,14 @@
 
 ## 1. 部署 Hub
 
-将镜像标签替换为发布页提供的完整 RC 版本。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
+当前公开版本为 [v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2)，属于预发布候选；目前没有最新稳定发布。以下命令显式选择该版本；安装其他版本时以对应发布说明为准。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
 
 ```sh
 docker volume create agent-pulse-hub-data
 docker run -d --name agent-pulse-hub --restart unless-stopped \
   -p 127.0.0.1:18700:18700 \
   -v agent-pulse-hub-data:/data \
-  ghcr.io/fevenor/agent-pulse-hub:替换为已发布RC版本
+  ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.2
 ```
 
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
@@ -40,18 +40,18 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。默认选择最新稳定发布；指定 `--version` 可安装已公开的预发布版本。
 
-公开 Release 附件齐备后，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
+安装当前公开 RC2 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
 set -o pipefail
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://github.com/fevenor/agent-pulse/releases/latest/download/install-bridge.sh \
-  | bash -s -- --setup
+  https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.2/install-bridge.sh \
+  | bash -s -- --version v0.5.0-rc.2 --setup
 ```
 
-若已取得安装脚本，也可执行 `bash scripts/install/bridge.sh --version "v已公开版本" --setup`。不带 `--setup` 只安装二进制和用户服务定义，不自动启用服务或修改 Agent 配置；已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
+若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。默认最新稳定入口不选择 RC，目前会因没有稳定发布而失败。不带 `--setup` 只安装二进制和用户服务定义，不自动启用服务或修改 Agent 配置；已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
 
-当前 RC 若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
+其他候选若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
 
 ```sh
 bash scripts/install/bridge.sh --version "v已构建版本" \
@@ -112,7 +112,7 @@ Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客�
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：
 
 ```dotenv
-AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:sha-替换为已发布完整提交哈希
+AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.2
 AGENT_PULSE_RELAY_TOKEN=替换为生成的随机令牌
 ```
 
@@ -125,7 +125,7 @@ AGENT_PULSE_RELAY_URL=https://relay.example.invalid
 AGENT_PULSE_RELAY_TOKEN=与Relay部署一致的令牌
 ```
 
-使用 Compose 时编辑 `hub.env` 后执行 `docker compose up -d --force-recreate`。若原先使用 `docker run`，需停止并删除原容器，再用相同数据卷重建容器并添加 `-e` 变量；SQLite 保留在原命名卷中。Hub 主动连接 Relay，不必开放 Hub 公网入站。新版 Bridge 与 Tray 直连 Hub 发现并缓存 Relay 配置，手工配置仍优先。缓存含中继凭据，应和便携配置一并保管。发布包含 ZCode 的适配包索引前，须先将所有消费该索引的 Bridge 升级到 0.5.0，详见适配器说明。
+使用 Compose 时编辑 `hub.env` 后执行 `docker compose up -d --force-recreate`。若原先使用 `docker run`，需停止并删除原容器，再用相同数据卷重建容器并添加 `-e` 变量；SQLite 保留在原命名卷中。Hub 主动连接 Relay，不必开放 Hub 公网入站。新版 Bridge 与 Tray 直连 Hub 发现并缓存 Relay 配置，手工配置仍优先。缓存含中继凭据，应和便携配置一并保管。本项目组件和适配包应使用匹配的现行候选构建，不维护旧接收器版本门槛，详见适配器说明。
 
 验收公网 `/healthz` 返回 `hub_connected: true`；业务接口无凭据应返回 401；带凭据访问 `/api/v1/snapshot` 应与 Hub 的 `run_id` 一致。健康接口免 token 不代表业务接口免鉴权。公网必须 HTTPS/WSS，仅字面回环 IP 允许 HTTP。
 

@@ -2,6 +2,15 @@
 
 首次部署按 [部署指南](deployment.md) 执行。普通用户只使用完整 Hub 与 Relay 两个成品镜像，不需要理解或安装中间构建。Hub 使用 [`hub.image.yaml`](../deploy/compose/hub.image.yaml)，Relay 使用 [`relay.image.yaml`](../deploy/compose/relay.image.yaml)。
 
+## 当前公开版本
+
+[v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 已公开为预发布候选，Hub 与 Relay 均提供 Linux amd64/arm64 镜像：
+
+- 完整 Hub：`ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.2`，包含官方签名仓库和公钥。
+- Relay：`ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.2`。
+
+两包均为公开包并关联本项目，支持匿名拉取。公开候选的标签和附件固定，不再沿用草稿滚动替换；后续变更应发布新版本。本版本不是稳定版，不推广稳定 `latest`。`candidate-manifest.json` 和 `trial-guide.md` 保留构建时快照，当前发布状态以 Release 页面为准。公开验证证据见[开发记录](development-status.md#2026-11-16-rc2-公开发布与完工检查)。
+
 ## 发布与签名规则
 
 采用现有 Hub/Relay 分发和官方索引签名。版本号用于区分版本，SHA-256 用于核对文件，签名用于确认发布授权；版本和摘要不替代签名。贡献者只提交源码与测试，官方发布者审核、构建并统一签名。普通用户不生成私钥、不签适配包，也不自行组装 Hub。

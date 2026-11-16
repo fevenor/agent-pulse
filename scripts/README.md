@@ -11,11 +11,11 @@
 
 ## 用户安装
 
-Linux 使用 `bash scripts/install/bridge.sh --setup`。安装器自动识别 Linux amd64/arm64，默认下载 GitHub 最新稳定发布；指定 `--version v版本` 可选择已公开的候选版本。二进制、同一 Release 的校验清单及架构验证通过后才安装；`--setup` 明确授权随后逐项配置 Agent 并启动用户服务：先说明进入配置，再展示 Agent 名称/版本/路径；配置结束后才说明以后如何用 setup 修改。OpenCode 自动识别已有配置，只有本次启用成功的 Codex CLI 提示额外授权。没有公开发布或附件缺失时会报错，不自动编译。
+安装当前公开 [v0.5.0-rc.2](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.2) 时，源码目录中的 Linux 入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.2 --setup`；若下载 Release 附件则使用 `bash install-bridge.sh --version v0.5.0-rc.2 --setup`。目前没有稳定发布，不带版本的默认入口不可用。安装器自动识别 Linux amd64/arm64，默认下载 GitHub 最新稳定发布；指定 `--version v版本` 可选择已公开的候选版本。二进制、同一 Release 的校验清单及架构验证通过后才安装；`--setup` 明确授权随后逐项配置 Agent 并启动用户服务：先说明进入配置，再展示 Agent 名称/版本/路径；配置结束后才说明以后如何用 setup 修改。OpenCode 自动识别已有配置，只有本次启用成功的 Codex CLI 提示额外授权。没有公开发布或附件缺失时会报错，不自动编译。
 
 本地预构建模式 `--version v版本 --file 文件 --sha256 摘要` 只用于维护者提供的测试或离线交付。两种方式都不需要 Go、Node.js、Rust。已有配置和自定义服务保留；运行中的 Bridge 先确认队列清空并停止。公网下载通过 GitHub HTTPS 和同发布摘要校验，下载本身不替代 Agent 钩子信任或真实通知验收。
 
-公开下载命令、平台边界和运行验收见[部署指南](../docs/deployment.md)。当前候选草稿是否可下载以 GitHub 实际发布状态为准，不把本地流程修改当成远端已发布。
+公开下载命令、平台边界和运行验收见[部署指南](../docs/deployment.md)。RC2 已公开，其他候选是否可下载仍以 GitHub 实际发布状态为准，不把本地流程修改当成远端已发布。
 
 ## 开发与发布
 
@@ -26,4 +26,4 @@ Linux 使用 `bash scripts/install/bridge.sh --setup`。安装器自动识别 Li
 - RC 草稿消费同一工作流的 `linux-bridge` 产物，不临时替用户构建；远端写操作仍由发布者授权执行。
 - Windows 构建、检查和便携打包分别见对应子目录，辅助工具 `windows-tools.ps1` 只属于开发构建。
 
-本次整理不保留根目录含混的旧脚本别名；工程及文档统一使用上述现行路径。历史验证记录中的入口路径已按现行目录整理，不表示重新执行过历史验证。
+工程及文档统一使用上述按职责分类的路径，不维护含混的根目录脚本别名。开发记录中的复现命令使用现行入口，不表示历史宿主测试已重新执行。

@@ -2,7 +2,7 @@
 
 ## 状态与用途
 
-本文维护用户已确认的 Windows 桌面交互规则与技术边界。当前运行方法见 [客户端说明](windows-client.md)，实现进度、自动检查和原生待验收项见 [开发记录](development-status.md)。临时设计预览保存在本地 `tmp/design/`，不随源码分发；浏览器预览不代表 Windows 原生交互已验收。
+本文维护用户已确认的 Windows 桌面交互规则与技术边界。当前运行方法见 [客户端说明](windows-client.md)，实现进度、自动检查和原生待验收项见 [开发记录](development-status.md)。浏览器预览和模拟数据不代表 Windows 原生交互已验收。
 
 ## 1. 产品入口、构建与运行
 
@@ -10,7 +10,7 @@
 
 Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Docker；测试客户端、发布工具和推送探针不进入 Windows 用户包。默认 `scripts/build/build.ps1` 只将用户入口放入 `bin/`；显式开发工具构建输出到 `bin/dev/`。
 
-交付一个用户可运行的 Tray 程序，按需内置已有 Go Bridge（本机 Agent 事件接入能力），由 Tray 自动释放到便携目录的 `data/internal/` 版本化内部目录并管理。只查看远端会话时不启动本地 Bridge；启用 Windows Agent 接入时才运行辅助进程。用户无须单独下载、配置可执行路径或启动 Bridge。WSL 内的 Bridge 仍跟随 Debian 环境运行。
+交付一个用户可运行的 Tray 程序，按需内置已有 Go Bridge（本机 Agent 事件接入能力），由 Tray 自动释放到便携目录的 `data/internal/` 版本化内部目录并管理。只查看远端会话时不启动本地 Bridge；启用 Windows Agent 接入时才运行辅助进程。用户无须单独下载、配置可执行路径或启动 Bridge。WSL 内的 Bridge 仍跟随其 Linux 环境独立运行。
 
 这是“一个用户入口、一个发行产品”，启用本机接入后进程管理器仍能看到内部 Go 辅助进程。保留经过验证的 Go 实现，避免为收敛入口而重写接入链路。
 
@@ -18,7 +18,7 @@ Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Do
 
 ### 便携配置、启动与窗口
 
-普通启动和开发演示均默认驻留托盘；只有显式 `--show` 或 `--settings` 打开列表或设置。默认读取程序旁的 `tray.yaml`，首次缺失时创建空配置；缓存、悬浮偏好及内部辅助程序保存在旁边的 `data/`。指定其他配置时，相对路径和数据目录跟随该配置所在目录。目录不可写时明确报错，不静默回退到用户目录。升级保留配置和数据，旧版缓存迁移说明见客户端文档。
+普通启动和开发演示均默认驻留托盘；只有显式 `--show` 或 `--settings` 打开列表或设置。默认读取程序旁的 `tray.yaml`，首次缺失时创建空配置；缓存、悬浮偏好及内部辅助程序保存在旁边的 `data/`。指定其他配置时，相对路径和数据目录跟随该配置所在目录。目录不可写时明确报错，不静默回退到用户目录。升级保留配置和数据，不承诺旧候选缓存迁移；实际数据重建须明确授权。
 
 登录自启动使用当前用户“启动”文件夹的 `AgentPulse.lnk`，设置页读取快捷方式的目标和参数以及 Windows 禁用状态，不保存自启动布尔值。用户可从 `shell:startup` 手动删除；软件关闭自启动也只删除该快捷方式。移动程序后识别旧位置，允许更新或移除。系统禁用时提示在 Windows 启动应用中恢复，程序不写注册表，不自动撤销禁用，不管理其他命名的快捷方式或计划任务。`--autostart` 即使遇到已有实例也不唤起窗口。
 
@@ -90,7 +90,7 @@ Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Do
 | 小窗展开 | 图标保持展开；鼠标从图标移向小窗时不误收起；关闭小窗后恢复计时 |
 | 主动隐藏 | 托盘关闭悬浮开关后完全隐藏；重开恢复上次合法位置 |
 
-多显示器接缝和任务栏侧不能简单把窗口移出边界：使用当前屏幕工作区与裁剪命中区域，避免图标跑到另一屏、覆盖任务栏或透明区域拦截鼠标。显示器拔出、DPI 改变和工作区变化后重新限制位置；从托盘“设置…”进入“重置悬浮位置”可恢复入口。原型先验证右边缘，再扩展四边及多屏。
+多显示器接缝和任务栏侧不能简单把窗口移出边界：使用当前屏幕工作区与裁剪命中区域，避免图标跑到另一屏、覆盖任务栏或透明区域拦截鼠标。显示器拔出、DPI 改变和工作区变化后重新限制位置；从托盘“设置…”进入“重置悬浮位置”可恢复入口。四边、多屏与 DPI 的具体原生验证程度分别记录在开发记录。
 
 动画只在显示/收起过程中驱动帧，静止时无持续动画循环。遵循系统减少动态效果设置。全屏时不自动展开小窗或详情；图标可作为小标识，独占全屏不可显示时延迟提醒，不强行退出全屏或抢焦点。
 
@@ -100,7 +100,7 @@ Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Do
 
 目前采集的是通知事件，不是完整 Agent 对话。详情只能展示已采集的内容、时间、项目和来源信息；完整对话、工具输出、源码或远程控制不属于本轮目标。
 
-时间线按本地时间倒序显示，每行包含事件类型、标题和未读/已读/普通记录；最新事件默认展开，点击其他行切换展开，底部按批加载更早历史。
+时间线按持久化事件位置倒序显示本地时间、类型和阅读状态；展开项显示标题及非空正文，可同时展开多项，底部按批加载更早历史。订阅发现新活动后自动逐页补齐并去重；位于顶部或最新标题时跟随，阅读历史或长正文时按事件和像素偏移保位，固定底栏显示新事件数与“回到最新”。正文最多 32 KiB，保留换行并自然折行，超限明确提示，不建设完整对话渲染。
 
 成功加载并实际展示的未读事件才能标记已读：详情须位于前台，当前事件标题完整进入滚动可视区域；后台窗口、尚未滚动到的内容、分页外、加载失败和新到但未显示的内容不自动已读。显式“本会话全部已读”是独立动作。返回小窗保持原筛选与位置；关闭详情不退出应用。
 
@@ -114,7 +114,7 @@ Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Do
 
 按来源静默只抑制本客户端的主动提醒，保留记录与未读；静默期间的提醒不在解除后补弹。提醒交付后才记录已提醒 ID，保存前崩溃允许重复，避免提前确认导致漏提醒。
 
-设置页可将多个来源绑定到任务唤醒：有在线运行任务时请求保持 Windows 系统运行，全部不再运行或失联时释放；不保持显示器常亮、不改变电源计划。有效状态采用既有会话归约和人工修正，归档不代表结束。
+设置页只列采集来源 Bridge，保留未归档离线 Bridge，排除纯 Tray。可将多个采集来源绑定到任务唤醒：有在线运行任务时请求保持 Windows 系统运行，全部不再运行或失联时释放；不保持显示器常亮、不改变电源计划。有效状态采用既有会话归约和人工修正，归档不代表结束。
 
 ## 4. 会话管理和异常修正
 
@@ -166,8 +166,6 @@ Windows 用户只启动 AgentPulse Tray。Hub 与 Relay 继续部署在 Linux Do
 | 多屏与 DPI | GPUI Windows 已处理 WM_DPICHANGED / WM_DISPLAYCHANGE，Win32 有屏幕工作区查询 | 有能力入口；实际缩放、显示器移除、远程桌面仍需原生验证 |
 | 单实例/开发日志 | Windows 命名互斥量；Rust 条件编译及控制台运行模式 | 与 GPUI 渲染无冲突；重点测试锁的初始化顺序及第二次启动激活 |
 | 会话管理 | UI 本身可绘制表单和操作 | 主要工作在 Hub 数据语义、接口及同步，不是换 UI 框架能解决的问题 |
-
-本地核对范围：`tray/src/main.rs`、`icon.rs`、`platform.rs`、`model.rs`，以及锁定版本 GPUI 的 `platform/windows/window.rs`、`events.rs`、`elements/div.rs`；没有改动 Cargo 缓存或框架源码。
 
 公开依据：[GPUI WindowOptions](https://docs.rs/gpui/0.2.2/gpui/struct.WindowOptions.html)、[tray-icon 构造选项](https://docs.rs/tray-icon/0.26.1/tray_icon/struct.TrayIconBuilder.html)、[Windows 窗口定位](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos)、[鼠标悬停/离开通知](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-trackmouseevent)、[窗口区域裁剪](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn)、[命名互斥量](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw)、[Rust 条件编译](https://doc.rust-lang.org/reference/conditional-compilation.html)。
 

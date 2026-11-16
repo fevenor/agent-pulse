@@ -83,7 +83,9 @@ uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py verify -
 uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py stop --directory tmp/zcode-native
 ```
 
-`serve` 创建无手机渠道的隔离 Hub、临时签名的 ZCode 包和正式 Tray，实际由内置 Bridge 安装钩子。就绪后在 ZCode 新建无项目任务，选择 GLM-5.3-Flash，发送一条不调用工具的简短请求并等待完成；`verify` 核对开始/继续/完成事件、实际运行版本和 Tray 未读。模型选择由桌面确认，脚本不自行调用模型。缺少这些事件应判失败，不能只看回答成功。
+`serve` 创建无手机渠道的隔离 Hub、临时签名的 ZCode 包和正式 Tray，实际由内置 Bridge 安装钩子。就绪后在 ZCode 新建无项目任务，选择 GLM-5.3-Flash，发送一条不调用工具的简短请求并等待完成；`verify` 核对开始/继续/完成事件、非空最终回答、实际运行版本和 Tray 未读。模型选择由桌面确认，脚本不自行调用模型。缺少这些事件应判失败，不能只看回答成功。
+
+需要验收原生提问时，在同一专用会话中让宿主实际调用提问工具、检查问题/选项并回答，再执行 `verify --require-question`；测试会核对非空提问正文及没有重复批准。文本中出现问号不等于原生提问事件，合成事件不能替代宿主验收。
 
 默认配置为用户目录下的 `.zcode/cli/config.json`，可用 `--zcode-config` 指定其他测试配置；原配置备份保存在该忽略目录。`stop` 或一小时超时会停止自建进程并移除测试钩子，保留其他配置和钩子。整个测试目录含私人配置备份，不能提交或公开分发。
 

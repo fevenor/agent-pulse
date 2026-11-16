@@ -1,10 +1,10 @@
 # Linux 运行说明
 
-提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
+本文面向源码开发与本地联调。普通用户安装当前公开 RC2 请先按[部署指南](deployment.md)下载预构建和完整镜像，无需编译。提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
 
 ## 准备和构建
 
-需要 Go 1.25 或兼容版本。SQLite 使用纯 Go 驱动，无需额外数据库进程或 C 编译器；执行竞态检测需要本机 Go 支持的 C 工具链。适配器开发/检查使用 Volta 管理 Node.js 24.14.1、pnpm 10.33.2；插件运行由 OpenCode 提供宿主，不要求 Bridge 所在主机额外运行 Node 服务。
+源码语言底线为 Go 1.25.0，发布及验证工具链固定 Go 1.27.4。SQLite 使用纯 Go 驱动，无需额外数据库进程或 C 编译器；执行竞态检测需要本机 Go 支持的 C 工具链。适配器开发/检查使用 Volta 管理 Node.js 24.14.1、pnpm 10.33.2；插件运行由 OpenCode 提供宿主，不要求 Bridge 所在主机额外运行 Node 服务。
 
 从仓库根目录执行：
 
@@ -83,7 +83,7 @@ max_title_chars: 40
 max_body_chars: 1000
 ```
 
-上述数值仅为示例。应分别验证渠道接口接受、App 内收件和系统通知展示，再确定适合实际设备的值；Hub 的字段上限不代表第三方渠道能接收或显示同样长度。旧版本 Hub 会拒绝未知配置字段，启用前先升级到包含该功能的版本。
+上述数值仅为示例。应分别验证渠道接口接受、App 内收件和系统通知展示，再确定适合实际设备的值；Hub 的字段上限不代表第三方渠道能接收或显示同样长度。所有本项目组件使用同一现行结构；不以这些参数承诺旧候选兼容。
 
 Hub 重启后等待 35 秒接受设备状态和已读再处理积压。至少一台在线未锁屏 Tray 时跳过手机；没有 Tray 或全部锁屏时发送。发送前检查已读、状态失效和默认 24 小时有效期，失效只停止提醒，不删除历史。HTTP 429/5xx 最多三次尝试、间隔 10 秒；网络异常或响应结果未知记为 `unknown`，不会盲目重发；开始发送后崩溃同样记未知。Web 的“推送记录”展示最近 200 条结果；`unknown` 表示不能确认送达，不自动或人工盲目补发。会话关闭解除输入/批准等待，但保留刚发生的完成、失败和中断提醒。
 
@@ -146,7 +146,7 @@ docker compose -f deploy/compose/relay.yaml up -d --build
 
 Hub 用 `HUB_BIND_IP` 指定可信内网 IP；默认只绑定回环。编辑各自的 `*.runtime.yaml` 配置渠道和中继。Hub/Relay 镜像均以非 root 用户运行，SQLite 放在独立数据卷中；适配包目录只读挂载。Relay 端口仅绑定宿主回环，由 [Nginx 示例](../deploy/proxy/relay.nginx.conf) 终结 TLS。代理应覆盖 `X-Forwarded-Proto` 并正确转发 WebSocket，不将 token 写入日志。
 
-Bridge 用户安装入口为 `bash scripts/install/bridge.sh --setup`，自动下载并校验当前 Linux 架构的预构建二进制，不调用 Go 或构建脚本；Release 附件缺失则明确失败。只安装时不加 `--setup`，保留已有 Bridge YAML 和用户服务。开发者测试已构建文件可显式使用 `--version 版本 --file 文件 --sha256 摘要`，目标使用者无需编译。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
+当前 RC2 的 Bridge 用户安装入口为 `bash scripts/install/bridge.sh --version v0.5.0-rc.2 --setup`，自动下载并校验当前 Linux 架构的预构建二进制，不调用 Go 或构建脚本；Release 附件缺失则明确失败。只安装时不加 `--setup`，保留已有 Bridge YAML 和用户服务。开发者测试已构建文件可显式使用 `--version 版本 --file 文件 --sha256 摘要`，目标使用者无需编译。systemd 的 PATH 若不含 Agent 安装目录，在 `~/.config/agent-pulse/environment` 填写明确的 PATH，不能期待服务自动读取交互 shell 配置。
 
 `bash scripts/build/build-targets.sh` 交叉编译 Linux amd64/arm64 和 Windows amd64 程序，以及 Windows arm64 Bridge/测试客户端；交叉编译不等于目标环境验收。Windows 安装器和 Tray 不在这个脚本的交付范围。
 

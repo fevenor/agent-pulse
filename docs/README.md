@@ -7,8 +7,9 @@
 - [`development-plan.md`](development-plan.md)：跨平台收尾、实际接入、自动检查和部署验收的后续顺序与完成条件。
 - [`linux-quickstart.md`](linux-quickstart.md)：当前可运行的 Linux 构建、启动、事件接入和 HTTP 推送说明。
 - [`adapters.md`](adapters.md)：来源接入边界、独立包构建、签名发布、多主机安装与更新。
+- [`event-coverage.md`](event-coverage.md)：各 Agent 的事件正文、提问/批准/失败内容及受限原因，时间线增量与长正文阅读规则。
 - [`images.md`](images.md)：GitHub 镜像构建发布、amd64/arm64 容器验证和 Relay 部署。
-- [`windows-development.md`](windows-development.md)：Windows 工作副本位置、原生工具链及 Tray 接续顺序。
+- [`windows-development.md`](windows-development.md)：Windows 原生工具链、构建检查和桌面验收流程。
 - [`windows-client.md`](windows-client.md)：Windows 原生客户端运行、离线已读、Bridge 管理、适配包和打包。
 - [`windows-desktop-design.md`](windows-desktop-design.md)：已确认的托盘/悬浮/会话详情交互、单入口交付、单实例、开发演示与 GPUI 可行性。
 - [`web/hub/README.md`](../web/hub/README.md)：管理页面构建与同源部署。
