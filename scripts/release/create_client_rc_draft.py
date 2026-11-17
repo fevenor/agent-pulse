@@ -36,7 +36,7 @@ def validate_client_changes(files):
                 raise ValueError("客户端候选包含Hub/Relay、协议或适配包变更，需要调整发布范围")
 
 def validate_client_assets(paths):
-    expected={"agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","install-bridge.sh","candidate-manifest.json","trial-guide.md","SHA256SUMS.txt"}
+    expected={"agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","SHA256SUMS.txt"}
     if {p.name for p in paths}!=expected or len(paths)!=len(expected):
         raise ValueError("客户端候选只能包含Bridge、Tray和对应说明/校验文件")
 def read_native_version(path):
@@ -101,12 +101,12 @@ def main():
     if not re.fullmatch(r"[0-9a-f]{64}",embedded.get("sha256","")):
         raise ValueError("Windows内置Bridge摘要无效")
     shutil.copyfile(windows,assets/"windows-amd64.zip")
-    shutil.copyfile(ROOT/"scripts/install/bridge.sh",assets/"install-bridge.sh")
+    maintenance=output/"maintenance";maintenance.mkdir()
     manifest={"tag":args.tag,"commit":args.commit,"workflow_run_id":args.run_id,"publication_workflow_run_id":os.getenv("GITHUB_RUN_ID",""),"draft":True,"prerelease":True,
               "updated_components":["bridge","tray"],"reuse_release":args.reuse_release,
               "reused_components":{"hub":baseline["hub"],"relay":baseline["relay"],"adapter_packages":baseline["packages"]},
               "bridge_assets":[{k:v for k,v in p.items() if k!="path"} for p in bridges],"windows_embedded_bridge":embedded}
-    (assets/"candidate-manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    (maintenance/"candidate-manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     notes=f"""# AgentPulse {args.tag} 客户端修复草稿
 
 **保持草稿和预发布状态，不自动公开。** 本次只更新Linux Bridge及Windows Tray（含内置Bridge）；Hub、Relay和七个适配包沿用已公开{args.reuse_release}，没有构建/发布新镜像、重新签名仓库或改动旧Release。
@@ -119,7 +119,7 @@ def main():
 
 ## 本次附件与复用组件
 
-- 两架构Linux Bridge、install-bridge.sh和Windows单入口ZIP；SHA256SUMS.txt、candidate-manifest.json及本指南。
+- 用户附件仅为两架构Linux Bridge、Windows单入口ZIP与SHA256SUMS；源码随标签提供。构建清单和指南仅放CI Artifact。
 - Hub继续使用 `{baseline['hub']}`；Relay继续使用 `{baseline['relay']}`，无需为RC4重建或升级。
 - 适配包继续从现有Hub签名仓库同步，发布公钥和索引保持；本次不提供未签名仓库、发布工具或Hub构建归档。
 
@@ -128,11 +128,11 @@ def main():
 草稿附件不能匿名下载。由有权限的账号下载并核对SHA256SUMS后，Linux安装使用已构建文件：
 
 ```sh
-bash install-bridge.sh --version {args.tag} --install-only \\
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash -s -- --version {args.tag} --install-only \\
   --file /已下载的Bridge路径 --sha256 "对应64位摘要"
 ```
 
-摘要参数填写64位SHA-256，不是文件路径。已有Bridge停止前确认healthz的pending为0；安装后sync-adapters并启动用户服务，保留原YAML、来源身份、公钥、适配目录和数据。Release安装脚本的默认仍是公开RC3，必须显式选择RC4。
+摘要参数填写64位SHA-256，不是文件路径。已有Bridge停止前确认healthz的pending为0；安装后sync-adapters并启动用户服务，保留原YAML、来源身份、公钥、适配目录和数据。raw安装脚本的默认仍是公开RC3，必须显式选择RC4。
 
 Windows正常退出Tray，备份后只替换EXE并保留tray.yaml与data/；内置Bridge随EXE更新。重新启用Codex或同步适配器后检查同一事件只保留一条同配置入口；按宿主提示审核钩子，不自动绕过用户信任。WSL仍使用独立Bridge。
 
@@ -144,15 +144,15 @@ Windows正常退出Tray，备份后只替换EXE并保留tray.yaml与data/；内�
 [客户端构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
 [草稿发布维护](https://github.com/{args.repository}/actions/runs/{os.getenv("GITHUB_RUN_ID",args.run_id)})
 """
-    (assets/"trial-guide.md").write_text(notes,encoding="utf-8")
+    (maintenance/"trial-guide.md").write_text(notes,encoding="utf-8")
     sums=[hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name for p in sorted(assets.iterdir())]
     (assets/"SHA256SUMS.txt").write_text("\n".join(sums)+"\n",encoding="utf-8")
     validate_client_assets(list(assets.iterdir()))
     fields="isDraft,isPrerelease,tagName,targetCommitish,url,assets"
     existing=common.command("gh","release","view",args.tag,"--repo",args.repository,"--json",fields,allow_failure=True)
     if existing.returncode==0:common.require_draft(json.loads(existing.stdout),args.tag,args.commit)
-    else:common.command("gh","release","create",args.tag,"--repo",args.repository,"--target",args.commit,"--draft","--prerelease","--title","AgentPulse "+args.tag+"（客户端修复草稿）","--notes-file",assets/"trial-guide.md")
-    common.command("gh","release","edit",args.tag,"--repo",args.repository,"--notes-file",assets/"trial-guide.md")
+    else:common.command("gh","release","create",args.tag,"--repo",args.repository,"--target",args.commit,"--draft","--prerelease","--title","AgentPulse "+args.tag+"（客户端修复草稿）","--notes-file",maintenance/"trial-guide.md")
+    common.command("gh","release","edit",args.tag,"--repo",args.repository,"--notes-file",maintenance/"trial-guide.md")
     common.command("gh","release","upload",args.tag,"--repo",args.repository,"--clobber",*sorted(assets.iterdir()))
     release=json.loads(common.command("gh","release","view",args.tag,"--repo",args.repository,"--json",fields).stdout)
     common.require_draft(release,args.tag,args.commit);common.validate_uploaded_assets(release,list(assets.iterdir()))

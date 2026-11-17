@@ -34,7 +34,7 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 
 候选先创建 `v<工程版本>-rc.<序号>` 标签，再显式手动触发对应工作流；标签本身不再自动启动完整镜像发布。完整组件候选使用 `release-draft.yml`，仅 Bridge/Tray 修复候选使用 `release-clients.yml`，后者指定继续使用的公开 Hub/Relay 与适配包 Release。同一提交的 Linux 与 Windows 检查成功后创建草稿；已有公开 Release 不由重跑覆盖。
 
-草稿附 Windows 单入口便携包、按当前清单的未签名仓库（RC3为七包）、两架构 Linux Bridge、安装脚本、发布工具、`candidate-manifest.json` 构建清单、`trial-guide.md` 中文说明、校验清单及发布者专用 `hub-build.tar`。上传后检查实际附件名称和大小；所有文件均使用稳定 ASCII 名称，内容和标签说明保持中文。
+草稿用户附件仅包含 Windows 单入口便携包、两架构 Linux Bridge 与 SHA256SUMS；源码由 GitHub 标签归档提供。构建清单、中文维护说明、未签名仓库、发布工具与发布者专用 hub-build.tar 保存在对应工作流 Artifact，不混入用户下载列表。上传后核对实际附件名称、大小和摘要。
 
 草稿中的构建归档与未签名包仅供发布者准备完整成品，不能让安装用户自行签名。新的适配包试运行需与同一现行 Hub/Relay/Bridge 构建配套，使用隔离数据并保留旧数据备份；不承诺旧候选通讯/存储兼容，不自动清空日常数据。正式公开和稳定版本推广仍由发布者明确决定。
 

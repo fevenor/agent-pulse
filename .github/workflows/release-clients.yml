@@ -92,6 +92,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: 客户端候选发布结果
-          path: dist/rc-clients/release-result.json
+          path: |
+            dist/rc-clients/release-result.json
+            dist/rc-clients/maintenance/*
           if-no-files-found: error
           retention-days: 14

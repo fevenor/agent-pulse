@@ -35,7 +35,7 @@ class ClientDraftTests(unittest.TestCase):
         with self.assertRaises(ValueError):module.validate_reuse(release,{**manifest,"hub":"ghcr.io/example/agent-pulse-hub:v0.5.0-rc.4"},tag)
 
     def test_only_client_assets_are_allowed(self):
-        names=["agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","install-bridge.sh","candidate-manifest.json","trial-guide.md","SHA256SUMS.txt"]
+        names=["agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","SHA256SUMS.txt"]
         paths=[Path(n) for n in names];module.validate_client_assets(paths)
         for extra in ("hub-build.tar","adapters-unsigned.tar.gz","agent-pulse-relay-linux-amd64"):
             with self.assertRaises(ValueError):module.validate_client_assets(paths+[Path(extra)])

@@ -38,18 +38,17 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 ## 2. 在 Linux 主机安装 Bridge
 
-用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。Release内安装脚本保持该候选构建时的行为。
+用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。历史Release附件保留原构建快照；当前用户入口统一使用raw脚本。
 
 安装当前公开 RC3 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
 set -o pipefail
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/install-bridge.sh \
-  | bash -s -- --version v0.5.0-rc.3 --setup
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh \
+  | bash -s -- --version v0.5.0-rc.3
 ```
 
-若已下载本 Release 的安装脚本，也可执行 `bash install-bridge.sh --version v0.5.0-rc.3 --setup`；源码目录中的同类入口为 `scripts/install/bridge.sh`。源码/raw入口默认交互配置并启动用户服务，`--install-only`只安装程序与服务定义；显式latest在没有稳定版时仍失败。Release附件脚本保留构建时的默认版本，安装RC3须显式--version v0.5.0-rc.3。已有 Bridge YAML、服务自定义和固定公钥均保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换，旧二进制会备份。
+安装脚本统一从上述 raw 入口读取，也可保存后执行；不再要求从 Release 下载安装脚本。无参数默认交互配置与启动，`--install-only` 只安装程序与服务定义，已有 Bridge YAML、服务自定义和固定公钥保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换并备份旧二进制。公开推荐仍为 RC3；试用 RC4 草稿使用已下载、已校验的文件，不能匿名下载草稿。
 
 其他候选若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
 
@@ -190,4 +189,4 @@ curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/in
 curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.3
 ```
 
-源码/raw入口默认推荐已公开RC3；Release附件脚本保持构建快照，使用时显式指定RC3版本。显式latest只选择稳定版，当前没有稳定发布；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。
+源码/raw入口默认推荐已公开RC3；历史Release附件脚本保持构建快照，当前只使用上述raw入口。显式latest只选择稳定版，当前没有稳定发布；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。
