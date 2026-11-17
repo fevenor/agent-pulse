@@ -14,12 +14,19 @@ import (
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// 宿主直接调用预构建EXE，不为hook再套编码PowerShell。
+// 保留规范化的归属前缀；生成命令时显式选择Windows执行器。
 func hookCommandPrefix(exe, cfg, id string) string {
 	return quoteCMD(normalizeHookPath(exe)) + " dispatch --config " + quoteCMD(normalizeHookPath(cfg)) + " --adapter " + quoteCMD(id) + " --hook "
 }
-func quoteCMD(s string) string                { return "\"" + s + "\"" }
-func hookCommand(prefix, event string) string { return prefix + quoteCMD(event) }
+func quoteCMD(s string) string { return "\"" + s + "\"" }
+func hookCommand(prefix, event string) string {
+	direct := prefix + quoteCMD(event)
+	exe, cfg, id, hook, ok := windowsHookParts(direct)
+	if !ok {
+		return direct
+	}
+	return windowsProcessCommand(exe, "dispatch", "--config", cfg, "--adapter", id, "--hook", hook)
+}
 func encodePowerShell(script string) string {
 	units := utf16.Encode([]rune(script))
 	raw := make([]byte, len(units)*2)
@@ -79,6 +86,9 @@ func normalizeQuotedHookPaths(command string) string {
 }
 
 func ownsHookCommand(command, prefix string) bool {
+	if exe, cfg, id, event, ok := windowsHookParts(command); ok {
+		command = quoteCMD(exe) + " dispatch --config " + quoteCMD(cfg) + " --adapter " + quoteCMD(id) + " --hook " + quoteCMD(event)
+	}
 	return strings.HasPrefix(normalizeQuotedHookPaths(command), normalizeQuotedHookPaths(prefix))
 }
 

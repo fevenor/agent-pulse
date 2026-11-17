@@ -68,7 +68,7 @@ func updateProcessHookConfig(root map[string]any, exe, configPath string, p Pack
 		}
 		handler := map[string]any{"type": "process", "command": exe,
 			"args":      []string{"dispatch", "--config", configPath, "--adapter", p.ID, "--hook", event},
-			"timeoutMs": 1000, "onError": "allow"}
+			"timeoutMs": 5000, "onError": "allow"}
 		group := map[string]any{"hooks": []any{handler}}
 		if matcher != "" {
 			group["matcher"] = matcher

@@ -533,7 +533,7 @@ func Dispatch(ctx context.Context, c config.Bridge, id, hook string, input []byt
 	}
 	p := installed.Package
 	entry := filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry))
-	ctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	cmd := hostCommand(ctx, entry, "--hook", hook, "--source", c.SourceID)
 	cmd.Stdin = bytes.NewReader(input)

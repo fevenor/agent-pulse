@@ -86,7 +86,7 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 							return nil, errors.New("hook 命令条目无效")
 						}
 						command, _ := h["command"].(string)
-						if !ownsHookCommand(command, prefix) && !(sharedCodex && nativeCodexHook.MatchString(command)) {
+						if !ownsHookCommand(command, prefix) && !(sharedCodex && ownedWindowsCodex(command, event)) {
 							rest = append(rest, item)
 						}
 					}
@@ -107,7 +107,7 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 			if !enable {
 				break
 			}
-			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 1}
+			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 5}
 			if sharedCodex {
 				windows := windowsCommands[event]
 				if windows == "" {

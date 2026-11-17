@@ -44,6 +44,11 @@ func TestMain(m *testing.M) {
 		fmt.Print("test-agent 1.2.3")
 		os.Exit(0)
 	}
+	if mode == "slow-adapter" {
+		time.Sleep(350 * time.Millisecond)
+		fmt.Print(`{}`)
+		os.Exit(0)
+	}
 	if mode != "" {
 		if len(os.Args) > 1 && os.Args[1] == "--version" {
 			fmt.Print("test-agent 1.2.3")
@@ -156,7 +161,7 @@ func TestWindowsHookConstructionDoesNotExecuteShell(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "配置目录 中文 ' &", "bridge.yaml")
 	prefix := hookCommandPrefix(exe, cfg, "sample")
 	command := hookCommand(prefix, "Stop")
-	if strings.Contains(command, "powershell") || strings.Contains(command, "EncodedCommand") || !strings.Contains(command, exe) || !ownsHookCommand(command, prefix) || ownsHookCommand(command, prefix+"other") {
+	if !strings.HasPrefix(command, windowsHookLauncher) || !ownsHookCommand(command, prefix) || ownsHookCommand(command, prefix+"other") {
 		t.Fatal("原生命令和所有权边界错误")
 	}
 	if validateHookPaths(exe, cfg) != nil || validateHookPaths("bad%PATH%", cfg) == nil || validateHookPaths(exe, "bad!PATH!") == nil {
@@ -274,5 +279,98 @@ func TestWindowsSyncPreservesDeferredSourcesWithoutInstalling(t *testing.T) {
 		if err != nil || !bytes.Equal(after, before) {
 			t.Fatal("后置来源用户配置被改写")
 		}
+	}
+}
+
+// 经安装器真正生成的命令分别交给cmd和PowerShell，不以静态字符串检查替代原生执行。
+func TestWindowsGeneratedHooksRunInBothShellsWithExactUnicodeInput(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "中文 空格 ' & $ 目录")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	own, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(root, "bridge.exe")
+	if err = os.WriteFile(exe, binary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(root, "私人配置.yaml")
+	input := []byte(" \t{\"text\":\"中文和 emoji ✅🚀\"}\r\n")
+	command := hookCommand(hookCommandPrefix(exe, cfg, "codex"), "PostToolUse")
+	t.Setenv("AGENT_PULSE_INSTALL_TEST_HELPER", "echo")
+	for _, shell := range []string{"cmd.exe", "powershell.exe"} {
+		t.Run(shell, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			args := []string{"/d", "/s", "/c", command}
+			if shell == "powershell.exe" {
+				args = []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command}
+			}
+			cmd := exec.CommandContext(ctx, shell, args...)
+			cmd.Stdin = bytes.NewReader(input)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			output, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("宿主shell未能执行钩子：%v；%s", err, stderr.String())
+			}
+			var result struct {
+				Args  []string
+				Stdin string
+			}
+			if err = json.Unmarshal(output, &result); err != nil {
+				t.Fatal(err, string(output))
+			}
+			want := []string{"dispatch", "--config", cfg, "--adapter", "codex", "--hook", "PostToolUse"}
+			if len(result.Args) != len(want) {
+				t.Fatal("参数数量错误", result.Args)
+			}
+			for i := range want {
+				if result.Args[i] != want[i] {
+					t.Fatal("参数被宿主shell改写", result.Args)
+				}
+			}
+			if !bytes.Equal([]byte(result.Stdin), input) {
+				t.Fatal("中文或原始stdin字节发生变化")
+			}
+		})
+	}
+}
+
+func TestDispatchAllowsMeasuredWindowsColdStartBudget(t *testing.T) {
+	root := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := Package{Manifest: Manifest{ID: "codex", Version: "0.2.9", Kind: "executable", Entry: "adapter.exe"}, SHA256: strings.Repeat("a", 64)}
+	target := filepath.Join(packageDir(root, p), p.Entry)
+	if err = os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(target, binary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = AtomicJSON(filepath.Join(root, "state.json"), State{Installed: map[string]Installed{"codex": {Package: p}}, Rejected: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_PULSE_INSTALL_TEST_HELPER", "slow-adapter")
+	c := config.Bridge{SourceID: "isolated-cold-start", Adapters: config.AdapterUpdates{Directory: root}}
+	started := time.Now()
+	if _, err = Dispatch(context.Background(), c, "codex", "Stop", []byte(`{}`)); err != nil {
+		t.Fatal("合理冷启动被误判超时", err)
+	}
+	if time.Since(started) < 350*time.Millisecond {
+		t.Fatal("冷启动测试没有等待辅助进程")
 	}
 }

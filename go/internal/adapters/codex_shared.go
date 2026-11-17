@@ -64,8 +64,9 @@ func codexSharedWindowsCommands(path string, events map[string]any, prefix strin
 			for _, item := range handlers {
 				h, _ := item.(map[string]any)
 				command, _ := h["command"].(string)
-				if match := nativeCodexHook.FindStringSubmatch(command); match != nil && match[1] == event {
-					result[event] = command
+				if ownedWindowsCodex(command, event) {
+					exe, cfg, id, hook, _ := windowsHookParts(command)
+					result[event] = windowsProcessCommand(exe, "dispatch", "--config", cfg, "--adapter", id, "--hook", hook)
 				}
 				if linuxCodexHook.MatchString(command) || ownsHookCommand(command, prefix) {
 					if windows, ok := h["command_windows"].(string); ok && windows != "" {
@@ -81,18 +82,17 @@ func codexSharedWindowsCommands(path string, events map[string]any, prefix strin
 // Windows宿主首次读取由WSL建立的共享钩子时，通过宿主已有wsl.exe进入指定发行版。
 // 不启动额外Bridge，不改变共享身份，也不依赖Windows进程拥有Linux环境变量。
 func codexWSLCommand(exe, cfg, event string) (string, error) {
-	values := []string{"wsl.exe", "--distribution", os.Getenv("WSL_DISTRO_NAME"), "--exec", "env"}
+	values := []string{"--distribution", os.Getenv("WSL_DISTRO_NAME"), "--exec", "env"}
 	for _, key := range []string{"CODEX_HOME", "CODEX_SQLITE_HOME"} {
 		if value := os.Getenv(key); value != "" {
 			values = append(values, key+"="+value)
 		}
 	}
 	values = append(values, exe, "dispatch", "--config", cfg, "--adapter", "codex", "--hook", event)
-	for i, value := range values {
+	for _, value := range values {
 		if strings.ContainsAny(value, "\"%!\r\n\x00") {
 			return "", fmt.Errorf("共享Codex路径含Windows命令不可安全表达的字符")
 		}
-		values[i] = "\"" + value + "\""
 	}
-	return strings.Join(values, " "), nil
+	return windowsProcessCommand("wsl.exe", values...), nil
 }

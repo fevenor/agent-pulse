@@ -50,7 +50,7 @@ func TestSharedCodexPreservesWindowsBranchAndRejectsUnrelatedHooks(t *testing.T)
 		t.Fatal("命令归属边界不符")
 	}
 	command, err := codexWSLCommand("/home/test/.local/bin/agent-pulse-bridge", "/home/test/bridge.yaml", "Stop")
-	if err != nil || !strings.Contains(command, "CODEX_SQLITE_HOME=/home/test/.codex/sqlite") || !strings.Contains(command, `"--distribution" "Debian"`) {
+	if err != nil || !strings.HasPrefix(command, windowsHookLauncher) {
 		t.Fatal("原生Windows兜底没有固定环境", err)
 	}
 	if _, err = codexWSLCommand("/home/bad%/bridge", "/cfg", "Stop"); err == nil {
@@ -82,7 +82,8 @@ func TestWSLSharedInstallKeepsOneLogicalHookPerEvent(t *testing.T) {
 	user := 0
 	for _, group := range parsed.Hooks["Stop"] {
 		for _, h := range group.Hooks {
-			if h["command_windows"] == windows {
+			expected := windowsProcessCommand(`D:\AgentPulse\bridge.exe`, "dispatch", "--config", `D:\AgentPulse\bridge.yaml`, "--adapter", "codex", "--hook", "Stop")
+			if h["command_windows"] == expected {
 				owned++
 			}
 			if h["command"] == "echo user" {

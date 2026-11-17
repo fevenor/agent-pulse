@@ -159,3 +159,10 @@ Windows 启动文件夹用法见 [微软说明](https://support.microsoft.com/en
 离开检测选择为5分钟、10分钟、自定义和关闭。自定义输入1至1440的整数，失去焦点时校验并保存，无需回车；无效值提示并保持原生效值。仍使用away_after_minutes配置，0表示关闭，不迁移数据。
 
 共享Codex配置遵循CODEX_HOME。WSL管理共享目录时，Windows向导提示“由WSL管理”，后台同步也不争抢写入；WSL只合并本软件条目。单个逻辑钩子使用command与command_windows选择本机或执行环境入口。CODEX_SQLITE_HOME只用于定位身份数据库，不读取对话正文；目录变量必须对实际宿主和钩子进程生效。另一主机真实共享执行矩阵须逐项验证，不能以安装通过代替。
+
+
+### Windows原生命令钩子执行
+
+Codex桌面任务可能使用PowerShell执行命令钩子，不能将仅适用于CMD的带引号EXE命令原样写入。RC4修订使用固定Windows执行边界与编码参数，分别在CMD与PowerShell中验证原始stdin字节、中文emoji和特殊路径；不通过PowerShell文本管道重写载荷。ZCode继续使用原生process/argv。已配置宿主在更新命令后可能要求重新审核信任；安装器不修改信任记录或代替批准。
+
+适配器进程冷启动允许两秒，宿主hook超时为五秒，仍有明确上限；150毫秒旧上限不足以覆盖Windows实际冷启动。安装与版本查询成功不代表宿主已加载新命令，必须由新的真实事件核对运行回执与Hub记录。
