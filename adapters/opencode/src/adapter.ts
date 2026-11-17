@@ -1,3 +1,5 @@
+import { request } from "node:http";
+import { isAbsolute, normalize } from "node:path";
 import { createHash } from "node:crypto";
 import type { Plugin } from "@opencode/plugin";
 
@@ -152,23 +154,40 @@ export function convert(event: NativeEvent, session: SessionInfo | undefined, so
   };
 }
 
-export function bridgeURL(value: unknown): string {
-  const url = new URL(typeof value === "string" ? value : "http://127.0.0.1:18702");
-  if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-    throw new Error("Bridge 必须为回环 HTTP 根地址");
+export function bridgeAddress(value: unknown): string {
+  if (typeof value !== "string" || value.includes("\0")) throw new Error("Bridge必须为本机IPC地址");
+  if (value.startsWith("unix:")) {
+    const path = value.slice(5);
+    if (!isAbsolute(path) || normalize(path) !== path || Buffer.byteLength(path) > 107) throw new Error("Unix套接字地址无效");
+    return path;
   }
-  return new URL("/api/v1/events", url).href;
+  if (/^pipe:\\\\.\\pipe\\[A-Za-z0-9_.-]{1,200}$/.test(value)) return value.slice(5);
+  throw new Error("Bridge必须为本机IPC地址");
 }
 
-export async function emit(url: string, event: PulseEvent, signal?: AbortSignal): Promise<void> {
+export async function emit(address: string, event: PulseEvent, signal?: AbortSignal): Promise<void> {
   const timeout = AbortSignal.timeout(200);
-  const response = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...event, process_id: process.pid }), signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-    redirect: "error",
+  await new Promise<void>((resolve, reject) => {
+    const req = request({socketPath: address, path: "/api/v1/events", method: "POST",
+      headers: {"Host": "127.0.0.1:1", "Content-Type": "application/json"},
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout}, response => {
+      const chunks: Buffer[] = []; let bytes = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > 65536) { response.destroy(new Error("Bridge回执超过上限")); return; }
+        chunks.push(chunk);
+      });
+      response.on("error", reject);
+      response.on("end", () => {
+        try {
+          const receipt = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {event_id?: string; accepted?: string};
+          if (response.statusCode !== 202 || receipt.event_id !== event.event_id ||
+            (receipt.accepted !== "memory" && receipt.accepted !== "filtered")) throw new Error("Bridge未确认接收");
+          resolve();
+        } catch (error) { reject(error); }
+      });
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify({...event, process_id: process.pid}));
   });
-  const receipt = await response.json() as { event_id?: string; accepted?: string };
-  if (response.status !== 202 || receipt.event_id !== event.event_id || (receipt.accepted !== "memory" && receipt.accepted !== "filtered")) {
-    throw new Error("Bridge 未确认接收");
-  }
 }

@@ -199,7 +199,7 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 		}
 		e.SessionTitle = name
 	case "codex":
-		if codexInternalSession(h.SessionID, h.Transcript) {
+		if codexMemoryWorkspace(h.CWD) || codexInternalSession(h.SessionID, h.Transcript) {
 			return nil, nil
 		}
 		e.SessionTitle = codexSessionTitle(h.SessionID)

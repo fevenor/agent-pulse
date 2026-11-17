@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"agent-pulse/internal/config"
 	"agent-pulse/internal/hub"
+	"agent-pulse/internal/localipc"
 	"agent-pulse/internal/transport"
 	"agent-pulse/protocol"
 	"github.com/gorilla/websocket"
@@ -75,14 +78,31 @@ func TestOfflineRetryLostAckAndTwoClients(t *testing.T) {
 	}))
 	defer upstream.Close()
 	b := New(config.Bridge{SourceID: "test-linux", HubURL: upstream.URL, QueueEvents: 10, QueueBytes: 65536})
-	local := httptest.NewServer(b.Handler())
+	address, err := localipc.DefaultAddress("bridge-test-" + protocol.NewID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		dir, e := os.MkdirTemp("", "pulse-bridge-")
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer os.RemoveAll(dir)
+		address = "unix:" + filepath.Join(dir, "bridge.sock")
+	}
+	listener, err := localipc.Listen(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := &http.Server{Handler: b.Handler()}
+	go func() { _ = local.Serve(listener) }()
 	defer local.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
 	go func() { defer close(finished); b.Run(ctx) }()
 	defer func() { cancel(); <-finished }()
 	e := event("offline")
-	if err = Emit(ctx, strings.TrimPrefix(local.URL, "http://"), e); err != nil {
+	if err = Emit(ctx, address, e); err != nil {
 		t.Fatal(err)
 	}
 	s, err := h.Snapshot(ctx)

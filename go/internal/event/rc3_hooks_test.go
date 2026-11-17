@@ -42,6 +42,7 @@ func TestRC3NativeContentAndResolution(t *testing.T) {
 	}
 }
 func TestCodexFiltersInternalIdentityWithoutReadingRollout(t *testing.T) {
+	t.Setenv("CODEX_SQLITE_HOME", "")
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))

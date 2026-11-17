@@ -43,7 +43,7 @@ def main():
     linux_root = wsl("mktemp", "-d", "/tmp/agent-pulse-wsl.XXXXXX")
     if not linux_root.startswith("/tmp/agent-pulse-wsl."):
         raise RuntimeError("临时目录不在预期位置")
-    hp, wp, lp = port(), port(), port()
+    hp = port()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     children = []
 
@@ -68,23 +68,30 @@ def main():
             wait(lambda: request(hp, "/healthz"))
             common = {"hub_url": f"http://127.0.0.1:{hp}"}
             config = root / "bridge.local.yaml"
-            config.write_text(json.dumps(common | {"listen": f"127.0.0.1:{wp}", "source_id": "windows-isolated"}), encoding="utf-8")
+            config.write_text(json.dumps(common | {"listen": "", "source_id": "windows-isolated"}), encoding="utf-8")
             children.append(subprocess.Popen([str(ROOT / "bin/dev/agent-pulse-bridge.exe"), "serve", "--config", str(config)],
                                              creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             linux_file("bridge", (ROOT / ".cache/windows-check/bridge-linux").read_bytes())
             wsl("chmod", "700", linux_root + "/bridge")
-            linux_file("bridge.yaml", json.dumps(common | {"listen": f"127.0.0.1:{lp}", "source_id": "debian-isolated"}).encode())
+            linux_file("bridge.yaml", json.dumps(common | {"listen": "unix:" + linux_root + "/bridge.sock", "source_id": "debian-isolated"}).encode())
             children.append(subprocess.Popen(["wsl", "-d", "Debian", "--", linux_root + "/bridge", "serve", "--config", linux_root + "/bridge.yaml"],
                                              creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-            wait(lambda: request(wp, "/healthz"))
-            wait(lambda: request(lp, "/healthz"))
+            win_bridge = str(ROOT / "bin/dev/agent-pulse-bridge.exe")
+            linux_command = ["wsl", "-d", "Debian", "--", linux_root + "/bridge"]
+            def health(command, cfg):
+                return subprocess.run(command + ["health", "--config", cfg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0
+            wait(lambda: health([win_bridge], str(config)))
+            wait(lambda: health(linux_command, linux_root + "/bridge.yaml"))
+            win_address = subprocess.check_output([win_bridge, "check-config", "--config", str(config)], creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
+            linux_address = wsl(linux_root + "/bridge", "check-config", "--config", linux_root + "/bridge.yaml")
             ids = []
-            for label, p in [("windows", wp), ("debian", lp)]:
+            for label, command, address in [("windows", [win_bridge], win_address), ("debian", linux_command, linux_address)]:
                 event_id = name + "-" + label
                 ids.append(event_id)
-                request(p, "/api/v1/events", {"event_id": event_id, "agent": "test", "session_id": "same-native-session",
+                event = {"event_id": event_id, "source_id": "windows-isolated" if label == "windows" else "debian-isolated", "agent": "test", "session_id": "same-native-session",
                     "kind": "turn.completed", "scope": "main", "title": "跨环境隔离测试", "body": "测试数据",
-                    "occurred_at": datetime.now(timezone.utc).isoformat()})
+                    "occurred_at": datetime.now(timezone.utc).isoformat()}
+                subprocess.run(command + ["emit", "--address", address], input=json.dumps(event).encode(), check=True, creationflags=subprocess.CREATE_NO_WINDOW)
             wait(lambda: len(request(hp, "/api/v1/snapshot")["unread"]) == 2)
             snapshot = request(hp, "/api/v1/snapshot")
             assert {s["source_id"] for s in snapshot["sessions"]} == {"windows-isolated", "debian-isolated"}
@@ -92,7 +99,7 @@ def main():
             request(hp, "/api/v1/read", {"event_ids": ids})
             assert request(hp, "/api/v1/snapshot")["unread"] == []
             print(json.dumps({"通过": True, "平台": "Windows amd64 与 Debian WSL2 linux/amd64",
-                "检查": ["Windows 原生 Bridge 连接 Debian Docker Hub", "Debian Bridge 独立接入", "相同会话 ID 由来源标识隔离", "两来源提醒与已读正常"]}, ensure_ascii=False, indent=2))
+                "检查": ["Windows 原生 Bridge 连接 Debian Docker Hub", "Windows命名管道与WSL Unix套接字并行且不监听TCP", "Debian Bridge 独立接入", "相同会话 ID 由来源标识隔离", "两来源提醒与已读正常"]}, ensure_ascii=False, indent=2))
     finally:
         # 只结束本脚本创建的命令和具有本轮随机路径的 Linux 进程。
         subprocess.run(["wsl", "-d", "Debian", "--", "pkill", "-f", "^" + re.escape(linux_root) + "/bridge serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

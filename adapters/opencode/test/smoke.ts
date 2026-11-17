@@ -45,8 +45,8 @@ async function poll<T>(fn: () => Promise<T | undefined>, label: string): Promise
 }
 type Snapshot = { run_id: string; sessions: { session_id: string; state: string; title: string; last_event_id: string }[]; unread: { event_id: string; session_id: string; kind: string; valid: boolean }[] };
 try {
-  const hubPort = await port(), bridgePort = await port(), agentPort = await port();
-  const hubURL = `http://127.0.0.1:${hubPort}`, bridgeURL = `http://127.0.0.1:${bridgePort}`;
+  const hubPort = await port(), agentPort = await port();
+  const hubURL = `http://127.0.0.1:${hubPort}`, bridgeAddress = "unix:"+join(temp,"bridge.sock");
   if (packaged) {
     await cp(join(root,"dist/repository"),repository,{recursive:true});
     const index = JSON.parse(await readFile(join(repository, "index-input.json"), "utf8"));
@@ -57,18 +57,18 @@ try {
     await cp(join(temp,"publisher.pub"),join(repository,"publisher.pub"));
   }
   await writeFile(join(temp, "hub.yaml"), `listen: "127.0.0.1:${hubPort}"\ndatabase: "${temp}/hub.db"\npush: []\nadapter_directory: "${repository}"\n`);
-  await writeFile(join(temp, "bridge.yaml"), `listen: "127.0.0.1:${bridgePort}"\nsource_id: "smoke-linux"\nhub_url: "${hubURL}"\n`);
-  if (!packaged) await writeFile(join(project, "opencode.json"), JSON.stringify({ plugins: [{ package: adapter, options: { source_id: "smoke-linux", bridge_url: bridgeURL } }], snapshots: false }));
+  await writeFile(join(temp, "bridge.yaml"), `listen: "${bridgeAddress}"\nsource_id: "smoke-linux"\nhub_url: "${hubURL}"\n`);
+  if (!packaged) await writeFile(join(project, "opencode.json"), JSON.stringify({ plugins: [{ package: adapter, options: { source_id: "smoke-linux", bridge_address: bridgeAddress } }], snapshots: false }));
   if (packaged) {
     const key=(await readFile(join(temp,"publisher.pub"),"utf8")).trim();
-    await writeFile(join(temp,"bridge.yaml"),`listen: "127.0.0.1:${bridgePort}"\nsource_id: "smoke-linux"\nhub_url: "${hubURL}"\nadapters:\n  directory: "${temp}/adapters"\n  public_key: "${key}"\n  poll_seconds: 5\n  managed:\n    opencode: "${project}/opencode.json"\n`);
+    await writeFile(join(temp,"bridge.yaml"),`listen: "${bridgeAddress}"\nsource_id: "smoke-linux"\nhub_url: "${hubURL}"\nadapters:\n  directory: "${temp}/adapters"\n  public_key: "${key}"\n  poll_seconds: 5\n  managed:\n    opencode: "${project}/opencode.json"\n`);
     await writeFile(join(project,"opencode.json"),JSON.stringify({snapshots:false}));
   }
   await mkdir(join(temp, "config/opencode"), { recursive: true });
   await writeFile(join(temp, "config/opencode/opencode.json"), JSON.stringify({ update: "disable", snapshots: false }));
   const hubProcess = await launch("hub", join(root, "bin/agent-pulse-hub"), ["--config", join(temp, "hub.yaml")]);
   await launch("bridge", join(root, "bin/agent-pulse-bridge"), ["serve", "--config", join(temp, "bridge.yaml")]);
-  await poll(async () => (await fetch(`${bridgeURL}/healthz`)).ok ? true : undefined, "Bridge 启动");
+  await poll(async () => {execFileSync(join(root,"bin/agent-pulse-bridge"),["health","--config",join(temp,"bridge.yaml")],{stdio:"ignore"});return true;}, "Bridge 启动");
   if (packaged) await poll(async()=>{
     const state=JSON.parse(await readFile(join(temp,"adapters/state.json"),"utf8"));
     return state.installed.opencode?.package?.version === expectedVersion ? true : undefined;

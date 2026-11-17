@@ -82,7 +82,7 @@ def serve(directory, target):
     base = f"http://127.0.0.1:{hub_port}"
     write(directory / "hub.json", {"listen": f"127.0.0.1:{hub_port}",
           "database": str(directory / "hub.db"), "adapter_directory": str(repository), "push": []})
-    write(directory / "bridge.json", {"listen": f"127.0.0.1:{bridge_port}",
+    write(directory / "bridge.json", {"listen": "",
           "source_id": "isolated-windows-zcode", "hub_url": base,
           "adapters": {"directory": str(directory / "adapters"),
                        "public_key": (directory / "publisher.pub").read_text().strip(),

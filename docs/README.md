@@ -10,6 +10,7 @@
 - [`event-coverage.md`](event-coverage.md)：各 Agent 的事件正文、提问/批准/失败内容及受限原因，时间线增量与长正文阅读规则。
 - [`images.md`](images.md)：GitHub 镜像构建发布、amd64/arm64 容器验证和 Relay 部署。
 - [`windows-development.md`](windows-development.md)：Windows 原生工具链、构建检查和桌面验收流程。
+- [`local-ipc.md`](local-ipc.md)：本机IPC端点、权限、队列检查及配置升级。
 - [`windows-client.md`](windows-client.md)：Windows 原生客户端运行、离线已读、Bridge 管理、适配包和打包。
 - [`windows-desktop-design.md`](windows-desktop-design.md)：已确认的托盘/悬浮/会话详情交互、单入口交付、单实例、开发演示与 GPUI 可行性。
 - [`web/hub/README.md`](../web/hub/README.md)：管理页面构建与同源部署。

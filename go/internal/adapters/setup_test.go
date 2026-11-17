@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/localipc"
 
 	"gopkg.in/yaml.v3"
 )
@@ -360,7 +361,8 @@ func TestSetupDoesNotRequireSpecialAntigravityLauncher(t *testing.T) {
 func TestRunningSyncUsesLatestManagedChoiceBeforeWizardCloses(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "bridge.json")
-	running := config.Bridge{SourceID: "selection", Listen: "127.0.0.1:18702", HubURL: "http://127.0.0.1:1", Adapters: config.AdapterUpdates{Directory: root, PublicKey: "already-trusted", Managed: map[string]string{"zcode": filepath.Join(root, "agent.json")}}}
+	running := config.Bridge{SourceID: "selection", Listen: "", HubURL: "http://127.0.0.1:1", Adapters: config.AdapterUpdates{Directory: root, PublicKey: "already-trusted", Managed: map[string]string{"zcode": filepath.Join(root, "agent.json")}}}
+	running.Listen, _ = localipc.DefaultAddress(running.SourceID)
 	disk := map[string]any{"source_id": running.SourceID, "listen": running.Listen, "hub_url": running.HubURL, "adapters": map[string]any{"directory": root, "managed": map[string]string{}}}
 	raw, _ := json.Marshal(disk)
 	if err := os.WriteFile(path, raw, 0600); err != nil {

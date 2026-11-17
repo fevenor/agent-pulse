@@ -161,7 +161,8 @@ pub fn error(message: &str) {
 pub struct Bridge {
     child: std::process::Child,
     job: windows::Win32::Foundation::HANDLE,
-    health_url: String,
+    address: String,
+    executable: std::path::PathBuf,
 }
 impl Bridge {
     pub fn start(settings: &agent_pulse_tray::settings::Settings) -> Result<Option<Self>, String> {
@@ -169,11 +170,19 @@ impl Bridge {
         if !settings.bridge_enabled {
             return Ok(None);
         }
-        let health_url = bridge_health_url(&settings.bridge_config_path())?;
         let executable = extract_bridge(&settings.data_dir)?;
+        let address = String::from_utf8(bridge_query(
+            &executable,
+            "check-config",
+            "--config",
+            &settings.bridge_config_path().to_string_lossy(),
+        )?)
+        .map_err(|_| "本机IPC地址编码无效")?
+        .trim()
+        .to_string();
         let config =
             std::fs::canonicalize(&settings.bridge_config).map_err(|_| "本地接入配置不存在")?;
-        let mut child = std::process::Command::new(executable)
+        let mut child = std::process::Command::new(&executable)
             .arg("serve")
             .arg("--config")
             .arg(config)
@@ -213,7 +222,8 @@ impl Bridge {
         let mut bridge = Self {
             child,
             job,
-            health_url,
+            address,
+            executable,
         };
         // 只有自有子进程存活且本机接收端可用，才报告接入启动成功。
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -225,13 +235,13 @@ impl Bridge {
                 .map_err(|_| "无法读取接入进程状态")?
                 .is_some()
             {
-                return Err("本机接入启动失败，请检查配置与监听端口".into());
+                return Err("本机接入启动失败，请检查配置与本机IPC端点".into());
             }
             if bridge.pending_events().is_ok() {
                 return Ok(Some(bridge));
             }
         }
-        Err("本机接入尚未就绪，请检查配置与监听端口".into())
+        Err("本机接入尚未就绪，请检查配置与本机IPC端点".into())
     }
     /// 配置向导返回后重新读取同一便携配置；该路径也由原生回归直接验证。
     pub fn apply_config(
@@ -253,8 +263,13 @@ impl Bridge {
         if settings.bridge_enabled {
             let _ = std::fs::canonicalize(settings.bridge_config_path())
                 .map_err(|_| "本地接入配置不存在")?;
-            let _ = extract_bridge(&settings.data_dir)?;
-            let _ = bridge_health_url(&settings.bridge_config_path())?;
+            let executable = extract_bridge(&settings.data_dir)?;
+            bridge_query(
+                &executable,
+                "check-config",
+                "--config",
+                &settings.bridge_config_path().to_string_lossy(),
+            )?;
         }
         if let Some(active) = current.as_mut()
             && active
@@ -274,18 +289,11 @@ impl Bridge {
         Ok(())
     }
     fn pending_events(&self) -> Result<u64, String> {
-        let client: ureq::Agent = ureq::Agent::config_builder()
-            .proxy(None)
-            .timeout_global(Some(std::time::Duration::from_millis(300)))
-            .build()
-            .into();
-        let health: serde_json::Value = client
-            .get(&self.health_url)
-            .call()
-            .map_err(|_| "无法核对原接入的待发队列，已保留原进程")?
-            .body_mut()
-            .read_json()
-            .map_err(|_| "本机接入健康响应无效")?;
+        // 查询启动时的固定端点，不能因用户已改配置而误查新进程或丢弃旧队列。
+        let bytes = bridge_query(&self.executable, "health", "--address", &self.address)
+            .map_err(|_| "无法核对原接入的待发队列，已保留原进程")?;
+        let health: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| "本机接入健康响应无效")?;
         health["pending"]
             .as_u64()
             .ok_or_else(|| "本机接入健康响应缺少待发数量".into())
@@ -363,47 +371,58 @@ impl Bridge {
         }
     }
 }
-// 只提取本机监听地址供健康核对；其余配置与凭据仍由 Go 接入程序解析。
-fn bridge_health_url(path: &std::path::Path) -> Result<String, String> {
-    let raw = std::fs::read(path).map_err(|_| "本地接入配置不存在")?;
-    let config: serde_yaml::Value =
-        serde_yaml::from_slice(&raw).map_err(|_| "本地接入配置格式无效")?;
-    if !config.is_mapping() {
-        return Err("本地接入配置必须为对象".into());
-    }
-    let mut listen = match config.get("listen") {
-        Some(value) => value
-            .as_str()
-            .ok_or("本机监听地址必须为字符串")?
-            .to_string(),
-        None => "127.0.0.1:18702".into(),
+// 本机查询复用内置Go程序的配置解析和IPC客户端，避免在Rust中另建一套平台传输。
+fn bridge_query(
+    executable: &std::path::Path,
+    operation: &str,
+    flag: &str,
+    value: &str,
+) -> Result<Vec<u8>, String> {
+    use std::{
+        io::Read,
+        os::windows::process::CommandExt,
+        process::{Command, Stdio},
+        time::{Duration, Instant},
     };
-    // 对齐既有配置的显式环境引用，不记录环境值或扩大监听范围。
-    while let Some(start) = listen.find("${env:") {
-        let end = listen[start..]
-            .find('}')
-            .ok_or("本机监听地址环境引用无效")?
-            + start;
-        let spec = &listen[start + 6..end];
-        let (key, fallback) = spec
-            .split_once(":-")
-            .map_or((spec, None), |(k, v)| (k, Some(v)));
-        let value = std::env::var(key)
-            .ok()
-            .or_else(|| fallback.map(str::to_owned))
-            .ok_or("本机监听地址引用的环境变量未设置")?;
-        if value.contains("${env:") {
-            return Err("本机监听地址不允许递归环境引用".into());
+    let mut child = Command::new(executable)
+        .args([operation, flag, value])
+        .creation_flags(0x08000000)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "无法运行本机接入查询")?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let mut diagnostic = Vec::new();
+                    if let Some(stderr) = child.stderr.take() { let _ = stderr.take(4096).read_to_end(&mut diagnostic); }
+                    let detail = String::from_utf8_lossy(&diagnostic);
+                    return Err(format!("本机接入查询失败：{}", detail.trim()));
+                }
+                let mut bytes = Vec::new();
+                child
+                    .stdout
+                    .take()
+                    .ok_or("本机查询没有输出")?
+                    .take(65536)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| "本机查询响应读取失败")?;
+                if bytes.len() >= 65536 {
+                    return Err("本机查询响应超过上限".into());
+                }
+                return Ok(bytes);
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("本机接入查询超时或进程状态不可读".into());
+            }
         }
-        listen.replace_range(start..=end, &value);
     }
-    let address: std::net::SocketAddr = listen
-        .parse()
-        .map_err(|_| "本机监听地址必须为回环 IP 和端口")?;
-    if !address.ip().is_loopback() {
-        return Err("本机监听地址必须为回环 IP".into());
-    }
-    Ok(format!("http://{address}/healthz"))
 }
 
 impl Drop for Bridge {
@@ -657,36 +676,27 @@ mod display_guard_tests;
 
 #[cfg(test)]
 mod bridge_tests {
-    use super::{Bridge, bridge_health_url};
+    use super::{Bridge, bridge_query};
     use agent_pulse_tray::settings::Settings;
-    use std::{fs, net::TcpListener, time::Duration};
+    use std::{
+        fs,
+        io::Write,
+        os::windows::process::CommandExt,
+        process::{Command, Stdio},
+    };
 
     #[test]
-    #[ignore = "需先构建内置 Bridge，显式执行 Windows 原生集成检查"]
+    #[ignore = "需先构建内置Bridge，显式执行Windows本机IPC集成检查"]
     fn bridge_reload_native_enables_reconfigures_and_keeps_pending_events() {
         let root = std::env::temp_dir().join(format!("pulse-reload-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let config = root.join("bridge.json");
-        let port = || {
-            TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
+        let endpoint = || format!(r"pipe:\\.\pipe\pulse-reload-{}", uuid::Uuid::new_v4());
+        let write_config = |listen: &str| {
+            fs::write(&config,serde_json::to_vec(&serde_json::json!({"listen":listen,"source_id":"reload-test","hub_url":"http://127.0.0.1:1"})).unwrap()).unwrap()
         };
-        let first_port = port();
-        let write_config = |listen: u16| {
-            fs::write(
-                &config,
-                serde_json::to_vec(&serde_json::json!({
-                    "listen": format!("127.0.0.1:{listen}"), "source_id": "reload-test",
-                    "hub_url": "http://127.0.0.1:1"
-                }))
-                .unwrap(),
-            )
-            .unwrap();
-        };
-        write_config(first_port);
+        let first = endpoint();
+        write_config(&first);
         let tray_config = root.join("tray.yaml");
         fs::write(
             &tray_config,
@@ -703,37 +713,61 @@ mod bridge_tests {
         assert!(settings.bridge_enabled);
         let first_pid = current.as_ref().unwrap().child.id();
         assert_eq!(current.as_ref().unwrap().pending_events().unwrap(), 0);
-        // 再次配置替换接入子进程，当前测试/桌面父进程不重启。
-        let second_port = port();
-        write_config(second_port);
+        let second = endpoint();
+        write_config(&second);
         Bridge::apply_config(&mut current, &mut settings).unwrap();
         assert_ne!(current.as_ref().unwrap().child.id(), first_pid);
-        assert!(
-            current
-                .as_ref()
-                .unwrap()
-                .health_url
-                .contains(&second_port.to_string())
-        );
-        let pid = current.as_ref().unwrap().child.id();
-        let pending = serde_json::json!({"event_id":"reload-pending","source_id":"reload-test","session_id":"test",
-            "agent":"zcode","kind":"turn.completed","occurred_at":"2026-11-15T00:00:00Z",
-            "scope":"main","title":"仅测试"});
-        let client: ureq::Agent = ureq::Agent::config_builder()
-            .proxy(None)
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .into();
-        client
-            .post(&format!("http://127.0.0.1:{second_port}/api/v1/events"))
-            .send_json(&pending)
+        assert_eq!(current.as_ref().unwrap().address, second);
+        let active = current.as_ref().unwrap();
+        let pid = active.child.id();
+        let mut emit = Command::new(&active.executable)
+            .args(["emit", "--address", &second])
+            .creation_flags(0x08000000)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
             .unwrap();
-        assert_eq!(current.as_ref().unwrap().pending_events().unwrap(), 1);
-        let result = Bridge::reload(&mut current, &settings);
-        assert!(result.unwrap_err().contains("等待交付"));
+        emit.stdin.take().unwrap().write_all(serde_json::to_string(&serde_json::json!({"event_id":"reload-pending","source_id":"reload-test","session_id":"test","agent":"zcode","kind":"turn.completed","occurred_at":"2026-11-15T00:00:00Z","scope":"main","title":"仅测试"})).unwrap().as_bytes()).unwrap();
+        assert!(emit.wait().unwrap().success());
+        assert_eq!(active.pending_events().unwrap(), 1);
+        // 已编辑的配置不能改变旧队列查询端点；待发和不可读都必须保留原进程。
+        let third = endpoint();
+        write_config(&third);
+        assert!(
+            Bridge::reload(&mut current, &settings)
+                .unwrap_err()
+                .contains("等待交付")
+        );
         assert_eq!(current.as_ref().unwrap().child.id(), pid);
         assert_eq!(current.as_ref().unwrap().pending_events().unwrap(), 1);
-        // 显式退出仍遵循既有内存队列边界；自动配置不能悄悄丢弃待发数据。
+        // 接收端不可核对时也不能替换仍存活的旧进程。
+        current.as_mut().unwrap().address = endpoint();
+        assert!(
+            Bridge::reload(&mut current, &settings)
+                .unwrap_err()
+                .contains("无法核对")
+        );
+        assert_eq!(current.as_ref().unwrap().child.id(), pid);
+        current.as_mut().unwrap().address = second.clone();
+        fs::write(
+            &config,
+            r#"{"listen":"127.0.0.1:18702","source_id":"reload-test"}"#,
+        )
+        .unwrap();
+        assert!(Bridge::reload(&mut current, &settings).unwrap_err().contains("删除Bridge配置"));
+        assert_eq!(current.as_ref().unwrap().child.id(), pid);
+        let bytes = bridge_query(
+            &current.as_ref().unwrap().executable,
+            "health",
+            "--address",
+            &second,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["pending"],
+            1
+        );
         drop(current.take());
         let off = Settings {
             bridge_enabled: false,
@@ -741,30 +775,6 @@ mod bridge_tests {
         };
         Bridge::reload(&mut current, &off).unwrap();
         assert!(current.is_none());
-        let resolved = root.canonicalize().unwrap();
-        assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
-        fs::remove_dir_all(resolved).unwrap();
-    }
-
-    #[test]
-    fn bridge_health_address_stays_local_and_defaults_match_go() {
-        let root = std::env::temp_dir().join(format!("pulse-health-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let config = root.join("bridge.json");
-        fs::write(&config, "{}").unwrap();
-        assert_eq!(
-            bridge_health_url(&config).unwrap(),
-            "http://127.0.0.1:18702/healthz"
-        );
-        fs::write(&config, "null").unwrap();
-        assert!(bridge_health_url(&config).is_err());
-        fs::write(&config, r#"{"listen":"0.0.0.0:12345"}"#).unwrap();
-        assert!(bridge_health_url(&config).is_err());
-        fs::write(&config, r#"{"listen":"[::1]:12345"}"#).unwrap();
-        assert_eq!(
-            bridge_health_url(&config).unwrap(),
-            "http://[::1]:12345/healthz"
-        );
         let resolved = root.canonicalize().unwrap();
         assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
         fs::remove_dir_all(resolved).unwrap();

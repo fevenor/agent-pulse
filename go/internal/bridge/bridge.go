@@ -14,6 +14,7 @@ import (
 
 	"agent-pulse/internal/adapters"
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/localipc"
 	"agent-pulse/internal/transport"
 	"agent-pulse/protocol"
 )
@@ -203,7 +204,8 @@ func (b *Bridge) presence(ctx context.Context) {
 }
 
 func Emit(ctx context.Context, address string, e protocol.Event) error {
-	if err := config.Loopback(address); err != nil {
+	client, err := localipc.Client(address, 200*time.Millisecond)
+	if err != nil {
 		return err
 	}
 	if e.EventID == "" {
@@ -213,7 +215,7 @@ func Emit(ctx context.Context, address string, e protocol.Event) error {
 		e.OccurredAt = time.Now().UTC()
 	}
 	var receipt protocol.Receipt
-	status, err := transport.Request(ctx, transport.Client(200*time.Millisecond), "http://"+address, "", http.MethodPost, "/api/v1/events", protocol.LocalEvent{Event: e, ProcessID: os.Getpid()}, &receipt)
+	status, err := transport.Request(ctx, client, localipc.BaseURL, "", http.MethodPost, "/api/v1/events", protocol.LocalEvent{Event: e, ProcessID: os.Getpid()}, &receipt)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin";
-import { bridgeURL, convert, emit, eventTypes, FinalOutput, sessionID, type SessionInfo } from "./adapter.ts";
+import { bridgeAddress, convert, emit, eventTypes, FinalOutput, sessionID, type SessionInfo } from "./adapter.ts";
 
 export default Plugin.define({
   id: "agent-pulse",
@@ -10,8 +10,8 @@ export default Plugin.define({
       return;
     }
     let url: string;
-    try { url = bridgeURL(ctx.options.bridge_url); }
-    catch { console.warn("AgentPulse 未启用：bridge_url 必须使用回环 HTTP 地址"); return; }
+    try { url = bridgeAddress(ctx.options.bridge_address); }
+    catch { console.warn("AgentPulse 未启用：bridge_address 必须使用本机IPC地址"); return; }
     const controller = new AbortController();
     // 有界缓存用于删除事件到达后仍能识别原会话，未命中则安全忽略。
     const sessions = new Map<string, SessionInfo>();

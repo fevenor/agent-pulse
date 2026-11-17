@@ -2,6 +2,8 @@
 
 本文面向源码开发与本地联调。普通用户安装当前公开 RC3 请先按[部署指南](deployment.md)下载预构建和完整镜像，无需编译。提供 Hub、Relay、Bridge、Vue 管理页面、命令行测试客户端、HTTP 推送和独立适配包更新；桌面弹窗由 Windows Tray 承担。完整规划见 [实现设计](agent-pulse-design.md)，验证进度见 [开发记录](development-status.md)。
 
+当前源码的本机Bridge使用Unix域套接字，不监听TCP；health命令复用IPC检查待发队列。配置、权限和升级步骤见[本机进程间通信](local-ipc.md)。Hub/Relay和本地手机测试接收器仍使用各自网络端口。
+
 ## 准备和构建
 
 源码语言底线为 Go 1.25.0，发布及验证工具链固定 Go 1.27.4。SQLite 使用纯 Go 驱动，无需额外数据库进程或 C 编译器；执行竞态检测需要本机 Go 支持的 C 工具链。适配器开发/检查使用 Volta 管理 Node.js 24.14.1、pnpm 10.33.2；插件运行由 OpenCode 提供宿主，不要求 Bridge 所在主机额外运行 Node 服务。

@@ -127,7 +127,7 @@ try:
     hub_port, bridge_port = port(), port()
     hub_url = "http://127.0.0.1:" + str(hub_port)
     (root / "hub.yaml").write_text(f'listen: "127.0.0.1:{hub_port}"\ndatabase: "{root}/hub.db"\nadapter_directory: "{repo}"\n')
-    (root / "bridge.yaml").write_text(f'''listen: "127.0.0.1:{bridge_port}"
+    (root / "bridge.yaml").write_text(f'''listen: "unix:{root}/bridge.sock"
 source_id: "native-codex-test"
 hub_url: "{hub_url}"
 adapters:

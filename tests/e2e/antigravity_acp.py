@@ -4,6 +4,8 @@ import argparse
 import queue
 import shutil
 import socket
+import http.client
+import socketserver
 import subprocess
 import tempfile
 import threading
@@ -58,7 +60,28 @@ def wait(check, seconds=30):
 
 
 hub_url = "http://127.0.0.1:" + str(port())
-bridge_port = port()
+bridge_socket = str(root / "bridge.sock")
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(bridge_socket)
+
+class UnixHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_UNIX
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", 1
+
+def ipc_request(path, raw):
+    connection = UnixHTTPConnection("127.0.0.1", 1, timeout=5)
+    try:
+        connection.request("POST", path, raw, {"Content-Type":"application/json"})
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
 get = lambda path: json.load(urlopen(hub_url + path, timeout=3))
 
 
@@ -66,10 +89,7 @@ class ReceiptProxy(BaseHTTPRequestHandler):
     # 仅为隔离测试旁观本机接收回执；不生成事件，不改变 PID、载荷或响应。
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        with urlopen(Request(f"http://127.0.0.1:{bridge_port}" + self.path,
-                             data=raw, headers={"Content-Type": "application/json"}), timeout=5) as response:
-            reply = response.read()
-            status = response.status
+        status, reply = ipc_request(self.path, raw)
         payload, receipt = json.loads(raw), json.loads(reply)
         ingress.append({"session_id": payload.get("session_id"), "kind": payload.get("kind"),
                         "process_id": payload.get("process_id"), "status": status,
@@ -91,7 +111,7 @@ try:
         subprocess.run([str(binary / "agent-pulse-adapters"), *map(str, publisher_args)], check=True, stdout=subprocess.DEVNULL)
     shutil.copy2(root / "publisher.pub", repo / "publisher.pub")
     (root / "hub.yaml").write_text(f'listen: "127.0.0.1:{hub_url.rsplit(":",1)[1]}"\ndatabase: "{root}/hub.db"\nadapter_directory: "{repo}"\n')
-    (root / "bridge.yaml").write_text(f'''listen: "127.0.0.1:{bridge_port}"
+    (root / "bridge.yaml").write_text(f'''listen: "unix:{root}/bridge.sock"
 source_id: "isolated-agy-direct"
 hub_url: "{hub_url}"
 adapters:
@@ -106,14 +126,15 @@ adapters:
     start("bridge", [binary / "agent-pulse-bridge", "serve", "--config", root / "bridge.yaml"])
     wait(lambda: hook_path.exists() and str(root / "bridge.yaml") in hook_path.read_text() and "dispatch" in hook_path.read_text())
     hook_installed = hook_path.read_bytes()
-    wait(lambda: json.load(urlopen(f"http://127.0.0.1:{bridge_port}/healthz", timeout=3)))
+    wait(lambda: subprocess.run([str(binary / "agent-pulse-bridge"), "health", "--config", str(root / "bridge.yaml")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
     # 服务已加载真实监听地址；仅将随后 hook 读取的临时配置指向回执旁观器。
     # 配置和 hook 命令仍由真实 Bridge 生成，不增加 Agent 的启动包装或主会话绑定。
-    proxy = ThreadingHTTPServer(("127.0.0.1", 0), ReceiptProxy)
+    proxy = UnixHTTPServer(str(root / "proxy.sock"), ReceiptProxy)
+    os.chmod(root / "proxy.sock", 0o600)
     threading.Thread(target=proxy.serve_forever, daemon=True).start()
     bridge_config = root / "bridge.yaml"
     bridge_config.write_text(bridge_config.read_text().replace(
-        f'listen: "127.0.0.1:{bridge_port}"', f'listen: "127.0.0.1:{proxy.server_port}"', 1))
+        f'listen: "unix:{root}/bridge.sock"', f'listen: "unix:{root}/proxy.sock"', 1))
     runtime = root / "adapters/runtime/antigravity.json"
     ordinary_events = []
     ordinary = "本次未指定 --model，未执行普通 CLI 模型任务"
@@ -158,9 +179,8 @@ adapters:
              "agent": "antigravity", "session_id": "isolated-acp-process-probe",
              "kind": "session.started", "occurred_at": datetime.now(timezone.utc).isoformat(),
              "scope": "main", "title": "仅本机进程识别探针", "process_id": acp.pid}
-    with urlopen(Request(f"http://127.0.0.1:{proxy.server_port}/api/v1/events", data=json.dumps(probe).encode(),
-                         headers={"Content-Type": "application/json"}), timeout=5) as response:
-        boundary_filtered = response.status == 202 and json.load(response).get("accepted") == "filtered"
+    status, reply = ipc_request("/api/v1/events", json.dumps(probe).encode())
+    boundary_filtered = status == 202 and json.loads(reply).get("accepted") == "filtered"
     if not boundary_filtered:
         raise RuntimeError("真实 ACP 进程的本机识别失败；合成探针不应进入 Hub")
     time.sleep(2)

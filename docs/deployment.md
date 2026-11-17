@@ -106,6 +106,10 @@ curl --fail http://127.0.0.1:18702/healthz
 
 Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客户端](windows-client.md)，不要把上述 Linux systemd 步骤照搬到 Windows。
 
+## 修订RC4的本机接入
+
+修订RC4使用Linux/WSL Unix套接字和Windows命名管道，不再绑定本机TCP端口。公开RC3安装流程与上方示例保持；安装RC4时以[本机IPC配置与升级](local-ipc.md)为准：停止前核对旧队列，备份后仅清除原listen端口设置，保留来源身份、公钥和其他私人配置，替换后同步适配器再启动。健康检查使用agent-pulse-bridge health --config配置路径，而不是对新Bridge执行curl。
+
 ## 3. 可选：部署公网 Relay
 
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：

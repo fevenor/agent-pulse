@@ -61,7 +61,7 @@ func setupOpenCodeJSONCFixture(t *testing.T, raw, rejected string) (config.Bridg
 	configPath := filepath.Join(home, "bridge.yaml")
 	hostPath := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
 	write(t, hostPath, raw)
-	c := config.Bridge{SourceID: "setup-jsonc-regression", Listen: "127.0.0.1:18702", HubURL: hub.URL, Adapters: config.AdapterUpdates{Directory: filepath.Join(home, "adapters"), Managed: map[string]string{"opencode": hostPath}}}
+	c := config.Bridge{SourceID: "setup-jsonc-regression", Listen: "", HubURL: hub.URL, Adapters: config.AdapterUpdates{Directory: filepath.Join(home, "adapters"), Managed: map[string]string{"opencode": hostPath}}}
 	data, err := yaml.Marshal(map[string]any{"source_id": c.SourceID, "listen": c.Listen, "hub_url": c.HubURL, "adapters": map[string]any{"directory": c.Adapters.Directory, "managed": c.Adapters.Managed}})
 	if err != nil {
 		t.Fatal(err)

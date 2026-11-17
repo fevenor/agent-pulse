@@ -65,7 +65,7 @@ func updateOpenCodeJSONC(c config.Bridge, p Package, raw []byte, enable bool) ([
 			continue
 		}
 		found = true
-		data, _ := json.Marshal(map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen})
+		data, _ := json.Marshal(map[string]any{"source_id": c.SourceID, "bridge_address": c.Listen})
 		options, _ := hujson.Parse(data)
 		optionsIndex := -1
 		for i := range plugin.Members {
@@ -82,7 +82,7 @@ func updateOpenCodeJSONC(c config.Bridge, p Package, raw []byte, enable bool) ([
 		kept = append(kept, entry)
 	}
 	if enable && !found {
-		data, _ := json.Marshal(map[string]any{"package": loader, "options": map[string]any{"source_id": c.SourceID, "bridge_url": "http://" + c.Listen}})
+		data, _ := json.Marshal(map[string]any{"package": loader, "options": map[string]any{"source_id": c.SourceID, "bridge_address": c.Listen}})
 		entry, _ := hujson.Parse(data)
 		entry.BeforeExtra = []byte("\n    ")
 		kept = append(kept, entry)

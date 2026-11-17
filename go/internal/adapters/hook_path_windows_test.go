@@ -45,7 +45,7 @@ func TestWindowsReenableAndDisableDeduplicateEquivalentConfigurationPaths(t *tes
 	extended := quoteCMD(exe) + " dispatch --config " + quoteCMD(`\\?\`+cfg) + " --adapter " + quoteCMD("codex") + " --hook " + quoteCMD("Stop")
 	other := hookCommand(hookCommandPrefix(exe, cfg+".other", "codex"), "Stop")
 	original, _ := json.Marshal(map[string]any{"theme": "keep", "hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand(plain, "Stop")}, map[string]any{"type": "command", "command": extended}, map[string]any{"type": "command", "command": "echo keep"}, map[string]any{"type": "command", "command": other}}}}}})
-	c := config.Bridge{SourceID: "isolated-path-alias", Listen: "127.0.0.1:18702"}
+	c := config.Bridge{SourceID: "isolated-path-alias", Listen: ""}
 	p := Package{Manifest: Manifest{ID: "codex", Kind: "executable", ConfigStyle: "hooks", Hooks: map[string]string{"Stop": ""}}}
 	after, err := hookConfig(c, cfg, p, original)
 	if err != nil {

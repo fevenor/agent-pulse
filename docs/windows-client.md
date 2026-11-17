@@ -2,6 +2,12 @@
 
 AgentPulse 使用 Rust + GPUI，Windows 用户只启动一个 Tray 程序。Hub（权威会话与已读服务）和 Relay（中继服务）继续部署在 Linux；需要采集 Windows 本机 Agent 时，Tray 自动释放并托管内置 Go Bridge。WSL Debian 的 Bridge 由 Debian 自行运行，使用独立主机指纹。
 
+## 本机接入与当前候选升级
+
+当前源码及修订RC4的本机Bridge使用Windows命名管道，不占用TCP端口；WSL仍运行自己的Unix套接字Bridge。首次配置的listen为空，按当前用户和来源指纹生成稳定端点。健康和自动重载通过内置Bridge的IPC查询，保留原队列检查规则。
+
+从此前TCP入口升级前，先检查旧Bridge的healthz待发为0并正常退出，备份便携目录；保留tray.yaml、source_id、公钥、令牌和data，只将data/bridge.yaml（或显式bridge_config）的listen改为空或删除，再替换EXE并启动。新程序不会悄悄忽略旧端口配置或退回TCP。需先使用同修订Hub提供的新版适配包；Codex记忆过滤与OpenCode IPC分别在独立包中，只有换EXE不能完成全部修复。OpenCode使用者同步适配包以更新受管理插件的bridge_address。详见[本机进程间通信](local-ipc.md)。RC4仍为草稿，不能匿名下载安装；公开RC3继续按其发布说明使用。
+
 ## 运行与交互
 
 从[公开 RC3](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3)下载 Windows amd64 便携包并核对摘要。解压到可写目录，双击 `agent-pulse-tray.exe` 即驻留托盘。程序默认读取自身目录的 `tray.yaml`；首次缺少该文件时创建未连接服务的空配置，不自动打开设置。可将 `tray.example.yaml` 复制为 `tray.yaml` 后填写 Hub 地址；源码开发时示例位于 `config/`。默认配置定位不依赖启动工作目录：

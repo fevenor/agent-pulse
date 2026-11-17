@@ -168,6 +168,8 @@ def main():
 - 普通运行记录在Tray显示为已读且静默，连续无正文活动合并展示，原始事件仍保留；完成、等待、错误等事件不合并。
 - 共享Codex目录遵循CODEX_HOME与CODEX_SQLITE_HOME；WSL管理共享钩子，Windows提示并保留，原生command_windows选择平台入口。
 - 离开检测提供5分钟、10分钟、自定义和关闭；自定义整数分钟在输入框失焦时校验保存。
+- Codex临时记忆整理在适配器转换阶段精确识别宿主专用目录，不依赖持久会话库，也不误伤同名普通项目。
+- 本机递交改为Linux/WSL Unix套接字与Windows命名管道，OpenCode和Tray健康查询同步切换；新Bridge不监听TCP，不提供TCP回退，避免镜像网络端口冲突。
 - Tray详情渲染Markdown，支持查看/复制原文；不自动加载图片，不执行HTML。
 - Hub各push渠道可配置body_format为preserve（默认）或plain_text；仅修改发送副本，原始正文及其他渠道不变。
 
@@ -181,7 +183,9 @@ curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/in
 
 raw默认仍选择已公开RC3；RC4草稿不能匿名下载。草稿试用需下载Bridge并核验SHA256后，通过raw脚本的--version {args.tag} --file 文件 --sha256 摘要安装；已有安装停止前确认待发队列为空。
 
-Windows退出后替换EXE、保留配置和data；普通运行不会提醒。共享Codex目录以实际hook执行环境验证Windows/WSL，正常直接启动，无需包装；宿主信任由用户确认。
+本机接入方式已改变：先检查旧healthz的pending为0、正常停止并备份配置；仅将原Bridge YAML的listen改为空或删除，保留source_id、公钥、令牌和其他私人设置。先使用同修订Hub签名仓库，再替换、同步适配包及OpenCode受管理配置（bridge_address），用新health命令检查IPC与队列。记忆过滤和插件IPC位于独立适配包，只换Bridge/Tray程序而仍取旧包不能完成修复。
+
+Windows退出后替换EXE、保留tray.yaml和data，并按上段修改data/bridge.yaml或指定的bridge_config；普通运行不会提醒。共享Codex目录以实际hook执行环境验证Windows/WSL，正常直接启动，无需包装；宿主信任由用户确认。
 
 Hub成品目标 `{manifest['hub']}` 须由发布者沿用原密钥签署同候选仓库并完成镜像核验后才可使用，创建草稿本身不代表镜像已发布。Relay保持RC3。正文配置示例：
 

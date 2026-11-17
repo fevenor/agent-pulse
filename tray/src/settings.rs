@@ -174,7 +174,7 @@ impl Settings {
         let source_id = format!("windows-{}", uuid::Uuid::new_v4());
         let host_name = Self::default_host_name();
         let config = BridgeBootstrap {
-            listen: "127.0.0.1:18702",
+            listen: "",
             source_id,
             host_name: host_name.trim().to_string(),
             hub_url,

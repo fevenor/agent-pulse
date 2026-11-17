@@ -17,3 +17,7 @@
 ## 事件正文限制
 
 当前验证基线的真实 Stop hook 只带 session_id/hook_event_name/turn_id，没有最终回答字段，因此本轮仅记完成状态，不从 transcript 回填答案。工具提问/批准仍因缺可靠主/子归属后置。Interrupt/SessionEnd 无详细原因时只记录状态，不伪造正文；详见[事件与内容覆盖](../../docs/event-coverage.md)。
+
+## 内部记忆过滤
+
+过滤发生在独立适配器转换阶段，空事件不会递交 Bridge。先检查明确子/内部字段，再查询可选身份库；CODEX_SQLITE_HOME 可独立于 CODEX_HOME。记忆整理是 ephemeral（不持久化的临时线程），不能仅依靠 state_5.sqlite；其工作目录精确匹配 CODEX_HOME 下的 memories 或 memories_v2 时直接过滤。处理本平台规范路径以及现有 WSL 共享入口的 Windows 盘符表示，不读取记忆内容或对话正文，不过滤其他位置的同名普通项目。真实宿主验证边界见[开发记录](../../docs/development-status.md)。

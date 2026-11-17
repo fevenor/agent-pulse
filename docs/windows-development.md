@@ -104,7 +104,7 @@ try {
 uv run --offline --no-project python tests/e2e/windows_wsl.py
 ```
 
-该测试只使用隔离来源、临时配置和回环端口，测试结束清理所创建的容器与进程；需要 Windows 可访问 WSL 本地转发。两来源使用不同 `source_id`，防止同名会话合并。
+该测试只使用隔离来源、临时配置、本机IPC和Hub回环端口，测试结束清理所创建的容器与进程；需要 Windows 可访问 WSL 本地转发。Windows命名管道与WSL Unix套接字同时运行，不依赖本机Bridge端口分配；两来源使用不同 `source_id`，防止同名会话合并。
 
 ## 后续验收
 

@@ -15,7 +15,7 @@ func TestDisableRemovesOwnedHooksAfterUpgradeAndKeepsUserChanges(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "agent.json")
 			configPath := filepath.Join(root, "bridge.yaml")
-			c := config.Bridge{SourceID: "source", Listen: "127.0.0.1:18702", Adapters: config.AdapterUpdates{Directory: root, Managed: map[string]string{"sample": path}}}
+			c := config.Bridge{SourceID: "source", Listen: "", Adapters: config.AdapterUpdates{Directory: root, Managed: map[string]string{"sample": path}}}
 			p := Package{Manifest: Manifest{ID: "sample", Kind: "executable", ConfigStyle: style, Hooks: map[string]string{"BeforeAction": ""}}}
 			if style == "opencode-plugin" {
 				p.Kind = style

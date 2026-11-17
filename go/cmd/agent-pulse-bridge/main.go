@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"agent-pulse/internal/adapters"
 	"agent-pulse/internal/bridge"
 	"agent-pulse/internal/clientconfig"
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/localipc"
 	"agent-pulse/internal/transport"
 	"agent-pulse/protocol"
 )
@@ -63,8 +65,34 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("http://" + c.Listen + "/healthz")
+		fmt.Println(c.Listen)
 		return nil
+	case "health":
+		path := fs.String("config", defaultConfigPath(), "Bridge配置")
+		address := fs.String("address", "", "已解析的本机IPC地址")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if *address == "" {
+			c, err := config.LoadBridge(*path)
+			if err != nil {
+				return err
+			}
+			*address = c.Listen
+		}
+		client, err := localipc.Client(*address, 300*time.Millisecond)
+		if err != nil {
+			return err
+		}
+		var health map[string]any
+		status, err := transport.Request(context.Background(), client, localipc.BaseURL, "", "GET", "/healthz", nil, &health)
+		if err != nil {
+			return err
+		}
+		if status != 200 || health["status"] != "ok" {
+			return errors.New("本机接入健康检查失败")
+		}
+		return json.NewEncoder(os.Stdout).Encode(health)
 	case "dispatch":
 		reply := map[string]any{}
 		defer func() { _ = json.NewEncoder(os.Stdout).Encode(reply) }()
@@ -119,7 +147,7 @@ func run() error {
 		}
 		return adapters.Sync(context.Background(), resolved, *path)
 	case "emit":
-		address := fs.String("address", "127.0.0.1:18702", "本地 Bridge 地址")
+		address := fs.String("address", "", "本机IPC地址（使用check-config获取）")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			return err
 		}
@@ -156,12 +184,16 @@ func run() error {
 		b := bridge.New(c)
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		listener, listenErr := localipc.Listen(c.Listen)
+		if listenErr != nil {
+			return listenErr
+		}
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); b.Run(ctx) }()
 		go func() { defer wg.Done(); adapters.Run(ctx, c, absolutePath) }()
 		slog.Info("Bridge 已启动", "listen", c.Listen, "source_id", c.SourceID)
-		err = transport.Serve(ctx, c.Listen, b.Handler())
+		err = transport.ServeListener(ctx, listener, b.Handler())
 		cancel()
 		wg.Wait()
 		return err
@@ -183,10 +215,11 @@ func printHelp(w io.Writer) {
 用法：
   agent-pulse-bridge version [--json]          查询当前二进制版本、提交及摘要；也支持 --version
   agent-pulse-bridge setup [--config 路径]       扫描已安装 Agent 并交互配置钩子
-  agent-pulse-bridge check-config [--config 路径] 验证配置并输出本机健康地址
+  agent-pulse-bridge check-config [--config 路径] 验证配置并输出本机IPC地址
+  agent-pulse-bridge health [--config 路径]      通过本机IPC检查健康与待发队列
   agent-pulse-bridge serve [--config 路径]       启动 Bridge 服务
   agent-pulse-bridge sync-adapters [--config 路径] 手动检查并更新适配包
-  agent-pulse-bridge emit [--address host:port]   从标准输入发送事件 JSON
+  agent-pulse-bridge emit --address IPC地址   从标准输入发送事件 JSON
 
 setup 会逐个询问是否启用或禁用支持的 Agent，只修改所选 Agent 配置。
 配置结束后会显示各 Agent 的名称、版本和配置路径；仅本次启用的 Codex CLI 需要在 /hooks 中额外审核信任。

@@ -107,6 +107,12 @@ func Serve(ctx context.Context, address string, handler http.Handler) error {
 	if err != nil {
 		return err
 	}
+	return ServeListener(ctx, listener, handler)
+}
+
+// ServeListener复用HTTP报文和关闭规则，监听器可来自本机IPC。
+func ServeListener(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	defer listener.Close()
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	done := make(chan struct{})
 	defer close(done)
@@ -119,7 +125,7 @@ func Serve(ctx context.Context, address string, handler http.Handler) error {
 		case <-done:
 		}
 	}()
-	err = srv.Serve(listener)
+	err := srv.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

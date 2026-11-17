@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -119,4 +120,51 @@ func codexInternalSession(id, transcript string) bool {
 	var threadSource string
 	_ = db.QueryRowContext(ctx, "SELECT thread_source FROM threads WHERE id=?", id).Scan(&threadSource)
 	return threadSource == "memory_consolidation" || threadSource == "subagent" || threadSource == "guardian_review"
+}
+
+// 记忆整理线程不持久化；只认宿主专用目录，不按项目名或标题猜测。
+func codexMemoryWorkspace(cwd string) bool {
+	if cwd == "" {
+		return false
+	}
+	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if home == "" {
+		user, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		home = filepath.Join(user, ".codex")
+	}
+	canonical := func(path string) string {
+		// 宿主可给出Windows加长路径；先规范命名空间，再处理WSL盘符表示。
+		if strings.HasPrefix(path, `\\?\UNC\`) {
+			path = `\\` + strings.TrimPrefix(path, `\\?\UNC\`)
+		} else {
+			path = strings.TrimPrefix(path, `\\?\`)
+		}
+		if runtime.GOOS == "linux" && os.Getenv("WSL_DISTRO_NAME") != "" && len(path) > 2 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+			path = "/mnt/" + strings.ToLower(path[:1]) + "/" + strings.ReplaceAll(path[3:], "\\", "/")
+		}
+		if !filepath.IsAbs(path) {
+			return ""
+		}
+		path = filepath.Clean(path)
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+		return path
+	}
+	actual := canonical(cwd)
+	if actual == "" {
+		return false
+	}
+	// WSL中的Windows盘符目录沿用Windows大小写比较，普通Linux目录仍精确比较。
+	caseFold := runtime.GOOS == "windows" || runtime.GOOS == "linux" && os.Getenv("WSL_DISTRO_NAME") != "" && len(actual) > 6 && strings.HasPrefix(actual, "/mnt/") && actual[6] == '/' && (actual[5] >= 'a' && actual[5] <= 'z' || actual[5] >= 'A' && actual[5] <= 'Z')
+	for _, name := range []string{"memories", "memories_v2"} {
+		expected := canonical(filepath.Join(home, name))
+		if expected != "" && (actual == expected || caseFold && strings.EqualFold(actual, expected)) {
+			return true
+		}
+	}
+	return false
 }

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"agent-pulse/internal/config"
+	"agent-pulse/internal/localipc"
 	"bytes"
 	"strings"
 	"testing"
@@ -9,7 +10,8 @@ import (
 
 func TestOpenCodeJSONCPreservesPrivateSyntaxAndIsIdempotent(t *testing.T) {
 	raw := []byte("// 原始说明\n{\n \"provider\": {\"number\": 900719925474099312345, \"url\":\"https://example.invalid/a//b\"},\n \"plugins\": [ {\"package\":\"third-party\", /* 插件说明 */ \"enabled\":true}, ],\n \"other\": \"保留\",\n}\n")
-	c := config.Bridge{SourceID: "isolated", Listen: "127.0.0.1:19000"}
+	c := config.Bridge{SourceID: "isolated", Listen: ""}
+	c.Listen, _ = localipc.DefaultAddress(c.SourceID)
 	c.Adapters.Directory = t.TempDir()
 	p := Package{Manifest: Manifest{ID: "opencode", Kind: "opencode-plugin"}}
 	after, err := updateOpenCodeJSONC(c, p, raw, true)
@@ -20,6 +22,9 @@ func TestOpenCodeJSONCPreservesPrivateSyntaxAndIsIdempotent(t *testing.T) {
 		if !strings.Contains(string(after), keep) {
 			t.Fatal("私人内容被改写：", keep)
 		}
+	}
+	if !strings.Contains(string(after), "bridge_address") || strings.Contains(string(after), "bridge_url") {
+		t.Fatal("受管理插件没有切换IPC配置")
 	}
 	again, err := updateOpenCodeJSONC(c, p, after, true)
 	if err != nil || !bytes.Equal(after, again) {

@@ -13,6 +13,7 @@ import (
 func TestCodexHookUsesExactNativeTitleWithoutReadingConversationBody(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
+	t.Setenv("CODEX_SQLITE_HOME", "")
 	index := "{\"id\":\"other\",\"thread_name\":\"其他会话标题\"}\n" +
 		"{\"id\":\"main\",\"thread_name\":\"旧标题\"}\n" +
 		"{\"id\":\"main\",\"thread_name\":\"部署并优化通知服务\"}\n"
@@ -41,6 +42,7 @@ func TestCodexMissingInvalidAndOversizedTitleMetadataDoesNotDropEvent(t *testing
 	for _, value := range []string{"", "invalid-json\n", `{"id":"other","thread_name":"不匹配"}`, `{"id":"s","thread_name":"  "}`, strings.Repeat("x", (8<<20)+1)} {
 		home := t.TempDir()
 		t.Setenv("CODEX_HOME", home)
+		t.Setenv("CODEX_SQLITE_HOME", "")
 		if value != "" {
 			if err := os.WriteFile(filepath.Join(home, "session_index.jsonl"), []byte(value), 0600); err != nil {
 				t.Fatal(err)
@@ -56,6 +58,7 @@ func TestCodexMissingInvalidAndOversizedTitleMetadataDoesNotDropEvent(t *testing
 func TestCodexTitleFitsProtocolByteLimitAndKeepsUTF8(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
+	t.Setenv("CODEX_SQLITE_HOME", "")
 	row, _ := json.Marshal(map[string]string{"id": "s", "thread_name": strings.Repeat("会话😀", 400)})
 	if err := os.WriteFile(filepath.Join(home, "session_index.jsonl"), row, 0600); err != nil {
 		t.Fatal(err)

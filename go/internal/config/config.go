@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"agent-pulse/internal/localipc"
 	"gopkg.in/yaml.v3"
 )
 
@@ -183,7 +184,7 @@ func ParseBridge(data []byte) (Bridge, error) {
 }
 
 func bridgeDefaults() Bridge {
-	return Bridge{Listen: "127.0.0.1:18702", HubURL: "http://127.0.0.1:18700", QueueEvents: 10000, QueueBytes: 64 << 20}
+	return Bridge{HubURL: "http://127.0.0.1:18700", QueueEvents: 10000, QueueBytes: 64 << 20}
 }
 
 func validateBridge(c Bridge) (Bridge, error) {
@@ -207,7 +208,14 @@ func validateBridge(c Bridge) (Bridge, error) {
 			return c, fmt.Errorf("adapters.managed 中的宿主配置必须为绝对路径")
 		}
 	}
-	if err := Loopback(c.Listen); err != nil {
+	if c.Listen == "" {
+		var err error
+		c.Listen, err = localipc.DefaultAddress(c.SourceID)
+		if err != nil {
+			return c, err
+		}
+	}
+	if err := localipc.Validate(c.Listen); err != nil {
 		return c, err
 	}
 	if strings.TrimSpace(c.SourceID) == "" || len(c.SourceID) > 256 || strings.ContainsAny(c.SourceID, "\x00\r\n") {

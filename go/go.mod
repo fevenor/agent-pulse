@@ -3,6 +3,7 @@ module agent-pulse
 go 1.25.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/tailscale/hujson v0.0.0-20250605163823-992244df8c5a
 	github.com/yuin/goldmark v1.8.7

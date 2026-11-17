@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bridgeURL, convert, type NativeEvent, type SessionInfo } from "../src/adapter.ts";
+import { bridgeAddress, convert, type NativeEvent, type SessionInfo } from "../src/adapter.ts";
 
 const session = { id: "main", title: "检查任务", location: { directory: "/project" } } as SessionInfo;
 const completed = {
@@ -41,11 +41,10 @@ test("批准和表单等待有独立语义", () => {
   assert.equal(convert(form, session, "linux")!.kind, "input.required");
 });
 
-test("本地地址限制", () => {
-  assert.equal(bridgeURL(undefined), "http://127.0.0.1:18702/api/v1/events");
-  for (const url of ["https://127.0.0.1", "http://remote", "http://localhost", "http://user:secret@127.0.0.1", "http://127.0.0.1/path"]) {
-    assert.throws(() => bridgeURL(url));
-  }
+test("本地IPC地址限制", () => {
+  assert.equal(bridgeAddress(String.raw`pipe:\\.\pipe\pulse-test`),String.raw`\\.\pipe\pulse-test`);
+  if (process.platform !== "win32") assert.equal(bridgeAddress("unix:/tmp/pulse-test.sock"),"/tmp/pulse-test.sock");
+  for (const address of [undefined,"127.0.0.1:18702","http://127.0.0.1:18702", "http://remote", "unix:relative", String.raw`pipe:\\remote\pipe\pulse`]) assert.throws(()=>bridgeAddress(address));
 });
 
 test("原生改名保持会话 ID，生成不改变运行状态的名称事件", () => {
@@ -59,20 +58,20 @@ test("原生改名保持会话 ID，生成不改变运行状态的名称事件",
   assert.equal(convert(renamed, { ...session, parentID: "parent" }, "linux"), undefined);
 });
 
-test("本机进程信息仅在发送边界附加，过滤确认不是发送失败", async () => {
-  const { emit } = await import("../src/adapter.ts");
-  const original = globalThis.fetch;
-  const e = convert(completed, session, "linux")!;
-  let posted: Record<string, unknown> | undefined;
-  globalThis.fetch = (async (_url, options) => {
-    posted = JSON.parse(String(options?.body));
-    return new Response(JSON.stringify({ event_id: e.event_id, accepted: "filtered" }), { status: 202 });
-  }) as typeof fetch;
-  try {
-    await emit("http://127.0.0.1/api/v1/events", e);
-    assert.equal(posted?.process_id, process.pid);
-    assert.equal("process_id" in e, false, "转换后的公共事件不能被发送过程改写");
-  } finally { globalThis.fetch = original; }
+test("本机进程信息仅在IPC发送边界附加，过滤确认不是发送失败", async () => {
+  const {emit}=await import("../src/adapter.ts");
+  const {createServer}=await import("node:http");
+  const {mkdtemp,rm}=await import("node:fs/promises");
+  const {tmpdir}=await import("node:os");const {join,resolve}=await import("node:path");
+  const dir=await mkdtemp(join(tmpdir(),"pulse-ipc-"));
+  const address=process.platform==="win32" ? String.raw`\\.\pipe\pulse-test-`+process.pid+"-"+Date.now() : join(dir,"bridge.sock");
+  const e=convert(completed,session,"linux")!;let posted:Record<string,unknown>|undefined;
+  const server=createServer((req,res)=>{let body="";req.on("data",chunk=>body+=chunk);req.on("end",()=>{
+    posted=JSON.parse(body);res.writeHead(202,{"Content-Type":"application/json"});res.end(JSON.stringify({event_id:e.event_id,accepted:"filtered"}));
+  });});
+  await new Promise<void>((resolve,reject)=>{server.once("listening",resolve);server.once("error",reject);server.listen(address);});
+  try {await emit(address,e);assert.equal(posted?.process_id,process.pid);assert.equal("process_id" in e,false);}
+  finally {await new Promise<void>((r,j)=>server.close(error=>error?j(error):r()));assert.ok(resolve(dir).startsWith(resolve(tmpdir())+ (process.platform==="win32"?"\\":"/")));await rm(dir,{recursive:true,force:true});}
 });
 
 test("完成正文从原生文本事件收集，不混入思考、其他会话或上一轮", async () => {

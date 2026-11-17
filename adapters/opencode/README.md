@@ -13,14 +13,14 @@
       "package": "/absolute/path/agent-pulse/adapters/opencode",
       "options": {
         "source_id": "my-linux",
-        "bridge_url": "http://127.0.0.1:18702"
+        "bridge_address": "unix:/home/your-user/private-run/bridge-example.sock"
       }
     }
   ]
 }
 ```
 
-`source_id` 必须与本地 Bridge 一致，`bridge_url` 仅接受 `127.0.0.1` 或 `[::1]` 的 HTTP 根地址。保留目录根部的 `index.ts`，OpenCode 2.0.20 的本地目录加载实际需要该入口，不能只依赖 package.json 中的嵌套 exports。
+`source_id` 必须与本地 Bridge 一致，`bridge_address` 使用 Bridge 的 `check-config` 输出的本机 IPC 地址，不使用 TCP 端口。保留目录根部的 `index.ts`，OpenCode 2.0.20 的本地目录加载实际需要该入口，不能只依赖 package.json 中的嵌套 exports。
 
 插件代码直接由宿主加载；开发者检查时安装锁定 SDK 和 TypeScript：
 
@@ -62,3 +62,5 @@ SDK 为开发/宿主依赖，不把整套 Node 服务部署进 Bridge。安装�
 ## 独立包更新
 
 多主机部署使用 [签名包与固定 loader](../../docs/adapters.md)，无需更新 Bridge。`AGENT_PULSE_PACKAGE_SMOKE=1 pnpm smoke` 在隔离宿主中验证安装、真实激活和运行版本回执。直接目录接入仍适合本地开发，不能与固定 loader 同时注册同一个插件 ID。
+
+本机 IPC 规则与升级步骤见[本机进程间通信](../../docs/local-ipc.md)。受管理接入不需手填地址，安装器会同步该字段。

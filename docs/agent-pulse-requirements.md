@@ -21,6 +21,8 @@
 
 ## 2. 部署与通信
 
+本机Agent与Bridge之间以及Tray对自有Bridge的健康检查采用进程间通信，不占用TCP端口，不受WSL镜像网络端口冲突影响。Linux/WSL使用Unix域流套接字，Windows使用命名管道；只允许当前用户访问。Hub/Relay网络通信保持不变。
+
 - Hub 和 Relay 均通过 Docker 部署，提供镜像构建方式及 Docker Compose 示例；需要持久保存的服务端数据通过数据卷保留。
 - GitHub Actions 自动检查、构建 Hub/Relay 的 amd64、arm64 产物并发布 Relay；完整 Hub 由发布者附加正式签名适配仓库后发布。仅提供两个成品公开镜像。发布前执行容器恢复验证，模拟运行和目标架构真机验证分别记录。
 - Hub 通过内网 `IP:端口` 访问，支持 HTTP/WebSocket 直连，不要求域名或内置 TLS；Web 管理界面使用同一访问入口。

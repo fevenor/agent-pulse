@@ -139,15 +139,25 @@ if ((setup)); then
   if ((setup_status != 0 && setup_status != 3)); then
     fail "接入配置未能完成（退出码 $setup_status），未启动服务；请按配置报告排查。"
   fi
-  health_url="http://127.0.0.1:18702/healthz"
-  # 显式安装旧候选时可能没有配置检查命令；仅在产物提供时使用。
-  if "$destination" help | grep -q 'check-config'; then
-    health_url="$("$destination" check-config --config "$config_dir/bridge.yaml")" || fail 'Bridge配置无效，未启动服务。'
+  ipc_health=0
+  if "$destination" help | grep -q 'agent-pulse-bridge health'; then
+    ipc_health=1
+    "$destination" check-config --config "$config_dir/bridge.yaml" >/dev/null || fail 'Bridge配置无效，未启动服务。'
+  else
+    # 公开RC3尚无IPC健康命令；保留其既有安装流程，不让raw入口默认安装失败。
+    health_url="http://127.0.0.1:18702/healthz"
+    if "$destination" help | grep -q 'check-config'; then
+      health_url="$("$destination" check-config --config "$config_dir/bridge.yaml")" || fail 'Bridge配置无效，未启动服务。'
+    fi
   fi
+  check_health() {
+    if ((ipc_health)); then "$destination" health --config "$config_dir/bridge.yaml";
+    else curl --fail --silent --show-error "$health_url"; fi
+  }
   systemctl --user daemon-reload
   systemctl --user enable --now agent-pulse-bridge
   for attempt in {1..10}; do
-    if curl --fail --silent --show-error "$health_url"; then
+    if check_health; then
       if ((setup_status == 3)); then
         printf '\n%s\n' 'Bridge服务已启动，但部分Agent接入未完成；请按上述报告排查，其他接入继续运行。' >&2
         exit 3

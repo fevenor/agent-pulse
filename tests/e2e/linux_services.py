@@ -78,7 +78,7 @@ push:
       title: "${{title}}"
       body: "${{body}}"
 ''')
-    (root / "bridge.yaml").write_text(f'''listen: "127.0.0.1:{bridge_port}"
+    (root / "bridge.yaml").write_text(f'''listen: "unix:{root}/bridge.sock"
 source_id: "native-qoder-test"
 hub_url: "{hub_url}"
 adapters:
