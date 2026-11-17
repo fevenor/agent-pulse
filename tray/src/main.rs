@@ -155,8 +155,44 @@ fn window(
     })
     .expect("无法创建桌面窗口")
 }
-fn notify(handle: WindowHandle<Surface>, cx: &mut gpui::AsyncApp) {
-    let _ = handle.update(cx, |_, _, cx| cx.notify());
+// 输入组件要求专用根视图；仅设置窗口使用它，其他窗口保持原有轻量Surface。
+fn settings_window(
+    shared: Rc<RefCell<Shared>>,
+    tx: async_channel::Sender<Command>,
+    cx: &mut App,
+) -> WindowHandle<gpui_component::Root> {
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(560.), px(620.)),
+            cx,
+        ))),
+        show: false,
+        focus: false,
+        kind: WindowKind::Normal,
+        is_resizable: true,
+        is_minimizable: true,
+        window_min_size: Some(size(px(400.), px(320.))),
+        ..Default::default()
+    };
+    cx.open_window(options, move |w, cx| {
+        w.set_window_title("AgentPulse — 设置");
+        platform::set_window_icon(w);
+        platform::preserve_display_visibility(w);
+        platform::disable_maximize(w);
+        w.on_window_should_close(cx, |w, cx| {
+            w.blur();
+            platform::hide(w);
+            cx.refresh_windows();
+            false
+        });
+        let content = cx.new(|cx| Surface::new(Kind::Settings, shared, tx, w, cx));
+        cx.new(|cx| gpui_component::Root::new(content, w, cx))
+    })
+    .expect("无法创建设置窗口")
+}
+fn notify(handle: impl Into<gpui::AnyWindowHandle>, cx: &mut gpui::AsyncApp) {
+    let _ = handle.into().update(cx, |_, w, _| w.refresh());
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -320,7 +356,7 @@ fn run() -> Result<(), String> {
             let detail = window(Kind::Detail, shared.clone(), tx.clone(), cx);
             let float = window(Kind::Float, shared.clone(), tx.clone(), cx);
             let card = window(Kind::Card, shared.clone(), tx.clone(), cx);
-            let settings_window = window(Kind::Settings, shared.clone(), tx.clone(), cx);
+            let settings_window = settings_window(shared.clone(), tx.clone(), cx);
             let mut floating = float
                 .update(cx, |_, w, _| {
                     floating::Floating::new(platform::handle(w), w.scale_factor(), floating_path)
@@ -501,7 +537,12 @@ fn run() -> Result<(), String> {
                                 }
                             }
                         }
-                        for handle in [list, detail, float, settings_window] {
+                        for handle in [
+                            list.into(),
+                            detail.into(),
+                            float.into(),
+                            gpui::AnyWindowHandle::from(settings_window),
+                        ] {
                             notify(handle, cx);
                         }
                     }
@@ -994,7 +1035,13 @@ fn run() -> Result<(), String> {
                             Command::DemoTheme => {
                                 let dark = shared.borrow().demo_dark;
                                 shared.borrow_mut().demo_dark = !dark;
-                                for handle in [list, detail, float, card, settings_window] {
+                                for handle in [
+                                    list.into(),
+                                    detail.into(),
+                                    float.into(),
+                                    card.into(),
+                                    gpui::AnyWindowHandle::from(settings_window),
+                                ] {
                                     notify(handle, cx);
                                 }
                             }
