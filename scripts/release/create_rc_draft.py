@@ -164,6 +164,7 @@ def main():
 ## 修复范围
 
 - 保留已验证的OpenCode JSONC恢复与Windows等价路径钩子去重；Bridge支持version/--version。
+- Windows原生钩子固定执行边界并保留原始stdin；Codex的SessionEnd与Interrupt采用三秒，其他事件五秒，适配器冷启动预算两秒；更新命令后按宿主要求重新审核。
 - 普通运行记录在Tray显示为已读且静默，连续无正文活动合并展示，原始事件仍保留；完成、等待、错误等事件不合并。
 - 共享Codex目录遵循CODEX_HOME与CODEX_SQLITE_HOME；WSL管理共享钩子，Windows提示并保留，原生command_windows选择平台入口。
 - 离开检测提供5分钟、10分钟、自定义和关闭；自定义整数分钟在输入框失焦时校验保存。

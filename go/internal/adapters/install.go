@@ -107,7 +107,12 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 			if !enable {
 				break
 			}
-			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 5}
+			// Codex的结束和中断事件上限为三秒；其他事件保留冷启动余量。
+			timeout := 5
+			if p.ID == "codex" && (event == "SessionEnd" || event == "Interrupt") {
+				timeout = 3
+			}
+			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": timeout}
 			if sharedCodex {
 				windows := windowsCommands[event]
 				if windows == "" {
@@ -117,7 +122,6 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 					}
 				}
 				handler["command_windows"] = windows
-				handler["timeout"] = 5
 			}
 			var entry any = map[string]any{"matcher": matcher, "hooks": []any{handler}}
 			if direct[event] {
