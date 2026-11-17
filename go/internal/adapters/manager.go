@@ -320,6 +320,9 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 		if runtime.GOOS == "windows" && (p.Kind != "executable" || (p.ConfigStyle != "process-hooks" && p.ID != "codex" && p.ID != "antigravity")) {
 			continue
 		}
+		if p.ID == "codex" && windowsDefersCodex(c.Adapters.Managed[p.ID], runtime.GOOS) {
+			continue
+		}
 		if c.Adapters.Managed[p.ID] == "" {
 			continue
 		}
@@ -461,7 +464,11 @@ func ReportState(c config.Bridge, lastErr error) Report {
 	}
 	for id, p := range s.Installed {
 		status := Status{ID: id, Installed: p.Package.Version, Target: p.Target, AgentVersion: p.AgentVersion, Error: p.Error}
-		if p.Package.Version != "" && p.AgentVersion != "" {
+		if id == "codex" && windowsDefersCodex(c.Adapters.Managed[id], runtime.GOOS) {
+			status.Warning = "由WSL管理共享接入，Windows保留现有钩子"
+			status.Error = ""
+		}
+		if status.Warning == "" && p.Package.Version != "" && p.AgentVersion != "" {
 			status.Warning, _ = hostCompatibility(p.AgentVersion, p.Package.Manifest)
 		}
 		var running Runtime

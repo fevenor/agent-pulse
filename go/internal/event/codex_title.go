@@ -84,7 +84,11 @@ func codexInternalSession(id, transcript string) bool {
 		}
 		home = filepath.Join(user, ".codex")
 	}
-	file := filepath.Join(home, "state_5.sqlite")
+	databaseHome := strings.TrimSpace(os.Getenv("CODEX_SQLITE_HOME"))
+	if databaseHome == "" {
+		databaseHome = home
+	}
+	file := filepath.Join(databaseHome, "state_5.sqlite")
 	if _, err := os.Stat(file); err != nil {
 		return false
 	}

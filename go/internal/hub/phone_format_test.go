@@ -52,3 +52,35 @@ func TestPhoneFormattingUsesCurrentNamesAndDoesNotRewriteStoredEvent(t *testing.
 		t.Fatal("手机格式改写了原始事件", stored)
 	}
 }
+
+func TestPhoneBodyFormatIsPerChannelAndPreservesHistory(t *testing.T) {
+	messages := make(chan string, 2)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		messages <- r.URL.Query().Get("body")
+		w.WriteHeader(204)
+	}))
+	defer receiver.Close()
+	channel := func(name, format string) config.Channel {
+		return config.Channel{Name: name, Method: "GET", URL: receiver.URL, TimeoutSeconds: 1, BodyFormat: format, Query: map[string]string{"body": "${body}"}}
+	}
+	h, err := Open(config.Hub{Database: filepath.Join(t.TempDir(), "hub.db"), Push: []config.Channel{channel("plain", "plain_text"), channel("markdown", "preserve")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	e := testEvent("two-formats", "turn.completed", 1)
+	e.Body = "**中文 ✅**"
+	if _, err = h.Accept(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	h.pushOne(context.Background())
+	h.pushOne(context.Background())
+	first, second := <-messages, <-messages
+	if strings.Contains(first, "**") == strings.Contains(second, "**") || !strings.Contains(first, "中文 ✅") || !strings.Contains(second, "中文 ✅") {
+		t.Fatal("渠道转换未隔离", first, second)
+	}
+	var original string
+	if err = h.db.QueryRow("SELECT json_extract(payload,'$.body') FROM events WHERE event_id=?", e.EventID).Scan(&original); err != nil || original != e.Body {
+		t.Fatal("原始正文被改写")
+	}
+}

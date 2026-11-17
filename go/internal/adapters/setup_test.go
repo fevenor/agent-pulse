@@ -155,6 +155,7 @@ func TestSetupRejectsInvalidHubBeforeWriting(t *testing.T) {
 
 // 不调用真实宿主，直接验证 Windows 与 Linux 的默认来源边界。
 func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	for _, tc := range []struct {
 		platform string
 		want     []string

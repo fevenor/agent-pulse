@@ -5,6 +5,10 @@ use agent_pulse_tray::{
     sync::View,
 };
 use gpui::{div, prelude::*, px, rgb, *};
+use gpui_component::{
+    input::{Input, InputEvent, InputState},
+    text::TextView,
+};
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -131,7 +135,9 @@ impl Shared {
         history
             .iter()
             .enumerate()
-            .filter(|(index, event)| *index == 0 || unread.contains(&event.event_id))
+            .filter(|(index, event)| {
+                (*index == 0 && !event.ordinary_running()) || unread.contains(&event.event_id)
+            })
             .map(|(_, event)| event.event_id.clone())
             .collect()
     }
@@ -220,6 +226,11 @@ pub struct Surface {
     detail_scroll: ScrollHandle,
     pending_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     pending_latest: bool,
+    away_input: Entity<InputState>,
+    away_custom: bool,
+    away_error: String,
+    raw_events: BTreeSet<String>,
+    timeline_ids: Vec<String>,
 }
 #[derive(Clone, Copy)]
 struct Theme {
@@ -271,6 +282,20 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>, t: Theme) ->
         .child(label.into())
 }
 impl Surface {
+    fn commit_away(&mut self, cx: &mut Context<Self>) {
+        match agent_pulse_tray::markdown_body::custom_minutes(
+            self.away_input.read(cx).value().as_str(),
+        ) {
+            Ok(minutes) => {
+                self.away_error.clear();
+                if minutes != self.shared.borrow().away_minutes {
+                    let _ = self.commands.try_send(Command::AwayMinutes(minutes));
+                }
+            }
+            Err(message) => self.away_error = message.into(),
+        }
+        cx.notify();
+    }
     pub fn reset_timeline_scroll(&mut self) {
         self.detail_scroll.set_offset(point(px(0.), px(0.)));
         self.pending_anchor.borrow_mut().take();
@@ -290,9 +315,8 @@ impl Surface {
         if follow {
             self.back_to_latest();
         } else {
-            let data = self.shared.borrow();
-            if let Some(event) = index.checked_sub(1).and_then(|i| data.history.get(i)) {
-                *self.pending_anchor.borrow_mut() = Some((event.event_id.clone(), within));
+            if let Some(id) = index.checked_sub(1).and_then(|i| self.timeline_ids.get(i)) {
+                *self.pending_anchor.borrow_mut() = Some((id.clone(), within));
             }
         }
         follow
@@ -349,7 +373,38 @@ impl Surface {
             })
             .detach();
         }
+        let minutes = shared.borrow().away_minutes;
+        let away_input = cx.new(|cx| {
+            InputState::new(w, cx)
+                .placeholder("1–1440分钟")
+                .default_value(if minutes == 0 {
+                    "10".to_owned()
+                } else {
+                    minutes.to_string()
+                })
+        });
+        cx.subscribe_in(&away_input, w, |this, input, event, _, cx| {
+            if matches!(event, InputEvent::Blur) && this.away_custom {
+                let _ = input;
+                this.commit_away(cx);
+                cx.notify();
+            }
+        })
+        .detach();
+        if kind == Kind::Settings {
+            cx.observe_window_activation(w, |this, w, cx| {
+                if !w.is_window_active() && this.away_custom {
+                    this.commit_away(cx);
+                }
+            })
+            .detach();
+        }
         Self {
+            away_input,
+            away_custom: !matches!(minutes, 0 | 5 | 10),
+            away_error: String::new(),
+            raw_events: BTreeSet::new(),
+            timeline_ids: Vec::new(),
             kind,
             shared,
             commands,
@@ -395,6 +450,9 @@ impl Render for Surface {
             .on_key_down(cx.listener(|s, e: &KeyDownEvent, w, cx| {
                 let key = e.keystroke.key.as_str();
                 if key == "escape" {
+                    if s.kind == Kind::Settings && s.away_custom {
+                        s.commit_away(cx);
+                    }
                     platform::hide(w);
                     return;
                 }
@@ -626,8 +684,8 @@ impl Render for Surface {
             let remove_startup = sender.clone();
             let bridge_setup = sender.clone();
             let bridge_setup_running = data.bridge_setup_running;
-            let less = sender.clone();
-            let more = sender.clone();
+            let five = sender.clone();
+
             let reset_away = sender.clone();
             let disable_away = sender.clone();
             let minutes = data.away_minutes;
@@ -664,10 +722,12 @@ impl Render for Surface {
                 .child(div().mt_3().child("离开检测"))
                 .child(if minutes==0 {"离开检测已关闭".to_string()} else {format!("无真人输入 {minutes} 分钟后视为离开")})
                 .child(div().flex().gap_2()
-                    .child(button("away-less","减少1分钟",t).on_click(move|_,_,_|{let _=less.try_send(Command::AwayMinutes(minutes.saturating_sub(1)));}))
-                    .child(button("away-more","增加1分钟",t).on_click(move|_,_,_|{let _=more.try_send(Command::AwayMinutes((minutes+1).min(1440)));}))
-                    .child(button("away-reset","恢复10分钟",t).on_click(move|_,_,_|{let _=reset_away.try_send(Command::AwayMinutes(10));}))
-                    .child(button("away-disable","关闭",t).on_click(move|_,_,_|{let _=disable_away.try_send(Command::AwayMinutes(0));})))
+                    .child(button("away-five",if minutes==5 && !self.away_custom {"● 5分钟"}else{"5分钟"},t).on_click(cx.listener(move|this,_,_,cx|{this.away_custom=false;this.away_error.clear();let _=five.try_send(Command::AwayMinutes(5));cx.notify();})))
+                    .child(button("away-ten",if minutes==10 && !self.away_custom {"● 10分钟"}else{"10分钟"},t).on_click(cx.listener(move|this,_,_,cx|{this.away_custom=false;this.away_error.clear();let _=reset_away.try_send(Command::AwayMinutes(10));cx.notify();})))
+                    .child(button("away-custom",if self.away_custom {"● 自定义"}else{"自定义"},t).on_click(cx.listener(|this,_,w,cx|{this.away_custom=true;this.away_error.clear();this.away_input.update(cx,|input,cx|{input.set_value(this.shared.borrow().away_minutes.max(1).to_string(),w,cx);input.focus(w,cx);});cx.notify();})))
+                    .child(button("away-disable",if minutes==0 && !self.away_custom {"● 关闭"}else{"关闭"},t).on_click(cx.listener(move|this,_,_,cx|{this.away_custom=false;this.away_error.clear();let _=disable_away.try_send(Command::AwayMinutes(0));cx.notify();}))))
+                .when(self.away_custom,|d|d.child(div().id("away-input-region").on_mouse_down_out(cx.listener(|this,_,w,_|w.focus(&this.focus))).child(Input::new(&self.away_input))).child(div().text_color(rgb(t.muted)).child("输入整数分钟，离开输入框即保存")))
+                .when(!self.away_error.is_empty(),|d|d.child(div().text_color(rgb(t.red)).child(self.away_error.clone())))
                 .child(div().text_color(rgb(t.muted)).child("仅按可信真人输入时间判断；可识别的软件注入不会保持在场，不记录按键或坐标。"))
                 .child(div().text_color(rgb(t.muted)).child(agent_pulse_tray::desktop::presence_label()))
                 .child(div().mt_3().child("开机自动启动"))
@@ -1000,7 +1060,13 @@ impl Render for Surface {
             body = body.child(div().text_color(rgb(t.muted)).child("正在加载…"));
         }
         let mut entries = Vec::new();
-        for (index, event) in data.history.iter().cloned().enumerate() {
+        let groups = agent_pulse_tray::model::activity_groups(&data.history);
+        self.timeline_ids = groups
+            .iter()
+            .map(|(first, _)| data.history[*first].event_id.clone())
+            .collect();
+        for (index, (first, count)) in groups.iter().copied().enumerate() {
+            let event = data.history[first].clone();
             let expanded = data.expanded_events.contains(&event.event_id);
             let unread = !event.read
                 && data
@@ -1013,13 +1079,16 @@ impl Render for Surface {
             let toggle_id = event.event_id.clone();
             let status = if unread {
                 "未读"
-            } else if event.read || data.view.state.pending_reads.contains(&event.event_id) {
+            } else if event.ordinary_running()
+                || event.read
+                || data.view.state.pending_reads.contains(&event.event_id)
+            {
                 "已读"
             } else {
                 "记录"
             };
             let label = agent_pulse_tray::model::event_label(&event.kind);
-            let summary = format!(
+            let mut summary = format!(
                 "{} · {} · {}{}",
                 agent_pulse_tray::model::event_time(&event.occurred_at),
                 label,
@@ -1030,6 +1099,14 @@ impl Render for Surface {
                     ""
                 }
             );
+            if count > 1 {
+                summary.push_str(&format!(
+                    " · 已合并{count}次运行活动 · 起于{}",
+                    agent_pulse_tray::model::event_time(
+                        &data.history[first + count - 1].occurred_at
+                    )
+                ));
+            }
             let mut entry = div()
                 .flex()
                 .flex_col()
@@ -1078,6 +1155,14 @@ impl Render for Surface {
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(event.title))
                         .child(visible_title),
                 );
+                if count > 1 {
+                    for member in &data.history[first..first + count] {
+                        content = content.child(div().text_color(rgb(t.muted)).child(format!(
+                            "{} · 正在运行 · 已读",
+                            agent_pulse_tray::model::event_time(&member.occurred_at)
+                        )));
+                    }
+                }
                 if !event.body.is_empty() {
                     if event.body.len() > 4096 {
                         content = content.child(
@@ -1088,14 +1173,66 @@ impl Render for Surface {
                                 .child("长内容 · 可滚动阅读；浏览中不会自动跳到新事件"),
                         );
                     }
+                    let id = event.event_id.clone();
+                    let copy = event.body.clone();
+                    let show_raw = self.raw_events.contains(&id);
                     content = content.child(
                         div()
-                            .mt_2()
-                            .min_w_0()
-                            .w_full()
-                            .whitespace_normal()
-                            .child(event.body),
+                            .flex()
+                            .gap_2()
+                            .child(
+                                button(
+                                    ("raw", index),
+                                    if show_raw {
+                                        "渲染Markdown"
+                                    } else {
+                                        "查看原文"
+                                    },
+                                    t,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        if !this.raw_events.remove(&id) {
+                                            this.raw_events.insert(id.clone());
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(button(("copy", index), "复制原文", t).on_click(
+                                move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                                },
+                            )),
                     );
+                    let rendered = if show_raw {
+                        None
+                    } else {
+                        agent_pulse_tray::markdown_body::safe_markdown(&event.body)
+                    };
+                    if let Some(markdown) = rendered {
+                        content = content.child(
+                            div().mt_2().min_w_0().w_full().child(
+                                TextView::markdown(
+                                    SharedString::from(format!("markdown-{}", event.event_id)),
+                                    markdown,
+                                    w,
+                                    cx,
+                                )
+                                .selectable(true)
+                                .scrollable(false),
+                            ),
+                        );
+                    } else {
+                        content = content.child(
+                            div()
+                                .mt_2()
+                                .min_w_0()
+                                .w_full()
+                                .whitespace_normal()
+                                .child(event.body),
+                        );
+                    }
                 }
                 entry = entry.child(content);
             }
@@ -1113,7 +1250,7 @@ impl Render for Surface {
         let anchor_index = anchor
             .borrow()
             .as_ref()
-            .and_then(|(id, _)| data.history.iter().position(|e| &e.event_id == id))
+            .and_then(|(id, _)| self.timeline_ids.iter().position(|e| e == id))
             .map(|i| i + 1);
         let position_probe = canvas(
             |_, _, _| (),

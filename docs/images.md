@@ -38,15 +38,14 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 
 草稿中的构建归档与未签名包仅供发布者准备完整成品，不能让安装用户自行签名。新的适配包试运行需与同一现行 Hub/Relay/Bridge 构建配套，使用隔离数据并保留旧数据备份；不承诺旧候选通讯/存储兼容，不自动清空日常数据。正式公开和稳定版本推广仍由发布者明确决定。
 
-## 仅 Bridge 与 Tray 的修复候选
+## 按实际变更选择候选组件
 
-仅客户端修复时不为所有组件强行增加同名版本：Linux Bridge 和 Windows Tray（含内置 Bridge）使用新候选，Hub、Relay 和适配包继续使用已公开的来源版本。RC4 已确认采用这个范围，复用 RC3；不得把不存在的 RC4 Hub/Relay 镜像写成安装目标。
+没有服务端改动时可用客户端候选工作流；包含push正文转换等Hub改动时使用完整候选构建，并显式关闭Relay发布。RC4修订范围为Bridge、Tray、Hub与实际变化的命令型适配包，Relay沿用公开RC3。不创建不存在的RC4 Relay安装目标，不因为候选版本统一就重发无变更组件。
 
-从候选标签显式执行 `release-clients.yml` 并传入 `reuse_release`。流水线只上传两架构 Bridge 与 Windows 便携包，不执行镜像构建、登录或推送，不重新构建或签署适配仓库。Go 的 Hub/Relay 测试及 Windows 本地联调服务仍可用于隔离回归，不属于成品更新或正式部署。
+Release用户附件仅为两架构Linux Bridge、Windows Tray ZIP与SHA256SUMS，源码由GitHub标签归档提供。安装脚本统一从 `https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh` 读取；构建清单、中文验证资料、未签名包与Hub构建归档保存在CI Artifact，仅供发布维护使用。公开推荐仍为RC3，RC4草稿不得作为匿名默认安装目标。
 
-客户端草稿包含七个附件：两架构 Linux Bridge、安装脚本、Windows ZIP、构建清单、中文指南和校验清单。`scripts/release/create_client_rc_draft.py` 核对复用 Release 已公开、源码没有服务端/协议/适配包变更、Bridge 候选版本及提交元数据、实际附件内容和摘要；拒绝将服务器或适配包改动静默排除。Windows 内置 Bridge 元数据在同一 Windows 工作流中运行查询并与文件摘要交叉验证。
+修订草稿必须先确认draft=true，更新候选标签及对应构建、校验清单与说明，删除旧草稿多余附件；公开RC2/RC3不可覆盖。命令型包内容变化必须递增包版本及正式签名索引，原公钥保留。实际部署与手机测试按使用者授权执行。
 
-公开 RC3 和未来公开的修复候选保持不可变；草稿仍需有权限的账号下载，raw 安装默认继续选择公开 RC3。是否公开新候选、实际部署和私人配置调整都按明确授权执行。
 ## 准备普通用户 Hub RC 镜像
 
 以下操作只面向官方发布维护者。先下载同一候选的构建归档和两平台适配包，按校验清单验证摘要。未签名仓库可来自 RC 附件或现有合并工具，不能混用不同候选的程序与包。首次正式发布才生成一套长期密钥，后续沿用已有密钥，不创建替代公钥。

@@ -107,8 +107,17 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	results := map[string]string{}
 	for _, agent := range agents {
 		current := c.Adapters.Managed[agent.ID]
+		if agent.ID == "codex" && strings.TrimSpace(os.Getenv("CODEX_HOME")) != "" {
+			current = agent.ConfigPath
+		}
 		if current == "" {
 			current = agent.ConfigPath
+		}
+		if agent.ID == "codex" && windowsDefersCodex(current, runtime.GOOS) {
+			paths[agent.ID] = current
+			results[agent.ID] = "由WSL管理共享接入，已保留现有钩子"
+			fmt.Fprintf(out, "\n%s：由WSL管理共享接入，保持现有配置；请在对应WSL中维护。\n", agent.Name)
+			continue
 		}
 		state := "未启用"
 		if c.Adapters.Managed[agent.ID] != "" {
@@ -289,12 +298,12 @@ func setupAgentCatalog(home, platform string) []setupAgent {
 	if platform == "windows" {
 		return []setupAgent{
 			{ID: "zcode", Name: "ZCode", Command: "ZCode.exe", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "ZCode.exe"}},
-			{ID: "codex", Name: "Codex / ChatGPT本地任务", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
+			{ID: "codex", Name: "Codex / ChatGPT本地任务", Command: "codex", ConfigPath: codexHookPath(home), Manifest: Manifest{ID: "codex", Command: "codex"}},
 			{ID: "antigravity", Name: "Antigravity", Command: "Antigravity.exe", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "Antigravity.exe"}},
 		}
 	}
 	return []setupAgent{
-		{ID: "codex", Name: "Codex CLI", Command: "codex", ConfigPath: filepath.Join(home, ".codex", "hooks.json"), Manifest: Manifest{ID: "codex", Command: "codex"}},
+		{ID: "codex", Name: "Codex CLI", Command: "codex", ConfigPath: codexHookPath(home), Manifest: Manifest{ID: "codex", Command: "codex"}},
 		{ID: "antigravity", Name: "Antigravity CLI", Command: "agy", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "agy"}},
 		{ID: "qoderclicn", Name: "Qoder 中国版 CLI", Command: "qoderclicn", ConfigPath: filepath.Join(home, ".qoder-cn", "settings.json"), Manifest: Manifest{ID: "qoderclicn", Command: "qoderclicn"}},
 		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: defaultOpenCodeConfigPath(home), Manifest: Manifest{ID: "opencode", Command: "opencode"}},

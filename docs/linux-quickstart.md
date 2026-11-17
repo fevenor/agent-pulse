@@ -174,3 +174,20 @@ pnpm --dir adapters/opencode smoke
 最后一个命令需要 OpenCode 2.0.20。脚本在临时目录使用隔离配置启动三个进程，验证原生创建/输入等待事件、已读和 Hub 强制终止恢复，不调用模型。打印证据目录后关闭进程；测试日志不等于真实模型完成、实际子代理执行或手机送达验证。
 
 独立包 loader 验证：先运行 `bash scripts/build/package-adapters.sh`，再执行 `AGENT_PULSE_PACKAGE_SMOKE=1 pnpm --dir adapters/opencode smoke`。qoderclicn + DeepSeek-Flash + 本地推送的真实流程见 [qoderclicn 说明](../adapters/qoderclicn/README.md)。测试不自动改动日常 Agent 配置。
+
+
+### 手机渠道正文格式
+
+每个push渠道可选择body_format：默认preserve保留原文，plain_text将Markdown转换为可读纯文本，适用于不支持Markdown的接收端。该参数独立于HTTP请求的format（json/form）。转换仅作用于发送副本，先转换原生正文，再拼接主机与事件说明、展开模板、按字符上限裁剪并编码；Hub历史和其他渠道不变。代码内容、列表结构、链接文字及必要网址保留，不使用正则全局删除标点。已有渠道上限沿用实测值，开启转换本身不代表手机实收通过。
+
+```yaml
+push:
+  - name: phone
+    body_format: plain_text
+    method: POST
+    url: "https://push.example.invalid/send"
+    format: json
+    fields:
+      title: "${title}"
+      content: "${body}"
+```

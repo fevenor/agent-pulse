@@ -9,7 +9,7 @@ Linux 组件包括 Hub、Relay、Bridge、Vue 管理页面、命令行测试客�
 开始使用需要一台运行 Hub 的服务器，以及至少一台安装了受支持 Agent 的主机。[v0.5.0-rc.3 已公开发布](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.3)，是预发布候选版本，不是稳定版；目前没有稳定发布；Release附件安装须显式选择版本，源码/raw入口按脚本标注的公开推荐版本选择。完整部署步骤和验收标准见[部署指南](docs/deployment.md)。
 
 1. **部署 Hub**：使用 `ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.3`，镜像已包含默认配置、管理网页与官方签名适配包，在可信网络中启动。普通用户无需挂载仓库或配置适配公钥。Hub 保存会话、已读状态和主机名称；新主机首次连接后默认以系统主机名显示。之后可在 Hub 管理页面统一修改名称，所有 Tray 会在同步后看到新名称。
-2. **连接 Agent 主机**：下载本版本的[安装脚本](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/install-bridge.sh)，在运行 Agent 的 Linux 主机执行 `bash install-bridge.sh --version v0.5.0-rc.3 --setup`；安装器按平台下载预构建并校验，普通用户不需要源码目录、Go、Node.js 或 Rust。也可只安装后再运行 `agent-pulse-bridge setup`。它会检查已安装且受支持的 Agent，让你逐项选择启用哪些钩子，并报告修改过的配置文件。Hub RC 已包含当前平台的发布者签名适配包仓库；Bridge 连接 Hub 自动获取 Relay 与公钥，不必逐台配置。官方签名适配包随完整 Hub 提供，无需自行构建或签名。Relay 为可选项。宿主可能需要重新加载配置，Codex 还需要在其界面确认 hook 信任。
+2. **连接 Agent 主机**：执行 `curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash`，从公开版本下载并校验预构建，再逐项配置并启动；已有安装更新前先排空待发队列和停止服务，使用 `--install-only` 保留配置。源码/raw默认仍指向公开RC3，RC4草稿须按其说明提供已下载文件；普通用户无需编译器。
 3. **使用 Windows Tray**：下载并解压 [Windows amd64 便携包](https://github.com/fevenor/agent-pulse/releases/download/v0.5.0-rc.3/windows-amd64.zip)，在程序旁的配置文件中填写 Hub 地址后启动。Tray 默认只需 Hub 地址；有 Relay 时会从 Hub 自动发现配置。会话详情可调整当前主机的静默和任务期间保持唤醒设置。
 4. **按需部署 Relay**：只有需要跨公网或备用连接时才部署，镜像为 `ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.3`。将 Relay 地址与令牌配置到 Hub；Bridge 从 Hub 获取配置，Tray 也会自动同步。公网连接必须使用 HTTPS/WSS。
 

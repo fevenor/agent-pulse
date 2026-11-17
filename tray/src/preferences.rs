@@ -157,6 +157,7 @@ mod tests {
         state.snapshot.unread = vec![
             Event {
                 event_id: "native-event".into(),
+                kind: "turn.completed".into(),
                 source_id: "native".into(),
                 session_id: "a".into(),
                 valid: true,
@@ -164,6 +165,7 @@ mod tests {
             },
             Event {
                 event_id: "wsl-event".into(),
+                kind: "turn.completed".into(),
                 source_id: "wsl".into(),
                 session_id: "a".into(),
                 valid: true,

@@ -63,6 +63,6 @@ pub fn long_event() -> Event {
     let mut event = view().state.snapshot.unread[0].clone();
     event.event_id = "demo-long-event".into();
     event.title = "长消息滚动检查：标题和底部历史加载区域应保持清晰".into();
-    event.body = (1..=36).map(|i| format!("第 {i} 段：这是用于检查长消息的合成内容。缩小或放大详情窗口后，正文应自动换行；可以向下滚动阅读，底部历史加载操作不应被挤出窗口。\n")).collect();
+    event.body = "# Markdown 验证\n\n**中文重点 ✅** 与 `内联代码`\n\n- 普通列表\n- [x] 已完成\n\n| 项目 | 结果 |\n| --- | --- |\n| 渲染 | 通过 |\n\n```sh\necho '中文与 emoji ✅'\n```\n\n> 引用说明\n\n".to_owned() + &(1..=36).map(|i| format!("第 {i} 段：这是用于检查长消息的合成内容。缩小或放大详情窗口后，正文应自动换行；可以向下滚动阅读，底部历史加载操作不应被挤出窗口。\n")).collect::<String>();
     event
 }

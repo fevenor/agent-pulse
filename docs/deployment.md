@@ -170,7 +170,7 @@ curl -fsS http://127.0.0.1:18702/healthz
 (
   set -euo pipefail
   systemctl --user stop agent-pulse-bridge
-  curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh \
+  curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh \
     | bash -s -- --version v0.5.0-rc.3 --install-only
   "$HOME/.local/bin/agent-pulse-bridge" check-config --config "$HOME/.config/agent-pulse/bridge.yaml"
   "$HOME/.local/bin/agent-pulse-bridge" sync-adapters --config "$HOME/.config/agent-pulse/bridge.yaml"
@@ -185,9 +185,9 @@ curl -fsS http://127.0.0.1:18702/healthz
 ## 源码/raw安装入口
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash
 # 固定公开候选
-curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/refs/heads/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.3
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.3
 ```
 
 源码/raw入口默认推荐已公开RC3；Release附件脚本保持构建快照，使用时显式指定RC3版本。显式latest只选择稳定版，当前没有稳定发布；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。

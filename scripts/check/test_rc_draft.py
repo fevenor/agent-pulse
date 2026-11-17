@@ -33,6 +33,17 @@ class DraftTests(unittest.TestCase):
         self.assertNotIn('image="$image-base"', text)
         self.assertIn('image="$image_repository-relay"', text)
 
+    def test_revised_draft_keeps_maintenance_out_of_user_assets(self):
+        text=(Path(__file__).resolve().parents[1]/"release/create_rc_draft.py").read_text(encoding="utf-8")
+        self.assertIn('maintenance = output / "maintenance"',text)
+        self.assertIn('shutil.move(path, maintenance / path.name)',text)
+        self.assertIn('raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh',text)
+        self.assertIn('require_draft(previous, args.tag, previous["targetCommitish"])',text)
+        self.assertIn('"delete-asset"',text)
+        workflow=(Path(__file__).resolve().parents[2]/".github/workflows/release-draft.yml").read_text(encoding="utf-8")
+        self.assertIn('publish_relay: false',workflow)
+        self.assertIn('--relay-version v0.5.0-rc.3',workflow)
+
     def test_only_matching_rc_tag(self):
         module.validate_tag("v0.5.0-rc.1", "0.5.0")
         for tag in ("v0.5.0", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):

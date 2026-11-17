@@ -100,3 +100,22 @@ func TestAntigravityAppSandboxRequestAndNormalCommandAreDifferent(t *testing.T) 
 		}
 	}
 }
+
+func TestCodexUsesSeparateSQLiteHome(t *testing.T) {
+	home := t.TempDir()
+	databaseHome := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("CODEX_SQLITE_HOME", databaseHome)
+	db, err := sql.Open("sqlite", filepath.Join(databaseHome, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec("CREATE TABLE threads(id TEXT,source TEXT,rollout_path TEXT,thread_source TEXT); INSERT INTO threads VALUES('memory','internal_memory','','memory_consolidation'),('main','cli','','')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !codexInternalSession("memory", "") || codexInternalSession("main", "") {
+		t.Fatal("未遵循独立SQLite目录或误过滤主任务")
+	}
+}

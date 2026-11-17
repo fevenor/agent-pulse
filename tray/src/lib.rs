@@ -8,3 +8,5 @@ pub mod preferences;
 pub mod sessions;
 pub mod settings;
 pub mod sync;
+
+pub mod markdown_body;

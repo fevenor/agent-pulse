@@ -25,6 +25,8 @@ jobs:
   linux:
     needs: validate
     uses: ./.github/workflows/images.yml
+    with:
+      publish_relay: false
   windows:
     needs: validate
     uses: ./.github/workflows/windows.yml
@@ -52,10 +54,12 @@ jobs:
           GOPROXY: https://proxy.golang.org
         run: |
           uv run --offline --no-project python scripts/check/test_rc_draft.py
-          uv run --offline --no-project python scripts/release/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft
+          uv run --offline --no-project python scripts/release/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft --replace-draft --relay-version v0.5.0-rc.3
       - uses: actions/upload-artifact@v7
         with:
           name: RC 草稿发布结果
-          path: dist/rc-draft/release-result.json
+          path: |
+            dist/rc-draft/release-result.json
+            dist/rc-draft/maintenance/*
           if-no-files-found: error
           retention-days: 14

@@ -12,10 +12,9 @@ impl Instance {
     pub fn acquire(activate_existing: bool) -> Result<Option<Self>, String> {
         unsafe {
             // 先持有激活事件，避免同时启动时次实例的信号随最后一个事件句柄关闭而丢失。
-            let activation =
-                CreateEventW(None, false, false, w!("Local\\AgentPulse.Desktop.Activate"))
-                    .map_err(|_| "无法创建应用激活信号")?;
-            let mutex = match CreateMutexW(None, false, w!("Local\\AgentPulse.Desktop.Instance")) {
+            let activation = CreateEventW(None, false, false, activation_name())
+                .map_err(|_| "无法创建应用激活信号")?;
+            let mutex = match CreateMutexW(None, false, instance_name()) {
                 Ok(mutex) => mutex,
                 Err(_) => {
                     let _ = CloseHandle(activation);
@@ -44,5 +43,27 @@ impl Drop for Instance {
             let _ = CloseHandle(self.activation);
             let _ = CloseHandle(self.mutex);
         }
+    }
+}
+
+// 演示构建使用独立实例锁，不激活或阻断正在运行的正式客户端。
+fn activation_name() -> windows::core::PCWSTR {
+    #[cfg(feature = "dev-demo")]
+    {
+        w!("Local\\AgentPulse.Demo.Activate")
+    }
+    #[cfg(not(feature = "dev-demo"))]
+    {
+        w!("Local\\AgentPulse.Desktop.Activate")
+    }
+}
+fn instance_name() -> windows::core::PCWSTR {
+    #[cfg(feature = "dev-demo")]
+    {
+        w!("Local\\AgentPulse.Demo.Instance")
+    }
+    #[cfg(not(feature = "dev-demo"))]
+    {
+        w!("Local\\AgentPulse.Desktop.Instance")
     }
 }

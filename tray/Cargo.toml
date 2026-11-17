@@ -10,6 +10,8 @@ dev-demo = []
 
 [dependencies]
 gpui = { version = "=0.2.2", default-features = false, features = ["windows-manifest"] }
+gpui-component = { version = "=0.5.0", default-features = false }
+markdown = "=1.0.0"
 tray-icon = { version = "=0.26.1", default-features = false }
 async-channel = "=2.5.0"
 serde = { version = "1", features = ["derive"] }

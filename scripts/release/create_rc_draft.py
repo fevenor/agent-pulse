@@ -98,6 +98,8 @@ def main():
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--replace-draft", action="store_true")
+    parser.add_argument("--relay-version", default="")
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "tray/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     validate_tag(args.tag, version)
@@ -151,55 +153,75 @@ def main():
                 "draft": True, "prerelease": True, "packages": index["packages"],
                 "hub": image_root + "-hub:" + args.tag,
                 "hub_build": {"asset": "hub-build.tar", "sha256": hub_hash, "publisher_only": True},
-                "relay": image_root + "-relay:" + args.tag,
+                "relay": image_root + "-relay:" + (args.relay_version or args.tag),
                 "signed_repository": False, "index_sequence_is_placeholder": True,
                 "bridge_assets": [{key: value for key, value in artifact.items() if key != "path"} for artifact in bridge_files]}
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    notes = f"""# AgentPulse {args.tag} 试运行草稿
+    notes = f"""# AgentPulse {args.tag} 修订草稿
 
-本草稿绑定同一提交的Linux与Windows流水线产物，不自动公开，不修改RC2，也不更新稳定latest。
+**保持草稿与预发布状态。** 更新Bridge、Tray、Hub与实际变化的命令适配包；Relay复用 `{manifest['relay']}`，没有发布新Relay镜像。
 
-## 候选范围
+## 修复范围
 
-- Linux：Codex、Qoder中国CLI、Antigravity CLI/WSL桌面执行器、OpenCode；Windows：ZCode、Codex/ChatGPT本地任务、Antigravity App。共七类来源/平台包，平台与版本以candidate-manifest.json为准。
-- 补齐原生完成正文、授权动作/目标/原因、提问及处理结果、可见失败摘要；局部工具错误不伪装成主任务最终失败。内部/子代理按明确身份过滤，不读取历史正文补内容。
-- 手机标题使用原生会话名，正文包含友好主机/环境、中文事件类型和本事件内容；最终模板文本按渠道实测上限截短，避免重复状态标题。私人渠道模板变更和实收验收另按部署授权执行。
-- OpenCode合法JSONC保留注释、尾逗号和原始数值，拒绝重复键；有效Bridge配置的部分接入失败不阻断其他接入及服务启动。
-- Windows新增来源可单独Go构建，不要求Rust/MSVC；Tray与完整便携包仍使用原有工具链。Windows和WSL各自运行Bridge，不由Tray代管WSL服务，不重复安装同家族App/CLI hook。
-- Tray默认10分钟无可信真人输入视为离开，可调或关闭；可识别的软件注入不保持在场，未知/离开不累计自动已读。显示变化保留隐藏窗口状态，不自动显示或还原。
+- 保留已验证的OpenCode JSONC恢复与Windows等价路径钩子去重；Bridge支持version/--version。
+- 普通运行记录在Tray显示为已读且静默，连续无正文活动合并展示，原始事件仍保留；完成、等待、错误等事件不合并。
+- 共享Codex目录遵循CODEX_HOME与CODEX_SQLITE_HOME；WSL管理共享钩子，Windows提示并保留，原生command_windows选择平台入口。
+- 离开检测提供5分钟、10分钟、自定义和关闭；自定义整数分钟在输入框失焦时校验保存。
+- Tray详情渲染Markdown，支持查看/复制原文；不自动加载图片，不执行HTML。
+- Hub各push渠道可配置body_format为preserve（默认）或plain_text；仅修改发送副本，原始正文及其他渠道不变。
 
-## 产物及签名
+## 下载与安装
 
-- windows-amd64.zip：单入口便携包，不含私人tray.yaml与data/；升级保留原配置和数据。
-- adapters-unsigned.tar.gz：七包未签名仓库，序号1仅为占位；发布者必须沿用原长期私钥及公钥，以递增正式索引序号签名，不生成替代生产公钥。
-- agent-pulse-adapters-linux-amd64：发布维护工具，私钥不进入CI或附件。
-- 两架构Linux Bridge与install-bridge.sh：安装只使用预构建；草稿不能匿名下载，无参数默认仍指向脚本标注的公开版本，不冒充已安装RC3。
-- hub-build.tar：发布者专用的同提交双架构OCI基准构建，未附加正式签名仓库，不发布第三个公开镜像。
-- Hub成品目标：{manifest['hub']}。需要发布者核验同提交构建并附加正式签名仓库后发布；草稿生成不代表该镜像已经存在。
-- Relay目标：{manifest['relay']}。实际发布状态须单独核对，不以草稿清单代替。
+本页仅提供Linux两架构Bridge、Windows Tray便携包及SHA256SUMS。源码由对应GitHub标签归档提供；构建清单、签名仓库准备材料与详细证据只在CI Artifact。安装脚本统一从raw读取：
 
-## 验证边界
+```sh
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash
+```
 
-Go1.27.4、Rust1.99.1、Node24.14.1/pnpm10.33.2按锁定依赖构建。ARM运行采用模拟，不代表ARM真机。自动回归、版本探测、消息探针与真实宿主任务、权限恢复、记忆/子代理过滤、RDP/多屏和手机实收分别记录；最新可复现证据见docs/development-status.md，未验事项不得写成通过。草稿不是实际手机送达证明。
+raw默认仍选择已公开RC3；RC4草稿不能匿名下载。草稿试用需下载Bridge并核验SHA256后，通过raw脚本的--version {args.tag} --file 文件 --sha256 摘要安装；已有安装停止前确认待发队列为空。
 
-试运行使用匹配的现行组件，保留配置和数据库备份，不自动迁移或清空正式数据，不批量重发历史失败消息。完整Hub组装见docs/images.md；发布者只在本机保管签名私钥。
+Windows退出后替换EXE、保留配置和data；普通运行不会提醒。共享Codex目录以实际hook执行环境验证Windows/WSL，正常直接启动，无需包装；宿主信任由用户确认。
 
-来源提交：{args.commit}
-工作流：https://github.com/{args.repository}/actions/runs/{args.run_id}
+Hub成品目标 `{manifest['hub']}` 须由发布者沿用原密钥签署同候选仓库并完成镜像核验后才可使用，创建草稿本身不代表镜像已发布。Relay保持RC3。正文配置示例：
+
+```yaml
+body_format: plain_text
+```
+
+此次不清空或迁移数据，不自动部署服务、不改私人手机模板或盲目补发历史任务。实际另一主机的共享会话、原生事件和手机实收不由自动测试替代；原有computer use/RDP及主子/记忆完整矩阵仍按证据验收。
+
+构建提交：{args.commit}
+[候选流水线](https://github.com/{args.repository}/actions/runs/{args.run_id})
 """
     (assets / "trial-guide.md").write_text(notes, encoding="utf-8")
+    maintenance = output / "maintenance"
+    maintenance.mkdir()
+    for path in list(assets.iterdir()):
+        if path.name not in {"agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip"}:
+            shutil.move(path, maintenance / path.name)
     checksums = [hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name for p in sorted(assets.iterdir())]
     (assets / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
     fields = "isDraft,isPrerelease,tagName,targetCommitish,url,assets"
     existing = command("gh", "release", "view", args.tag, "--repo", args.repository, "--json", fields, allow_failure=True)
     if existing.returncode == 0:
-        require_draft(json.loads(existing.stdout), args.tag, args.commit)
+        previous = json.loads(existing.stdout)
+        if args.replace_draft:
+            require_draft(previous, args.tag, previous["targetCommitish"])
+            command("gh", "release", "edit", args.tag, "--repo", args.repository, "--target", args.commit)
+        else:
+            require_draft(previous, args.tag, args.commit)
     else:
         command("gh", "release", "create", args.tag, "--repo", args.repository,
                 "--target", args.commit, "--draft", "--prerelease",
-                "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", assets / "trial-guide.md")
+                "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", maintenance / "trial-guide.md")
     command("gh", "release", "edit", args.tag, "--repo", args.repository,
-            "--notes-file", assets / "trial-guide.md")
+            "--notes-file", maintenance / "trial-guide.md")
+    # 仅已确认仍为草稿时清理旧草稿多余附件；公开版本始终由require_draft拒绝。
+    current=json.loads(command("gh","release","view",args.tag,"--repo",args.repository,"--json",fields).stdout)
+    require_draft(current,args.tag,args.commit)
+    for asset in current.get("assets",[]):
+        if asset["name"] not in {p.name for p in assets.iterdir()}:
+            command("gh","release","delete-asset",args.tag,asset["name"],"--repo",args.repository,"--yes")
     command("gh", "release", "upload", args.tag, "--repo", args.repository, "--clobber", *sorted(assets.iterdir()))
     release = json.loads(command("gh", "release", "view", args.tag, "--repo", args.repository, "--json", fields).stdout)
     require_draft(release, args.tag, args.commit)

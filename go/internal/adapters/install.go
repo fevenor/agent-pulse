@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"agent-pulse/internal/config"
 )
@@ -56,6 +58,8 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 				return nil, errors.New("hooks 配置必须为对象")
 			}
 		}
+		sharedCodex := p.ID == "codex" && runtime.GOOS == "linux" && os.Getenv("WSL_DISTRO_NAME") != "" && strings.HasPrefix(filepath.ToSlash(c.Adapters.Managed[p.ID]), "/mnt/")
+		windowsCommands := codexSharedWindowsCommands(c.Adapters.Managed[p.ID], events, prefix)
 		for event, value := range events {
 			entries, ok := value.([]any)
 			if !ok {
@@ -81,7 +85,7 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 							return nil, errors.New("hook 命令条目无效")
 						}
 						command, _ := h["command"].(string)
-						if !ownsHookCommand(command, prefix) {
+						if !ownsHookCommand(command, prefix) && !(sharedCodex && nativeCodexHook.MatchString(command)) {
 							rest = append(rest, item)
 						}
 					}
@@ -103,6 +107,17 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 				break
 			}
 			handler := map[string]any{"type": "command", "command": hookCommand(prefix, event), "timeout": 1}
+			if sharedCodex {
+				windows := windowsCommands[event]
+				if windows == "" {
+					windows, err = codexWSLCommand(exe, cfg, event)
+					if err != nil {
+						return nil, err
+					}
+				}
+				handler["command_windows"] = windows
+				handler["timeout"] = 5
+			}
 			var entry any = map[string]any{"matcher": matcher, "hooks": []any{handler}}
 			if direct[event] {
 				entry = handler

@@ -2,7 +2,15 @@
 
 本文件维护需求、设计和工程调整历史。功能实现和验证状态见 [开发记录](docs/development-status.md)；设计调整不表示功能已经交付。
 
-## v0.5.0-rc.4（客户端修复草稿）
+## v0.5.0-rc.4（修订草稿）
+
+- 根据已确认的后续反馈扩大为Bridge、Tray、Hub与变化的命令型适配包；Relay继续使用RC3。
+- 运行记录在Tray显示为已读且静默，连续无正文活动合并显示；新增Markdown正文及原文查看/复制，不加载远程图片。
+- 离开设置为5分钟、10分钟、自定义、关闭；自定义数值在失去焦点时校验保存。
+- Codex配置遵循CODEX_HOME，身份数据库遵循CODEX_SQLITE_HOME；WSL管理共享钩子并保留平台分支，Windows提示并停止争抢。
+- Hub按push渠道选择preserve/plain_text正文处理，保留原始事件和其他渠道。
+- raw安装地址去掉refs/heads；Release只保留Bridge、Tray、SHA256SUMS及标签源码，维护资料放CI Artifact。
+
 
 - 增加 Bridge `version`／`--version` 和结构化 JSON 查询，发布构建注入候选标签与提交，查询当前程序摘要；未标注开发构建明确显示 dev。
 - RC4 仅发布 Linux Bridge 与 Windows Tray（内置 Bridge），Hub/Relay及七个适配包复用公开 RC3；新增独立客户端草稿流程，候选标签不再自动触发全量镜像发布。

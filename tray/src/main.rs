@@ -201,7 +201,10 @@ fn run() -> Result<(), String> {
         }
     }
     let settings = if demo_mode {
-        Settings::default()
+        Settings {
+            away_after_minutes: 10,
+            ..Settings::default()
+        }
     } else {
         Settings::load(config.as_deref())?
     };
@@ -310,6 +313,7 @@ fn run() -> Result<(), String> {
     Application::new()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
+            gpui_component::init(cx);
             let (tx, rx) = async_channel::unbounded();
             cx.set_global(icon::Tray::create(tx.clone()));
             let list = window(Kind::List, shared.clone(), tx.clone(), cx);
@@ -712,15 +716,18 @@ fn run() -> Result<(), String> {
                                 floating.begin_drag(windows::Win32::Foundation::POINT { x, y })
                             }
                             Command::AwayMinutes(minutes) => {
-                                let result = Settings::set_away_minutes(
-                                    &setup_settings.config_path,
-                                    minutes,
-                                );
+                                let result = if demo_mode {
+                                    Ok(())
+                                } else {
+                                    Settings::set_away_minutes(&setup_settings.config_path, minutes)
+                                };
                                 let mut data = shared.borrow_mut();
                                 match result {
                                     Ok(()) => {
                                         setup_settings.away_after_minutes = minutes;
-                                        agent_pulse_tray::desktop::configure(minutes);
+                                        if !demo_mode {
+                                            agent_pulse_tray::desktop::configure(minutes);
+                                        }
                                         data.away_minutes = minutes;
                                         data.startup_message = "离开检测设置已保存并生效。".into();
                                     }

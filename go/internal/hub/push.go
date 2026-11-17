@@ -100,6 +100,9 @@ func (h *Hub) claimPush(ctx context.Context) (protocol.Event, config.Channel, bo
 		var name, host, environment string
 		_ = h.db.QueryRowContext(ctx, `SELECT title FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&name)
 		_ = h.db.QueryRowContext(ctx, `SELECT CASE WHEN display_name<>'' THEN display_name ELSE default_name END,environment FROM hosts WHERE source_id=?`, e.SourceID).Scan(&host, &environment)
+		if ch.BodyFormat == "plain_text" {
+			e.Body = notify.PlainText(e.Body)
+		}
 		e = notify.PhoneEvent(e, name, host, environment)
 	}
 	return e, ch, err == nil && !skipped

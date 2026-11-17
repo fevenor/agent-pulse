@@ -100,6 +100,23 @@ impl Session {
     }
 }
 impl Event {
+    pub fn needs_attention(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            "turn.completed"
+                | "task.completed"
+                | "input.required"
+                | "approval.required"
+                | "run.failed"
+                | "run.interrupted"
+        )
+    }
+    pub fn ordinary_running(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            "activity.observed" | "session.started" | "session.resumed"
+        ) && self.body.trim().is_empty()
+    }
     pub fn key(&self) -> SessionKey {
         SessionKey {
             source_id: self.source_id.clone(),
@@ -215,6 +232,7 @@ impl State {
             .iter()
             .filter(|e| {
                 !e.read
+                    && e.needs_attention()
                     && !self.pending_reads.contains(&e.event_id)
                     && !self.snapshot.source_archived(&e.source_id)
             })
@@ -365,6 +383,7 @@ mod tests {
     fn event(id: &str) -> Event {
         Event {
             event_id: id.into(),
+            kind: "turn.completed".into(),
             session_id: id.into(),
             valid: true,
             ..Default::default()
@@ -514,5 +533,53 @@ mod source_policy_tests {
             snapshot.bridge_sources(),
             BTreeSet::from(["offline-bridge".into(), "online-bridge".into()])
         );
+    }
+}
+
+// 普通活动仅在展示层合并，原始事件位置和正文仍保留用于同步与历史追溯。
+pub fn activity_groups(events: &[Event]) -> Vec<(usize, usize)> {
+    let mut result: Vec<(usize, usize)> = Vec::new();
+    for (index, event) in events.iter().enumerate() {
+        if let Some((first, count)) = result.last_mut() {
+            let previous = &events[index - 1];
+            if event.kind == "activity.observed"
+                && previous.kind == "activity.observed"
+                && event.ordinary_running()
+                && previous.ordinary_running()
+                && event.key() == previous.key()
+                && event.project == previous.project
+                && event.title == previous.title
+            {
+                *count += 1;
+                let _ = first;
+                continue;
+            }
+        }
+        result.push((index, 1));
+    }
+    result
+}
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+    #[test]
+    fn running_never_notifies_and_grouping_stops_at_attention() {
+        let running = Event {
+            kind: "activity.observed".into(),
+            valid: true,
+            event_id: "a".into(),
+            ..Default::default()
+        };
+        let waiting = Event {
+            kind: "input.required".into(),
+            event_id: "b".into(),
+            ..running.clone()
+        };
+        let mut state = State::default();
+        state.snapshot.unread = vec![running.clone(), waiting.clone()];
+        assert_eq!(state.unread().len(), 1);
+        assert_eq!(state.notifications().len(), 1);
+        let events = vec![running.clone(), running.clone(), waiting, running];
+        assert_eq!(activity_groups(&events), vec![(0, 2), (2, 1), (3, 1)]);
     }
 }
