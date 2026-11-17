@@ -202,3 +202,18 @@ RC4候选固定于构建提交 `a7fc8f75c48c19d8042d386fa34ee6c3ad036240`。只�
 额外测得既有适配器首次直接启动约539毫秒，超过原dispatch的150毫秒预算；重复启动约27–28毫秒。修复为两秒有界进程预算、宿主五秒，并用固定CMD执行边界隔离PowerShell对嵌套命令的特殊处理，编码固定参数且原始stdin不经文本管道。新回归实际在cmd.exe和powershell.exe执行安装器生成的命令，逐字节验证中文emoji、前导空白、CRLF及特殊路径；再验证350毫秒进程不被误杀、额外脚本不能被误认领。
 
 这是原生命令执行与适配转换链证据，不是当前已授权桌面会话完成了新hook审核或已收到最终回答的证明。私人hook和信任记录本次未自动覆盖；新候选安装后宿主可能要求重新审核变更后的命令，不绕过信任。后续交付继续覆盖未公开RC4，Hub完整候选须按最终提交重新生成，不混用中间构建。
+
+
+补充命令链证据：在临时目录使用修复Bridge与实际已安装Codex适配器副本，分别通过CMD和PowerShell调用dispatch并向无手机的临时HTTP接收器提交合成活动。两条链均收到session.resumed，项目中文emoji保持，耗时约275/386毫秒。该验证没有写私人hook/信任配置，不等于当前桌面会话已产生真实事件；宿主更新命令后的信任确认仍由使用者执行。
+
+## 2026-11-17 RC4修订草稿与完整Hub交付
+
+最终候选提交为 `b84d26eb02b5637562b20b06aaba1f2d1fc7e098`，[同提交流水线](https://github.com/fevenor/agent-pulse/actions/runs/44027640491)的Linux、Windows与草稿作业全部成功。草稿保持draft=true、prerelease=true，旧草稿额外附件已移除；用户下载仅两架构Bridge、WindowsZIP、SHA256SUMS，源码由标签归档提供。raw入口采用 `/fevenor/agent-pulse/main/scripts/install/bridge.sh`，默认仍为公开RC3，RC4草稿不可匿名默认安装。
+
+- 四个附件回下载核对名称、大小、GitHub摘要及SHA256SUMS通过；WindowsZIP符合单入口清单，实际EXE中内置Bridge的字节摘要与版本清单一致。Bridge查询返回RC4、最终提交、Go1.27.4。
+- 完整Hub候选已发布到 `ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.4`，镜像索引摘要 `sha256:981d881a5980d05402ecbf2c39549698534410a166daea61a4f31f9868412429`；沿用原密钥/公钥，正式签名索引7。七包中Codex两平台0.2.9、Antigravity两平台0.3.3、Qoder0.2.9、ZCode0.1.7；OpenCode0.3.5与RC3包逐字段和摘要一致。
+- Hub双架构索引匿名可读，amd64匿名拉取与隔离启动通过，健康/网页/原公钥发现及七包下载验签通过。Relay仍使用RC3原构建，匿名索引/拉取、隔离健康及无凭据401通过；本次未发布RC4 Relay，实际正式容器清单未变化。
+- Windows真实本地Hub/Relay、离线已读/重启及Bridge回载回归通过。新Markdown安全转换、渠道plain_text与preserve隔离、原文保持、普通活动静默/合并、共享目录与后台同步、CMD/PowerShell字节级命令和冷启动回归通过。
+- 本次未对当前日常Tray/Bridge或其他工作机部署，未自动改写私人hook/信任/手机渠道，也未发送真实手机测试。当前Windows原生会话须更新候选、同步钩子并按宿主要求重新审核后再验证实际事件；命令链隔离通过不等于该会话已实收。原生视觉及真实失焦验收因桌面自动化访问拒绝未完成，已明确保留边界。
+
+RC2/RC3公开标签与附件不变，稳定latest不推广。CI维护资料下载曾较慢，分块下载后ZIP完整性通过；原始资料只在忽略tmp。收尾文档与发布维护入口提交不改变候选二进制来源或标签。
