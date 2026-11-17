@@ -398,7 +398,9 @@ fn bridge_query(
             Ok(Some(status)) => {
                 if !status.success() {
                     let mut diagnostic = Vec::new();
-                    if let Some(stderr) = child.stderr.take() { let _ = stderr.take(4096).read_to_end(&mut diagnostic); }
+                    if let Some(stderr) = child.stderr.take() {
+                        let _ = stderr.take(4096).read_to_end(&mut diagnostic);
+                    }
                     let detail = String::from_utf8_lossy(&diagnostic);
                     return Err(format!("本机接入查询失败：{}", detail.trim()));
                 }
@@ -755,7 +757,11 @@ mod bridge_tests {
             r#"{"listen":"127.0.0.1:18702","source_id":"reload-test"}"#,
         )
         .unwrap();
-        assert!(Bridge::reload(&mut current, &settings).unwrap_err().contains("删除Bridge配置"));
+        assert!(
+            Bridge::reload(&mut current, &settings)
+                .unwrap_err()
+                .contains("删除Bridge配置")
+        );
         assert_eq!(current.as_ref().unwrap().child.id(), pid);
         let bytes = bridge_query(
             &current.as_ref().unwrap().executable,
