@@ -58,8 +58,9 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 				return nil, errors.New("hooks 配置必须为对象")
 			}
 		}
-		sharedCodex := p.ID == "codex" && runtime.GOOS == "linux" && os.Getenv("WSL_DISTRO_NAME") != "" && strings.HasPrefix(filepath.ToSlash(c.Adapters.Managed[p.ID]), "/mnt/")
 		windowsCommands := codexSharedWindowsCommands(c.Adapters.Managed[p.ID], events, prefix)
+		// systemd不一定继承WSL_DISTRO_NAME；已安装的平台分支仍须保留，不能被后台同步抹掉。
+		sharedCodex := p.ID == "codex" && runtime.GOOS == "linux" && strings.HasPrefix(filepath.ToSlash(c.Adapters.Managed[p.ID]), "/mnt/") && (os.Getenv("WSL_DISTRO_NAME") != "" || len(windowsCommands) > 0)
 		for event, value := range events {
 			entries, ok := value.([]any)
 			if !ok {

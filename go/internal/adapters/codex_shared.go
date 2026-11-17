@@ -53,7 +53,7 @@ func windowsDefersCodex(path, platform string) bool {
 
 func codexSharedWindowsCommands(path string, events map[string]any, prefix string) map[string]string {
 	result := map[string]string{}
-	if runtime.GOOS != "linux" || os.Getenv("WSL_DISTRO_NAME") == "" || !strings.HasPrefix(filepath.ToSlash(path), "/mnt/") {
+	if runtime.GOOS != "linux" || !strings.HasPrefix(filepath.ToSlash(path), "/mnt/") {
 		return result
 	}
 	for event, groups := range events {

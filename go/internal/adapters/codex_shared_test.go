@@ -93,6 +93,7 @@ func TestWSLSharedInstallKeepsOneLogicalHookPerEvent(t *testing.T) {
 	if owned != 1 || user != 1 {
 		t.Fatal("接管未合并为一条平台钩子或删除了用户钩子")
 	}
+	t.Setenv("WSL_DISTRO_NAME", "") // 模拟未继承交互环境的systemd后台同步。
 	repeated, err := hookConfig(c, "/home/test/bridge.yaml", p, after)
 	if err != nil || !bytes.Equal(repeated, after) {
 		t.Fatal("再次启用共享配置不幂等", err)
