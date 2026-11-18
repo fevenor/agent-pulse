@@ -12,7 +12,7 @@ import (
 )
 
 func testEvent(id, kind string, seq int64) protocol.Event {
-	return protocol.Event{EventID: id, SourceID: "linux", Agent: "test", SessionID: "main", Kind: kind, OccurredAt: time.Now().UTC(), Title: "请查看", Body: "详细说明", Scope: "main", Sequence: seq}
+	return protocol.Event{EventID: id, CollectorID: "test", SourceID: "linux", Agent: "test", SessionID: "main", Kind: kind, OccurredAt: time.Now().UTC(), Title: "请查看", Body: "详细说明", Scope: "main", Sequence: seq}
 }
 func testHub(t *testing.T) *Hub {
 	t.Helper()
@@ -133,6 +133,7 @@ func TestDurableDedupReadAndOrdering(t *testing.T) {
 
 func TestMainScopeAndReactivation(t *testing.T) {
 	h := testHub(t)
+	makeTestBridgeOnline(h, "linux", "")
 	ctx := context.Background()
 	e := testEvent("child", "input.required", 1)
 	e.Scope = "child"
@@ -173,6 +174,7 @@ func TestTransactionRollback(t *testing.T) {
 
 func TestUnsequencedLiveEventAndExpiry(t *testing.T) {
 	h := testHub(t)
+	makeTestBridgeOnline(h, "linux", "")
 	ctx := context.Background()
 	if _, err := h.Accept(ctx, testEvent("start", "session.started", 10)); err != nil {
 		t.Fatal(err)

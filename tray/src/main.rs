@@ -286,6 +286,7 @@ fn run() -> Result<(), String> {
     } else {
         let store = Store::open(&settings.state_file)?;
         let view = View {
+            snapshot_confirmed_at: None,
             state: store.state.clone(),
             status: "正在连接".into(),
             alert: None,
@@ -381,7 +382,6 @@ fn run() -> Result<(), String> {
                 }
                 let mut card_until = None;
                 let mut awake = agent_pulse_tray::power::WakeGuard::default();
-                let mut last_update = Instant::now();
                 let mut latest_retry = Instant::now();
                 let mut emphasis_until: Option<Instant> = None;
                 let mut bridge_check = Instant::now();
@@ -433,7 +433,6 @@ fn run() -> Result<(), String> {
                         notify(detail, cx);
                     }
                     while let Ok(update) = updates_rx.try_recv() {
-                        last_update = Instant::now();
                         menu_dirty = true;
                         let alert = update.alert.clone();
                         let can_notify = update.can_notify;
@@ -1097,9 +1096,7 @@ fn run() -> Result<(), String> {
                         let data = shared.borrow();
                         data.preferences.running(
                             &data.view.state.snapshot,
-                            !demo_mode
-                                && data.view.status.starts_with("已")
-                                && last_update.elapsed() < Duration::from_secs(40),
+                            !demo_mode && data.view.status.starts_with("已") && data.view.current(),
                         )
                     };
                     let power_status = match awake.update(running > 0) {

@@ -23,14 +23,23 @@ pub enum Input {
 }
 #[derive(Clone)]
 pub struct View {
+    pub snapshot_confirmed_at: Option<Instant>,
     pub state: State,
     pub status: String,
     pub alert: Option<Event>,
     pub can_notify: bool,
 }
 
+impl View {
+    pub fn current(&self) -> bool {
+        self.snapshot_confirmed_at
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(35))
+    }
+}
+
 fn view(store: &Store, status: &str) -> View {
     View {
+        snapshot_confirmed_at: store.snapshot_confirmed_at,
         state: store.state.clone(),
         status: store.error.clone().unwrap_or_else(|| status.into()),
         alert: None,
@@ -97,6 +106,7 @@ fn worker(
                 &mut desktop,
                 &settings,
             );
+            store.snapshot_confirmed_at = None;
             let _ = updates.send_blocking(view(&store, "连接中断 · 显示本地缓存"));
             if matches!(result, Ok(false)) {
                 return;
@@ -231,6 +241,7 @@ fn connected(
     settings: &Settings,
 ) -> Result<bool, String> {
     let (base, token, label) = endpoint;
+    store.snapshot_confirmed_at = None;
     let mut socket = connect(base, token)?;
     socket.send(Message::Text(json!({"type":"hello","payload":{"id":store.state.device_id,"role":"tray","host_name":settings.host_name,"locked":desktop.0,"fullscreen":desktop.1}}).to_string().into())).map_err(|_|"登记设备失败")?;
     let start = Instant::now();
@@ -275,6 +286,14 @@ fn connected(
             if !store.state.pending_reads.is_empty() {
                 refresh = true;
             }
+        }
+        // 定期核对权威快照，单纯连接心跳或本地操作不能延长旧任务的唤醒。
+        if hello
+            && store
+                .snapshot_confirmed_at
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(15))
+        {
+            refresh = true;
         }
         let mut quiet = false;
         match socket.read() {
@@ -333,6 +352,7 @@ fn connected(
                     .retain(|id| snapshot.unread.iter().any(|e| &e.event_id == id));
                 s.snapshot = snapshot;
             })?;
+            store.snapshot_confirmed_at = Some(Instant::now());
             refresh = false;
             synced = true;
             quiet = false;
@@ -434,5 +454,29 @@ mod tests {
         }
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+    #[test]
+    fn only_recent_authoritative_snapshot_allows_wake() {
+        let mut view = View {
+            snapshot_confirmed_at: None,
+            state: State::default(),
+            status: "已直连服务".into(),
+            alert: None,
+            can_notify: false,
+        };
+        assert!(!view.current());
+        view.snapshot_confirmed_at = Some(Instant::now());
+        assert!(view.current());
+        view.snapshot_confirmed_at = Instant::now().checked_sub(Duration::from_secs(36));
+        assert!(!view.current());
+        // 界面文字、已读和提醒更新不改变权威快照确认时间。
+        view.status = "已通过中继连接".into();
+        view.can_notify = true;
+        assert!(!view.current());
     }
 }

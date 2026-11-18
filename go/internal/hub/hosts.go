@@ -57,6 +57,12 @@ ON CONFLICT(source_id) DO UPDATE SET
 WHERE excluded.role='bridge' OR hosts.role='tray'`, device.ID, strings.TrimSpace(device.HostName), device.Environment, timestamp(time.Now()), device.Role); err != nil {
 		return err
 	}
+	if device.Role == "bridge" {
+		// 重连不是旧任务仍在运行的证明；只保留本代次已收到的真实事件。
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET state='unknown' WHERE source_id=? AND state IN ('running','waiting') AND COALESCE((SELECT json_extract(payload,'$.collector_id') FROM events WHERE event_id=sessions.last_event_id),'')<>?`, device.ID, device.CollectorID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

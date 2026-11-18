@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS deleted_hosts (source_id TEXT PRIMARY KEY, deleted_at
 			return err
 		}
 	}
+	// Hub重启后尚未核对的运行和等待状态不能继续作为实时状态。
+	if _, err = tx.Exec(`UPDATE sessions SET state='unknown' WHERE state IN ('running','waiting')`); err != nil {
+		return err
+	}
 	// 崩溃前的发送可能已经到达手机；当前格式重启后仍不能盲目补发。
 	if _, err = tx.Exec(`UPDATE push_jobs SET status='unknown' WHERE status='sending'`); err != nil {
 		return err
@@ -211,11 +215,25 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 		return false, err
 	}
 	var seq, nameSequence int64
-	err = tx.QueryRowContext(ctx, `SELECT last_sequence,name_sequence FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&seq, &nameSequence)
+	var previousState string
+	err = tx.QueryRowContext(ctx, `SELECT last_sequence,name_sequence,state FROM sessions WHERE source_id=? AND agent=? AND session_id=?`, e.SourceID, e.Agent, e.SessionID).Scan(&seq, &nameSequence, &previousState)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
 	apply := e.State() != "" && !e.Historical && (e.Sequence == 0 || seq == 0 || e.Sequence > seq)
+	// 来源故障不能覆盖已经确认的完成、失败、中断或关闭。
+	if e.Kind == "observation.lost" && previousState != "running" && previousState != "waiting" {
+		apply = false
+	}
+	// 旧连接缓存的运行活动仍存历史，但不能在重连后恢复任务运行和唤醒。
+	if current := h.devices["bridge:"+e.SourceID]; current != nil && e.State() == "running" && current.device.CollectorID != e.CollectorID {
+		apply = false
+	}
+	// 观察进程可在原生关闭hook之后交付最终结果：保留完成/失败提醒，但不能重新打开会话。
+	lateFinal := apply && previousState == "closed" && (e.Kind == "turn.completed" || e.Kind == "run.failed" || e.Kind == "run.interrupted")
+	if lateFinal {
+		apply = false
+	}
 	// 某些 CLI 退出时还会关闭未投入使用的内部会话；只存历史，不凭空新增已关闭会话。
 	if errors.Is(err, sql.ErrNoRows) && e.Kind == "session.closed" {
 		apply = false
@@ -260,11 +278,19 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 			return false, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO events(event_id,source_id,agent,session_id,payload,notify,valid,received_at) VALUES(?,?,?,?,?,?,?,?)`, e.EventID, e.SourceID, e.Agent, e.SessionID, payload, e.Notifies(), apply && e.Notifies(), now)
+	if lateFinal && title != "" && (e.Sequence == 0 && nameSequence == 0 || e.Sequence > nameSequence) {
+		if e.Sequence > nameSequence {
+			nameSequence = e.Sequence
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET title=?,name_sequence=? WHERE source_id=? AND agent=? AND session_id=?`, title, nameSequence, e.SourceID, e.Agent, e.SessionID); err != nil {
+			return false, err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO events(event_id,source_id,agent,session_id,payload,notify,valid,received_at) VALUES(?,?,?,?,?,?,?,?)`, e.EventID, e.SourceID, e.Agent, e.SessionID, payload, e.Notifies(), (apply || lateFinal) && e.Notifies(), now)
 	if err != nil {
 		return false, err
 	}
-	if apply && e.Notifies() {
+	if (apply || lateFinal) && e.Notifies() {
 		for _, ch := range h.channels {
 			_, err = tx.ExecContext(ctx, `INSERT INTO push_jobs(event_id,channel,next_at) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM reads WHERE event_id=?)`, e.EventID, ch.Name, now, e.EventID)
 			if err != nil {
@@ -389,6 +415,12 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	}
 	for i := range s.Sessions {
 		v := &s.Sessions[i]
+		if v.State == "running" || v.State == "waiting" {
+			current := h.devices["bridge:"+v.SourceID]
+			if current == nil || current.device.CollectorID == "" || time.Since(current.device.LastSeen) > 35*time.Second {
+				v.State = "unknown"
+			}
+		}
 		err := h.db.QueryRowContext(ctx, `SELECT alias,archived,override_state,override_at,revision FROM session_management WHERE source_id=? AND agent=? AND session_id=?`, v.SourceID, v.Agent, v.SessionID).Scan(&v.Alias, &v.Archived, &v.OverrideState, &v.OverrideAt, &v.ManagementVersion)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return s, err

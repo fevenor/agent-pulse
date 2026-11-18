@@ -10,9 +10,11 @@
 | Qoder 中国 CLI | Stop回答；StopFailure可附失败前可见输出 | 原生Elicitation表单及提问工具；ElicitationResult处理结果，不传用户答案 | PermissionRequest；PermissionDenied保留原因并恢复活动 | SessionEnd保留原生原因；工具失败只作普通记录 | 不传完整工具响应、error_details或认证URL；同请求不再重复混合弹框通知 |
 | Antigravity CLI / App | CLI仅使用实际提供的finalModelOutput；App 2.32.1的WSL原生Stop未发送回答字段，不从历史补读；仍遵循完全空闲规则 | ask_question的问题、选项及is_multi_select | ask_permission的动作/目标/原因；App的run_command明确BypassSandbox请求的CommandLine/toolSummary，普通命令不报批准 | Stop错误/中断；PostToolUse的工具错误为普通记录 | App/CLI/IDE按原生路径隔离元数据，ACP及内部会话过滤；App 2.32.1的WSL实测确认多选及工具前后事件；内部描述符字段不等于用户hook载荷 |
 | OpenCode | 本轮最后助手消息的text.ended缓存；全部截断有提示 | 表单标题/字段/说明/选项；可按原生默认值确定的条件字段 | 批准摘要及明确路径目标；结果区分允许/拒绝 | 失败摘要、中断原因；工具/步骤/整理错误及重试提示为普通记录 | 不从历史补回答，不传用户答案、完整response.body或任意权限元数据；不可确定的条件字段明确受限 |
-| Codex CLI / 本地桌面 | 使用Stop原生last_assistant_message；字段缺失只记状态 | request_user_input等已支持原生提问工具 | PermissionRequest的命令/可见原因 | Interrupt与SessionEnd；工具返回恢复活动 | 精确查询本地会话来源及宿主日志路径的身份元数据，不读日志正文；子代理/记忆/后台审查过滤需实际宿主验证，旧0.167基线不冒充较新能力 |
+| Codex CLI / 本地桌面 | 按已登记轮次读取原生最终task_complete的last_agent_message；无持久终态来源时保留Stop提供的字段 | request_user_input等已支持原生提问工具 | PermissionRequest的命令/可见原因 | 原生最终task_complete的error确认整轮失败；Interrupt与SessionEnd；工具返回恢复活动 | 只观察hook登记的主会话轮次及增量终态，不转换其他记录；无持久记录、来源不可读或超限时降为未知，不伪造失败 |
 
 所有等待记录仍以宿主实际发生、主会话归属可用为前提；界面展示已有正文不意味着宿主的所有事件都已产生 hook。内容为空时状态仍保留，文档中的字段来源与真实验证范围分开。
+
+模型调用的采集边界是整轮最终结束，而非每次请求尝试。单次请求失败及自动重试过程不采集、不入库、不提醒。Codex 持久主会话通过 UserPromptSubmit/Stop 登记本轮的增量终态观察，以最终 task_complete 区分正常完成与最终错误；Stop 可被其他钩子要求继续，不提前确认整轮结束。Interrupt 和 SessionEnd 保持原生接入。没有持久终态来源的临时会话不宣称支持最终模型失败，来源持续不可读时降为未知；不以逐次请求 hook 或任务空闲超时判断代替。
 
 ## 内容来源证据
 

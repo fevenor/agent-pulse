@@ -18,13 +18,17 @@ import (
 
 // Codex 本地标题索引是可选元数据，不是稳定的 hook 契约；只按精确会话标识取标题。
 // 不读取 transcript、首条提示词或认证文件，索引不可用时不影响原生事件投递。
-func codexSessionTitle(sessionID string) string {
+func codexSessionTitle(sessionID string) string { return codexSessionTitleAt(sessionID, "") }
+
+func codexSessionTitleAt(sessionID, home string) string {
 	name := ""
 	if sessionID == "" {
 		return name
 	}
 	const maxIndexBytes = 8 << 20
-	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if home == "" {
+		home = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	}
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {

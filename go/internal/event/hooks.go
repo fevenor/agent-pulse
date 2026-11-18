@@ -4,6 +4,7 @@ package event
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,6 +67,12 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 	// ZCode主会话不带agentName；权限和工具错误仍结合本地父会话元数据过滤。
 	if agent == "zcode" && (h.AgentName != "" || h.ParentSession != "") {
 		return nil, nil
+	}
+	// Stop仍可要求宿主继续处理；有原生轮次时以最终task_complete为准，不提前报完成。
+	if agent == "codex" && hook == "Stop" && h.TurnID != "" {
+		if info, err := os.Stat(codexRollout(h.SessionID, h.Transcript)); err == nil && info.Mode().IsRegular() {
+			return nil, nil
+		}
 	}
 	kind := ""
 	switch agent {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"agent-pulse/internal/transport"
@@ -208,6 +209,9 @@ func (h *Hub) serveSocket(ws stateSocket) {
 	if ws.ReadJSON(&hello) != nil || hello.Type != "hello" || hello.Payload.ID == "" || len(hello.Payload.ID) > 256 {
 		return
 	}
+	if len(hello.Payload.CollectorID) > 256 || strings.ContainsAny(hello.Payload.CollectorID, "\x00\r\n") {
+		return
+	}
 	if hello.Payload.Role != "bridge" && hello.Payload.Role != "tray" && hello.Payload.Role != "client" && hello.Payload.Role != "web" {
 		return
 	}
@@ -240,6 +244,9 @@ func (h *Hub) serveSocket(ws stateSocket) {
 		delete(h.connections, c)
 		if h.devices[key] == c {
 			delete(h.devices, key)
+			if c.device.Role == "bridge" {
+				_, _ = h.db.Exec(`UPDATE sessions SET state='unknown' WHERE source_id=? AND state IN ('running','waiting')`, c.device.ID)
+			}
 			h.changedLocked()
 		}
 		h.mu.Unlock()

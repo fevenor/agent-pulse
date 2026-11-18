@@ -52,6 +52,7 @@ pub fn view() -> View {
     state.snapshot.unread[0].kind = "approval.required".into();
     state.snapshot.unread[1].kind = "run.failed".into();
     View {
+        snapshot_confirmed_at: None,
         state,
         status: "开发演示 · 未连接服务".into(),
         alert: None,

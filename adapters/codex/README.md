@@ -1,23 +1,16 @@
-# Codex 适配器
+# Codex接入
 
-采用独立命令 hook 包，支持版本和安装事件见 [包清单](manifest.json)。会话、轮次和中断事件转换代码位于 `go/internal/event/hooks.go`，编译到独立产物，不进入 Bridge。
+支持Codex CLI和本地桌面执行器，主会话沿用正常直接启动；云端编排和ACP子代理不以本地工具执行冒充支持。适配器与Bridge独立发布，安装入口及版本政策见[适配说明](../../docs/adapters.md)。
 
-安装、信任确认、自动更新与当前覆盖限制见 [来源接入说明](../../docs/adapters.md)。不要关闭 Codex 的全局 hook 信任检查。子代理事件忽略；没有可靠归属字段的工具权限与输入等待暂不转换。
+## 当前事件规则
 
-本地验证使用 `uv run --offline --no-project python tests/e2e/codex_native.py`，脚本只连接本地 Responses 模拟服务，每次一个测试实例。如需在线模型测试，必须取得相应账号与模型授权，遵守实际服务额度；不将某个账号的并发限制写为项目默认值。
+- SessionStart/UserPromptSubmit维护会话开始和继续；PermissionRequest及提问工具保持原生等待事件，PostToolUse用于恢复活动。
+- 持久主会话在UserPromptSubmit/Stop登记本轮终态观察。适配器从登记时的位置增量读取对应原生文件，仅将目标turn_id的最终task_complete转换为正常完成或整轮失败；不采集单次模型请求错误或自动重试过程。Stop可能被其他钩子要求继续，不能提前作为持久主会话的最终完成。
+- 最终事件自身的last_agent_message和error.message提供可见正文，遵循现有32 KiB上限；不转换其他记录，不读取思考、用户输入或完整历史来补内容。Interrupt和SessionEnd保持原生中断与关闭；关闭后交付的真实终态不重新打开会话。
+- 缺少持久终态来源的临时会话保留Stop已有完成字段，但最终模型失败能力明确受限。来源持续不可读取只降为状态未知，不伪造任务失败，也不以长时间无活动判结束。
 
-## 会话标题
+宿主目录跟随CODEX_HOME，身份数据库跟随CODEX_SQLITE_HOME，缺省为用户.codex目录。观察登记保留宿主目录边界，不要求Bridge与交互宿主具有相同环境变量。文件来源只在宿主的sessions/archived_sessions内；按精确会话或宿主路径核对身份，并过滤子代理、记忆及后台审查。临时记忆线程没有持久身份时，精确识别CODEX_HOME下的memories/memories_v2专用工作目录，不按标题或普通项目末尾猜测。
 
-官方 hook 的共享字段提供会话标识和 transcript 路径，但不提供稳定的会话标题契约。命令适配器在本机已存在的 `CODEX_HOME/session_index.jsonl`（未设置时为用户目录 `.codex/session_index.jsonl`）中，按精确 `session_id` 查找 `id` 对应的 `thread_name`，只把原生缓存的标题填入协议 `session_title`；不读取 transcript、首条提示词、完整回复或认证文件。通知标题和项目名不变。
+标题仍从本机已有session_index.jsonl按精确会话ID读取thread_name，不使用用户提示词或回答生成名称；不改写索引和信任记录。Windows与WSL共享目录由WSL管理自有条目，按原生command_windows选择实际执行平台，保留其他用户钩子。
 
-该索引是当前已观察到的可选本地元数据，不承诺所有 Codex 版本都提供；不存在、不可读、格式变化、没有匹配标题或超过 8 MiB 时保留无标题事件，Hub 保留已有名称；首次无名称时由界面显示“未命名会话”。标题满足 1024 字节限制并保持有效 UTF-8。同一会话有多条缓存时取最后有效标题，读取不写入索引。不进行定时名称轮询；没有原生改名事件时，在下一次真实 hook 读取最新名称。
-
-名称转换逻辑随独立 Codex 适配包发布，不能仅靠升级 Bridge 生效；本项目各组件使用匹配的现行结构，适配包沿用原公钥和递增签名索引。初次事件可提供名称，后续真实 hook 附带最新名称；不改写历史正文、任务状态或会话备注。当前协议要求本轮支持名称事件的 Hub、Relay 和 Bridge 构建。字段依据见[官方 Codex hook 文档](https://developers.openai.com/codex/hooks/)。
-
-## 事件正文限制
-
-当前验证基线的真实 Stop hook 只带 session_id/hook_event_name/turn_id，没有最终回答字段，因此本轮仅记完成状态，不从 transcript 回填答案。工具提问/批准仍因缺可靠主/子归属后置。Interrupt/SessionEnd 无详细原因时只记录状态，不伪造正文；详见[事件与内容覆盖](../../docs/event-coverage.md)。
-
-## 内部记忆过滤
-
-过滤发生在独立适配器转换阶段，空事件不会递交 Bridge。先检查明确子/内部字段，再查询可选身份库；CODEX_SQLITE_HOME 可独立于 CODEX_HOME。记忆整理是 ephemeral（不持久化的临时线程），不能仅依靠 state_5.sqlite；其工作目录精确匹配 CODEX_HOME 下的 memories 或 memories_v2 时直接过滤。处理本平台规范路径以及现有 WSL 共享入口的 Windows 盘符表示，不读取记忆内容或对话正文，不过滤其他位置的同名普通项目。真实宿主验证边界见[开发记录](../../docs/development-status.md)。
+实现与验证边界见[事件覆盖](../../docs/event-coverage.md)及[开发记录](../../docs/development-status.md)。模型模拟服务只能证明真实执行器的事件与接入链，不冒充在线模型、日常桌面错误或手机实收验证。

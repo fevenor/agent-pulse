@@ -10,6 +10,7 @@ import (
 
 func TestSessionManagementPreservesFactsAndRejectsStaleChanges(t *testing.T) {
 	h := testHub(t)
+	makeTestBridgeOnline(h, "linux", "")
 	ctx := context.Background()
 	start := testEvent("start", "session.started", 1)
 	start.SessionTitle = "真实会话标题"
@@ -76,6 +77,7 @@ func TestSessionManagementPreservesFactsAndRejectsStaleChanges(t *testing.T) {
 
 func TestUnsequencedHistoryAndClockRollbackPreserveOrderingContract(t *testing.T) {
 	h := testHub(t)
+	makeTestBridgeOnline(h, "linux", "")
 	ctx := context.Background()
 	e := testEvent("now", "input.required", 0)
 	if _, err := h.Accept(ctx, e); err != nil {

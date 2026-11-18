@@ -25,19 +25,25 @@ type item struct {
 }
 
 type Bridge struct {
-	mu           sync.Mutex
-	config       config.Bridge
-	queue        []*item
-	byID         map[string]*item
-	bytes        int
-	rejected     uint64
-	failed       uint64
-	lastFailedID string
-	wake         chan struct{}
+	mu                 sync.Mutex
+	config             config.Bridge
+	queue              []*item
+	byID               map[string]*item
+	bytes              int
+	rejected           uint64
+	failed             uint64
+	lastFailedID       string
+	wake               chan struct{}
+	collectorID        string
+	observationContext context.Context
+	cancelObservations context.CancelFunc
+	observations       map[string]*observation
+	observationWG      sync.WaitGroup
 }
 
 func New(c config.Bridge) *Bridge {
-	return &Bridge{config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Bridge{config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1), collectorID: protocol.NewID(), observationContext: ctx, cancelObservations: cancel, observations: map[string]*observation{}}
 }
 
 func (b *Bridge) Handler() http.Handler {
@@ -79,14 +85,38 @@ func (b *Bridge) Handler() http.Handler {
 		}
 		transport.JSON(w, 202, protocol.Receipt{EventID: e.EventID, Accepted: "memory", Duplicate: duplicate})
 	})
+	mux.HandleFunc("POST /api/v1/observations", func(w http.ResponseWriter, r *http.Request) {
+		var req protocol.LocalObservation
+		if !transport.Decode(w, r, &req) {
+			return
+		}
+		if adapters.FromACP(b.config, req.ProcessID) {
+			transport.JSON(w, 202, map[string]string{"accepted": "filtered"})
+			return
+		}
+		if err := b.registerObservation(req); err != nil {
+			transport.Error(w, 503, "本轮终态未登记")
+			return
+		}
+		transport.JSON(w, 202, map[string]string{"accepted": "memory"})
+	})
 	return transport.Guard("", true, mux)
 }
 
 func (b *Bridge) enqueue(e protocol.Event) (int, bool) {
-	e.OccurredAt = e.OccurredAt.UTC()
-	payload, _ := json.Marshal(e)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.enqueueLocked(e)
+}
+
+func (b *Bridge) enqueueLocked(e protocol.Event) (int, bool) {
+	e.OccurredAt = e.OccurredAt.UTC()
+	if previous := b.byID[e.EventID]; previous != nil {
+		e.CollectorID = previous.event.CollectorID
+	} else {
+		e.CollectorID = b.collectorID
+	}
+	payload, _ := json.Marshal(e)
 	if previous := b.byID[e.EventID]; previous != nil {
 		if bytes.Equal(previous.payload, payload) {
 			return 202, true
@@ -96,6 +126,12 @@ func (b *Bridge) enqueue(e protocol.Event) (int, bool) {
 	if len(b.queue) >= b.config.QueueEvents || b.bytes+len(payload) > b.config.QueueBytes {
 		b.rejected++
 		return 503, false
+	}
+	// 明确关闭会话后给最终记录一个短交付窗口，再回收未结束的观察进程；不使用任务空闲超时。
+	if e.Kind == "session.closed" {
+		if current := b.observations[e.Agent+"\x00"+e.SessionID]; current != nil && !current.done {
+			time.AfterFunc(2*time.Second, current.cancel)
+		}
 	}
 	entry := &item{event: e, payload: payload}
 	b.queue = append(b.queue, entry)
@@ -109,6 +145,7 @@ func (b *Bridge) enqueue(e protocol.Event) (int, bool) {
 }
 
 func (b *Bridge) Run(ctx context.Context) {
+	defer b.stopObservations()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); b.presence(ctx) }()
@@ -189,12 +226,23 @@ func (b *Bridge) presence(ctx context.Context) {
 		hostName, _ = os.Hostname()
 	}
 	device := protocol.Device{ID: b.config.SourceID, Role: "bridge", HostName: hostName}
+	first := true
+	connect := func(connectCtx context.Context, base, token string) error {
+		b.mu.Lock()
+		if !first {
+			b.collectorID = protocol.NewID()
+		}
+		first = false
+		device.CollectorID = b.collectorID
+		b.mu.Unlock()
+		return transport.Watch(connectCtx, base, token, device, func(protocol.Version) error { return nil })
+	}
 	for ctx.Err() == nil {
-		err := transport.Watch(ctx, b.config.HubURL, b.config.Token, device, func(protocol.Version) error { return nil })
+		err := connect(ctx, b.config.HubURL, b.config.Token)
 		if err != nil && b.config.RelayURL != "" && ctx.Err() == nil {
 			// 定期重建回退连接，以重新探测直连；不让回退路径永久黏住。
 			fallback, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_ = transport.Watch(fallback, b.config.RelayURL, b.config.RelayToken, device, func(protocol.Version) error { return nil })
+			_ = connect(fallback, b.config.RelayURL, b.config.RelayToken)
 			cancel()
 		}
 		if !pause(ctx, 2*time.Second) {

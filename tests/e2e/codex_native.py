@@ -13,7 +13,10 @@ import time
 import urllib.request
 
 project = Path(__file__).resolve().parents[2]
-binary = project / "bin"
+binary = project / ("bin/dev" if os.name == "nt" else "bin")
+
+def tool(name):
+    return binary / (name + (".exe" if os.name == "nt" else ""))
 root = Path(tempfile.mkdtemp(prefix="agent-pulse-codex-"))
 capture = root / "hooks.jsonl"
 (root / "capture.py").write_text('''import sys,json,pathlib
@@ -25,6 +28,8 @@ print("{}")
 
 
 requests_received = []
+scenario = "success"
+scenario_attempts = 0
 
 
 class Mock(http.server.BaseHTTPRequestHandler):
@@ -32,8 +37,24 @@ class Mock(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        global scenario_attempts
+        scenario_attempts += 1
         requests_received.append(self.path)
         self.rfile.read(int(self.headers.get("content-length", "0")))
+        if scenario == "fatal":
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error":{"message":"隔离模型最终报错","type":"invalid_request_error"}}).encode())
+            return
+        if scenario == "retry" and scenario_attempts == 1:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b'event: response.created\ndata: {"type":"response.created","response":{"id":"failed-attempt"}}\n\n')
+            self.wfile.flush()
+            return
         # 隔离名称索引替身：真实 Stop hook 读取新名称，不声称执行了交互 /rename。
         hooks = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
         if hooks:
@@ -62,10 +83,10 @@ class Mock(http.server.BaseHTTPRequestHandler):
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Mock)
 threading.Thread(target=server.serve_forever, daemon=True).start()
-command = "uv run --offline --no-project python " + shlex.quote(str(root / "capture.py")) + " " + shlex.quote(str(capture))
+command = "uv run --offline --no-project python " + (subprocess.list2cmdline([str(root / "capture.py"),str(capture)]) if os.name == "nt" else shlex.quote(str(root / "capture.py")) + " " + shlex.quote(str(capture)))
 config = {
     "model_provider": '"pulse_mock"', "model": '"pulse-test"',
-    "model_providers.pulse_mock": '{name="本地测试", base_url="http://127.0.0.1:' + str(server.server_port) + '/v1", wire_api="responses", requires_openai_auth=false, request_max_retries=0, stream_max_retries=0}',
+    "model_providers.pulse_mock": '{name="本地测试", base_url="http://127.0.0.1:' + str(server.server_port) + '/v1", wire_api="responses", requires_openai_auth=false, request_max_retries=0, stream_max_retries=1}',
     "check_for_update_on_startup": "false", "history.persistence": '"none"',
     "sqlite_home": json.dumps(str(root / "db")),
 }
@@ -74,10 +95,10 @@ config = {
 (root / ".codex/hooks.json").write_text(json.dumps({"hooks":{event:[{"hooks":[{"type":"command","command":command,"timeout":2}]}] for event in ["SessionStart","UserPromptSubmit","Stop","SessionEnd"]}}))
 config['projects'] = '{' + json.dumps(str(root)) + '={trust_level="trusted"}}'
 config['project_root_markers'] = '[".codex"]'
-args = ["codex"]
+args = [os.environ.get("AGENT_PULSE_CODEX_BINARY", "codex")]
 for key, value in config.items():
     args += ["-c", key + "=" + value]
-args += ["exec", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--json", "返回测试文本，不使用工具。"]
+args += ["exec", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "--ignore-user-config", "--json", "返回测试文本，不使用工具。"]
 log = (root / "stderr.log").open("w")
 output = (root / "exec.jsonl").open("w")
 processes = []
@@ -116,33 +137,45 @@ def port():
 
 try:
     repo = root / "repository"
-    shutil.copytree(project / "dist/repository", repo)
+    if os.name == "nt":
+        repo.mkdir()
+        package_source = root / "adapter-source"
+        package_source.mkdir()
+        shutil.copy2(tool("agent-pulse-adapter-codex"), package_source / "adapter.exe")
+        manifest = json.loads((project / "adapters/codex/manifest.json").read_text(encoding="utf-8"))
+        manifest.update(platform="windows/amd64", entry="adapter.exe")
+        (root / "manifest.json").write_text(json.dumps(manifest),encoding="utf-8")
+        subprocess.run([str(tool("agent-pulse-adapters")), "pack", "--source", str(package_source), "--manifest", str(root / "manifest.json"), "--repository", str(repo), "--out", str(repo / "codex.json")],check=True)
+        (repo / "index-input.json").write_text(json.dumps({"sequence":1,"packages":[json.loads((repo / "codex.json").read_text())]}))
+    else:
+        shutil.copytree(project / "dist/repository", repo)
     for command_args in [
         ["keygen", "--private", root / "publisher.key", "--public", root / "publisher.pub"],
         ["publish", "--repository", repo, "--private", root / "publisher.key", "--index", repo / "index-input.json"],
     ]:
-        subprocess.run([str(binary / "agent-pulse-adapters"), *map(str, command_args)], check=True)
+        subprocess.run([str(tool("agent-pulse-adapters")), *map(str, command_args)], check=True)
     # 新 Hub 从发布仓库读取公钥；测试仓库也必须携带同一次签名的公钥。
     shutil.copy2(root / "publisher.pub", repo / "publisher.pub")
     hub_port, bridge_port = port(), port()
     hub_url = "http://127.0.0.1:" + str(hub_port)
-    (root / "hub.yaml").write_text(f'listen: "127.0.0.1:{hub_port}"\ndatabase: "{root}/hub.db"\nadapter_directory: "{repo}"\n')
-    (root / "bridge.yaml").write_text(f'''listen: "unix:{root}/bridge.sock"
-source_id: "native-codex-test"
+    (root / "hub.yaml").write_text(f'listen: "127.0.0.1:{hub_port}"\ndatabase: "{root.as_posix()}/hub.db"\nadapter_directory: "{repo.as_posix()}"\n')
+    ipc = "" if os.name == "nt" else "unix:" + root.as_posix() + "/bridge.sock"
+    (root / "bridge.yaml").write_text(f'''listen: "{ipc}"
+source_id: "native-codex-test-{root.name}"
 hub_url: "{hub_url}"
 adapters:
-  directory: "{root}/adapters"
+  directory: "{root.as_posix()}/adapters"
   public_key: "{(root / 'publisher.pub').read_text().strip()}"
   poll_seconds: 5
   managed:
-    codex: "{root}/.codex/hooks.json"
+    codex: "{root.as_posix()}/.codex/hooks.json"
 ''')
-    start("hub", [binary / "agent-pulse-hub", "--config", root / "hub.yaml"])
+    start("hub", [tool("agent-pulse-hub"), "--config", root / "hub.yaml"])
     wait(lambda: request(hub_url + "/healthz"))
-    start("bridge", [binary / "agent-pulse-bridge", "serve", "--config", root / "bridge.yaml"])
-    wait(lambda: " dispatch " in (root / ".codex/hooks.json").read_text())
+    start("bridge", [tool("agent-pulse-bridge"), "serve", "--config", root / "bridge.yaml"])
+    wait(lambda: (lambda state: state.get("installed", {}).get("codex", {}).get("package", {}).get("version") == json.loads((project / "adapters/codex/manifest.json").read_text(encoding="utf-8"))["version"])(json.loads((root / "adapters/state.json").read_text())))
     # --ignore-user-config 不等于项目可信；projects 使用 TOML 内联表避免带引号的点分键被误解析。
-    result = subprocess.run(args,cwd=root,env={**os.environ,"CODEX_HOME":str(root / ".codex")},stdin=subprocess.DEVNULL,stdout=output,stderr=log,timeout=35)
+    result = subprocess.run(args,cwd=root,env={**os.environ,"CODEX_HOME":str(root / ".codex"),"CODEX_SQLITE_HOME":str(root / "db")},stdin=subprocess.DEVNULL,stdout=output,stderr=log,timeout=35)
     output.flush()
     messages = [json.loads(line) for line in (root / "exec.jsonl").read_text().splitlines() if line.startswith("{")]
     events = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
@@ -151,11 +184,30 @@ adapters:
     runtime = json.loads((root / "adapters/runtime/codex.json").read_text())
     completed = next(item for item in history if item["kind"] == "turn.completed")
     if completed.get("session_title") != "本地更新后的会话名称":
-        raise RuntimeError("真实 Stop hook 没有读取测试索引中的最新名称")
+        raise RuntimeError("原生最终结束事件没有读取测试索引中的最新名称")
     snapshot = request(hub_url + "/api/v1/snapshot")
     if len(snapshot["sessions"]) != 1 or snapshot["sessions"][0]["title"] != completed["session_title"]:
         raise RuntimeError("名称更新必须定位同一后台会话")
-    evidence = {"finished":finished,"model":"本地 Responses 模拟，不调用在线服务", "title_source":"隔离索引替身，真实 hook 读取；不是交互 /rename 验收", "local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
+    final_cases = []
+    for mode, expected in [("fatal", "run.failed"), ("retry", "turn.completed")]:
+        scenario, scenario_attempts = mode, 0
+        before_ids = {item["event_id"] for item in request(hub_url + "/api/v1/events")}
+        case_log = (root / (mode + ".log")).open("w")
+        result = subprocess.run(args, cwd=root, env={**os.environ,"CODEX_HOME":str(root / ".codex"),"CODEX_SQLITE_HOME":str(root / "db")}, stdin=subprocess.DEVNULL, stdout=case_log, stderr=case_log, timeout=40)
+        case_log.close()
+        current = wait(lambda: (lambda items: items if any(item["kind"] == expected and item["event_id"] not in before_ids for item in items) else None)(request(hub_url + "/api/v1/events")))
+        endings = [item for item in current if item["event_id"] not in before_ids and item["kind"] in ["run.failed", "turn.completed"]]
+        if len(endings) != 1 or endings[0]["kind"] != expected:
+            raise RuntimeError("模型请求失败或重复终态被采集：" + mode)
+        if mode == "fatal" and result.returncode == 0:
+            raise RuntimeError("没有取得宿主真实失败结束")
+        if mode == "retry" and (result.returncode != 0 or scenario_attempts < 2):
+            raise RuntimeError("没有取得失败后重试成功")
+        final_cases.append({"case":mode,"final_kind":expected,"final_events":len(endings),"requests":scenario_attempts})
+    snapshot = request(hub_url + "/api/v1/snapshot")
+    if any(session["state"] == "running" for session in snapshot["sessions"]):
+        raise RuntimeError("整轮结束后仍有运行任务")
+    evidence = {"finished":finished,"model":"本地 Responses 模拟，不调用在线服务", "title_source":"隔离索引替身，真实 hook 读取；不是交互 /rename 验收", "final_cases":final_cases,"local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
     (root / "evidence.json").write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
     print(json.dumps(evidence,ensure_ascii=False,indent=2))
     if not finished or not {"SessionStart","Stop"}.issubset({e["hook_event_name"] for e in events}):

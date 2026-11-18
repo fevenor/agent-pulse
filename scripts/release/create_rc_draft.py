@@ -159,7 +159,7 @@ def main():
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notes = f"""# AgentPulse {args.tag} 修订草稿
 
-**保持草稿与预发布状态。** 更新Bridge、Tray、Hub与实际变化的命令适配包；Relay复用 `{manifest['relay']}`，没有发布新Relay镜像。
+**保持草稿与预发布状态。** 更新Bridge、Tray、Hub与实际变化的命令适配包；{("Relay复用 `"+manifest["relay"]+"`，没有发布新Relay镜像。") if args.relay_version else ("Relay同步使用本候选 `"+manifest["relay"]+"`，以保持事件结构与Hub/Bridge一致。")}
 
 ## 修复范围
 

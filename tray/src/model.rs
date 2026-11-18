@@ -260,6 +260,8 @@ impl State {
 }
 
 pub struct Store {
+    // 仅内存中的权威快照确认时间，不随本地缓存恢复，不由界面操作续期。
+    pub snapshot_confirmed_at: Option<std::time::Instant>,
     pub state: State,
     pub error: Option<String>,
     path: PathBuf,
@@ -289,6 +291,7 @@ impl Store {
             state.device_id = format!("tray-{}", uuid::Uuid::new_v4());
         }
         let mut store = Self {
+            snapshot_confirmed_at: None,
             state,
             error: None,
             path: path.into(),

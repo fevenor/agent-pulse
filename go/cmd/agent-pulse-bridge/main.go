@@ -121,6 +121,11 @@ func run() error {
 						reply = result.Reply
 					}
 				}
+				if result.Observation != nil {
+					if err = bridge.RegisterObservation(context.Background(), c.Listen, protocol.LocalObservation{Adapter: *id, Observation: *result.Observation}); err != nil {
+						slog.Warn("本轮终态未登记，请检查Bridge")
+					}
+				}
 				if result.Event != nil {
 					if err = result.Event.Validate(); err == nil {
 						err = bridge.Emit(context.Background(), c.Listen, *result.Event)

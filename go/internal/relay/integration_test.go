@@ -80,7 +80,7 @@ func TestSessionManagementThroughRelayRequiresHubCommit(t *testing.T) {
 	}
 	defer h.Close()
 	snapshot, err := h.Snapshot(context.Background())
-	if err != nil || snapshot.Sessions[0].OverrideState != "closed" || snapshot.Sessions[0].State != "waiting" || snapshot.Unread[0].Read {
+	if err != nil || snapshot.Sessions[0].OverrideState != "closed" || snapshot.Sessions[0].State != "unknown" || snapshot.Unread[0].Read {
 		t.Fatal("重启后应保留人工覆盖、来源事实与未读", snapshot, err)
 	}
 }

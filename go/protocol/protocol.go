@@ -4,6 +4,7 @@ package protocol
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,12 +17,27 @@ const MaxHookBytes = 8 << 20
 
 // AdapterResult 仅在本机适配包与 dispatch 间使用；Reply 必须是宿主的被动回复。
 type AdapterResult struct {
-	Event *Event         `json:"event,omitempty"`
-	Reply map[string]any `json:"reply"`
+	Event       *Event         `json:"event,omitempty"`
+	Observation *Observation   `json:"observation,omitempty"`
+	Reply       map[string]any `json:"reply"`
+}
+
+// Observation 是当前主会话的本轮终态观察登记；游标只在本机传递，不进入 Hub。
+type Observation struct {
+	SessionID string          `json:"session_id"`
+	TurnID    string          `json:"turn_id"`
+	Cursor    json.RawMessage `json:"cursor"`
+}
+
+type LocalObservation struct {
+	Adapter string `json:"adapter"`
+	Observation
+	ProcessID int `json:"process_id,omitempty"`
 }
 
 type Event struct {
 	EventID      string    `json:"event_id"`
+	CollectorID  string    `json:"collector_id,omitempty"`
 	SourceID     string    `json:"source_id"`
 	Agent        string    `json:"agent"`
 	SessionID    string    `json:"session_id"`
@@ -57,6 +73,9 @@ func (e Event) Validate() error {
 		if strings.TrimSpace(field.value) == "" || len(field.value) > 256 || strings.ContainsAny(field.value, "\x00\r\n") {
 			return fmt.Errorf("%s 必须是 1 至 256 字节的标识", field.name)
 		}
+	}
+	if len(e.CollectorID) > 256 || strings.ContainsAny(e.CollectorID, "\x00\r\n") {
+		return fmt.Errorf("collector_id 无效")
 	}
 	if e.Scope != "main" {
 		return fmt.Errorf("scope 必须明确为 main；子代理和未知归属不接收")
@@ -129,6 +148,7 @@ type Version struct {
 
 type Device struct {
 	Path        string    `json:"path"`
+	CollectorID string    `json:"collector_id,omitempty"`
 	ID          string    `json:"id"`
 	Role        string    `json:"role"`
 	HostName    string    `json:"host_name,omitempty"`
