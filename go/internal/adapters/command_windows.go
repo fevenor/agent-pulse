@@ -62,34 +62,16 @@ func normalizeHookPath(path string) string {
 	return path
 }
 
-// 仅规范化双引号包围的已知文件路径形式；命令、配置身份与Agent仍须匹配。
-func normalizeQuotedHookPaths(command string) string {
-	var out strings.Builder
-	for {
-		start := strings.IndexByte(command, '"')
-		if start < 0 {
-			out.WriteString(command)
-			break
-		}
-		out.WriteString(command[:start+1])
-		command = command[start+1:]
-		end := strings.IndexByte(command, '"')
-		if end < 0 {
-			out.WriteString(command)
-			break
-		}
-		out.WriteString(normalizeHookPath(command[:end]))
-		out.WriteByte('"')
-		command = command[end+1:]
-	}
-	return out.String()
-}
-
 func ownsHookCommand(command, prefix string) bool {
-	if exe, cfg, id, event, ok := windowsHookParts(command); ok {
-		command = quoteCMD(exe) + " dispatch --config " + quoteCMD(cfg) + " --adapter " + quoteCMD(id) + " --hook " + quoteCMD(event)
+	exe, cfg, id, _, ok := windowsHookParts(command)
+	wantedExe, wantedCfg, wantedID, _, expected := windowsHookParts(prefix + quoteCMD("Stop"))
+	if !ok || !expected {
+		return false
 	}
-	return strings.HasPrefix(normalizeQuotedHookPaths(command), normalizeQuotedHookPaths(prefix))
+	// 内置Bridge随工程版本更换目录；以同一配置、Agent及程序名确认归属，避免升级后重复执行。
+	return id == wantedID &&
+		strings.EqualFold(filepath.Base(normalizeHookPath(exe)), filepath.Base(normalizeHookPath(wantedExe))) &&
+		sameHookConfigFile(normalizeHookPath(cfg), normalizeHookPath(wantedCfg))
 }
 
 // 命令字符串宿主会展开百分号/延迟变量；不允许把这类路径误解释成其他程序。

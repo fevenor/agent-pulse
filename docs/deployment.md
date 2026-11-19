@@ -40,7 +40,7 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 
 用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。历史Release附件保留原构建快照；当前用户入口统一使用raw脚本。
 
-安装当前公开 RC3 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
+安装当前公开 RC4 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
 set -o pipefail
