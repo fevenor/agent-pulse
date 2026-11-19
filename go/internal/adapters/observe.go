@@ -16,7 +16,7 @@ import (
 )
 
 // 观察进程只执行当前已安装的签名包入口，整个本轮固定版本；退出或替换时取消。
-func Observe(ctx context.Context, c config.Bridge, id string, cursor []byte, emit func(protocol.Event) error) error {
+func Observe(ctx context.Context, c config.Bridge, id string, cursor []byte, emit func(protocol.LocalEvent) error) error {
 	if !identifier.MatchString(id) || len(cursor) > 65536 {
 		return errors.New("本轮观察登记无效")
 	}
@@ -46,7 +46,7 @@ func Observe(ctx context.Context, c config.Bridge, id string, cursor []byte, emi
 	var readErr error
 	count := 0
 	for scanner.Scan() {
-		var e protocol.Event
+		var e protocol.LocalEvent
 		if json.Unmarshal(scanner.Bytes(), &e) != nil || e.Validate() != nil || e.SourceID != c.SourceID || e.Agent != id || count > 0 {
 			readErr = errors.New("本轮观察输出无效")
 			cancel()

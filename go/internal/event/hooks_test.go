@@ -73,7 +73,7 @@ func TestAntigravityDirectStartMultipleSessionsAndUnknownStop(t *testing.T) {
 	for _, tt := range []struct{ payload, want string }{
 		{`{"conversationId":"main","terminationReason":"model_stop"}`, "turn.completed"},
 		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL","fullyIdle":true}`, "turn.completed"},
-		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL","fullyIdle":false}`, "observation.lost"},
+		{`{"conversationId":"main","terminationReason":"NO_TOOL_CALL","fullyIdle":false}`, "activity.observed"},
 		{`{"conversationId":"main","terminationReason":"model_stop","fullyIdle":false}`, "activity.observed"},
 		{`{"conversationId":"main","terminationReason":"new_reason"}`, "observation.lost"},
 	} {

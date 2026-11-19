@@ -186,3 +186,129 @@ fn real_services_offline_reads_restart_and_relay() {
     });
     drop(worker);
 }
+
+#[test]
+#[ignore = "需要先构建Windows Hub，显式检查真实时间线请求和扫描位置"]
+fn real_timeline_filter_anchor_and_incremental_cursor() {
+    use agent_pulse_tray::{
+        model::SessionKey,
+        sessions::{self, Reply, Request},
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let dir = Directory(
+        std::env::temp_dir().join(format!("agent-pulse-timeline-{}", uuid::Uuid::new_v4())),
+    );
+    fs::create_dir(&dir.0).unwrap();
+    let hp = port();
+    let base = format!("http://127.0.0.1:{hp}");
+    let config = dir.0.join("hub.json");
+    json_file(
+        &config,
+        json!({"listen":format!("127.0.0.1:{hp}"),"database":dir.0.join("hub.db"),"push":[]}),
+    );
+    let _server = Service::start(root.join("bin/dev/agent-pulse-hub.exe"), config);
+    wait(|| ureq::get(format!("{base}/healthz")).call().is_ok());
+    let emit = |id: &str, kind: &str| {
+        ureq::post(format!("{base}/api/v1/events")).send_json(json!({"event_id":id,"source_id":"source","agent":"test","session_id":"main","kind":kind,"title":if kind=="activity.observed"{"test · 正在运行"}else{"完成"},"body":"","occurred_at":"2026-11-19T00:00:00Z","scope":"main"})).unwrap();
+    };
+    emit("old", "turn.completed");
+    for i in 0..90 {
+        emit(&format!("running-{i}"), "activity.observed");
+    }
+    emit("new", "turn.completed");
+    let (tx, rx) = async_channel::unbounded();
+    let worker = sessions::start(
+        Settings {
+            hub_url: base.clone(),
+            ..Default::default()
+        },
+        tx,
+    );
+    let key = SessionKey {
+        source_id: "source".into(),
+        agent: "test".into(),
+        session_id: "main".into(),
+    };
+    worker
+        .send(Request::History {
+            key: key.clone(),
+            before: 0,
+            anchor: Some("old".into()),
+            all: false,
+            generation: 1,
+            checked_event: "new".into(),
+        })
+        .unwrap();
+    let mut answer = None;
+    wait(|| {
+        answer = rx.try_recv().ok();
+        answer.is_some()
+    });
+    let Some(Reply::History {
+        result: Ok(first),
+        generation: 1,
+        checked_event,
+        ..
+    }) = answer
+    else {
+        panic!("实际历史接口未正确解码")
+    };
+    assert_eq!(first.events.len(), 1);
+    assert_eq!(first.events[0].event_id, "old");
+    assert!(first.newer);
+    assert_eq!(checked_event, "new");
+    assert!(first.cursor > first.events[0].position);
+    emit("running-only", "activity.observed");
+    worker
+        .send(Request::Latest {
+            key: key.clone(),
+            after: first.cursor,
+            all: false,
+            generation: 1,
+            checked_event: "running-only".into(),
+            run_id: first.run_id.clone(),
+        })
+        .unwrap();
+    let mut answer = None;
+    wait(|| {
+        answer = rx.try_recv().ok();
+        answer.is_some()
+    });
+    let Some(Reply::Latest {
+        result: Ok(next),
+        run_id,
+        ..
+    }) = answer
+    else {
+        panic!("实际增量接口未正确解码")
+    };
+    assert_eq!(run_id, first.run_id);
+    assert!(next.events.is_empty());
+    assert!(next.cursor > first.cursor);
+    assert!(!next.more);
+    worker
+        .send(Request::History {
+            key,
+            before: 0,
+            anchor: None,
+            all: true,
+            generation: 2,
+            checked_event: "running-only".into(),
+        })
+        .unwrap();
+    let mut answer = None;
+    wait(|| {
+        answer = rx.try_recv().ok();
+        answer.is_some()
+    });
+    let Some(Reply::History {
+        result: Ok(full), ..
+    }) = answer
+    else {
+        panic!("完整活动接口未正确解码")
+    };
+    assert_eq!(full.events.len(), 30);
+    assert!(full.more);
+    assert!(full.events.iter().any(|e| e.kind == "activity.observed"));
+    drop(worker);
+}

@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const BridgeVersion = "0.5.0"
+const BridgeVersion = "0.6.0"
 const MaxPackageBytes = 32 << 20
 
 var identifier = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

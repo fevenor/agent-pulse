@@ -46,6 +46,10 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 
 ## 会话详情与管理
 
+会话详情在完整会话筛选上增加 `view=important|all`：前者筛除无正文的开始/恢复，以及标题仅为Agent名加“ · 正在运行”的无正文活动，其他有意义记录保留；后者返回完整活动。该模式返回 `{events,more,newer,cursor,run_id}`，每页 `limit` 仍为1至200。普通历史查询未指定view时继续返回完整事件数组，供历史管理页面使用。
+
+`anchor=<事件ID>` 返回该事件及更早记录，不可与before/after组合，事件必须属于指定会话；`newer`表示当前片段之前还有未加载的较新记录。after增量响应中的cursor是已扫描位置，空可见页也可以推进；more为真时只推进至最后返回记录，客户端继续逐页补齐。首次历史/定位响应中的cursor固定为查询时该会话的最高原始位置，供后续实时扫描使用，不表示历史片段之间已经加载。run_id用于丢弃Hub重启前的查询结果。筛选/定位查询不支持归档来源，所有查询均不隐式标读；Relay原样转发查询参数。
+
 `GET /api/v1/events` 带完整会话筛选时可使用 `after` 非负位置，按持久位置升序返回新增事件；不与 before 同时使用，不查询归档历史。客户端逐页补齐后倒序合并，避免断线期间超过一页漏记录。
 
 历史查询可同时提供 `source_id`、`agent`、`session_id`，服务端先按完整会话键过滤再分页；三项必须同时提供。会话快照中的 `sources` 将来源指纹映射为 Hub 当前统一维护的 `{name, environment, archived, role}`。role 区分采集 Bridge 与展示 Tray，沿用 Hub 已持久化的设备角色，主机策略仅作用于 Bridge。归档主机的会话和未读对 Tray 隐藏，事件历史默认排除；Hub 管理页可显式查询归档历史。会话快照保留 `state`、`last_event_id`、`last_kind`、`updated_at`，并附 `alias`、会话级 `archived`、`override_state`、`override_at`、`management_version`。`last_kind` 区分等待输入与批准，不改变来源状态枚举。
@@ -103,3 +107,8 @@ Relay 只持久化事件与已读请求。Hub 断线时查询和包下载返回 
 会话 ID 不作任何展示名称。会话别名为本项目备注，不覆盖原生最新名称。公开候选的协议与附件保持固定。开发测试结构变化可经授权重建隔离测试数据；不自动迁移或清空正式数据，实际部署数据操作须另行授权。
 
 collector_id（采集连接代次）由Bridge在事件首次入队时填写，重试保持；设备连接携带当前代次。该值只用于阻止旧连接缓存的运行活动重新激活任务，不替代稳定source_id。Observation（本轮终态观察登记）仅在本机适配器与Bridge间传递，不进入Hub事件或公开管理界面，详见设计文档。
+
+
+### 本机身份等待与轮次确认
+
+AdapterResult及本机事件入口可携带identity游标与turn_id，它们不属于网络Event，Bridge不得向Hub/Relay转发。identity用于已复现的App首次身份元数据延迟，Bridge调用已安装适配器的check-identity并得到main/child/unknown；事件按现有有界内存暂存，health.pending包含身份等待，pending_identity另列。turn_id用于同一Bridge进程内原生Stop与观察终态的去重。终态观察进程可以输出带本机turn_id的LocalEvent，原有Codex Event输出仍是该结构的子集；不新增旧版本支持承诺，发布时相关本机组件一起更新。

@@ -34,3 +34,8 @@ agent-pulse-bridge health --config /配置目录/bridge.yaml
 从 TCP 本机入口升级前，确认旧 `/healthz` 的 `pending` 为 0、正常停止并备份配置。保留 `source_id`、令牌、公钥和其他私人设置，只将 Bridge 原 `listen` 改为空或删除。先使用对应修订的 Hub 签名仓库，再替换程序、同步适配包和 OpenCode 配置，最后启动并检查 `health`。记忆过滤在独立 Codex 包中，OpenCode IPC 在新版插件中；只替换 Bridge/Tray 程序而仍使用旧适配包不能完成这两项修复。命令 hook 引用配置文件，因此仅改变 `listen` 不要求更换命令或重复信任；适配包变化是否要求重新加载/审核仍以宿主为准。安装器不自动改写已有私人配置；新程序对旧 IP:端口设置给出明确错误，不静默忽略。
 
 公开 RC3 的 raw 安装流程仍使用其旧产物支持的健康方式；这只是安装入口对已发布产物的能力选择，不代表新 Bridge 保留 TCP 通路。升级期间不清空 Hub/Relay 数据库、Tray 缓存或历史记忆记录，不重发历史失败任务。
+
+
+## App 身份暂存
+
+Antigravity App的首次子会话hook可能早于原生身份索引。适配器把待核对游标和规范化事件一起递交本机，Bridge按已有总事件数/字节配额暂存，异步调用已安装适配器核对；主身份转发、子身份过滤、未知保留等待。health.pending包含这些事件，pending_identity单列；重载和升级仍要求pending为零。游标与本机轮次标识不进入Hub/Relay网络事件，不改变已有持久化结构。旧Bridge不能消费这一新增本机字段，部署必须先更新相应Bridge再启用新适配包，不加旧版本兼容分支。

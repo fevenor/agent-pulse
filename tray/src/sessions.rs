@@ -3,19 +3,35 @@ use crate::{
     model::{Event, Session, SessionKey},
     settings::Settings,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TimelinePage {
+    pub events: Vec<Event>,
+    pub more: bool,
+    pub newer: bool,
+    pub cursor: i64,
+    pub run_id: String,
+}
+
 use std::{sync::mpsc, time::Duration};
 
 pub enum Request {
     History {
         key: SessionKey,
         before: i64,
+        anchor: Option<String>,
+        all: bool,
         generation: u64,
+        checked_event: String,
     },
     Latest {
         key: SessionKey,
         after: i64,
+        all: bool,
         generation: u64,
+        checked_event: String,
         run_id: String,
     },
     Manage {
@@ -30,13 +46,15 @@ pub enum Reply {
         key: SessionKey,
         before: i64,
         generation: u64,
-        result: Result<Vec<Event>, String>,
+        checked_event: String,
+        result: Result<TimelinePage, String>,
     },
     Latest {
         key: SessionKey,
         generation: u64,
+        checked_event: String,
         run_id: String,
-        result: Result<Vec<Event>, String>,
+        result: Result<TimelinePage, String>,
     },
     Managed {
         key: SessionKey,
@@ -61,7 +79,10 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                 Request::History {
                     key,
                     before,
+                    anchor,
+                    all,
                     generation,
+                    checked_event,
                 } => {
                     let mut result = Err("服务未连接，无法加载历史".into());
                     for (base, token) in endpoints.iter().filter(|(b, _)| !b.is_empty()) {
@@ -70,8 +91,12 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                             .append_pair("source_id", &key.source_id)
                             .append_pair("agent", &key.agent)
                             .append_pair("session_id", &key.session_id)
+                            .append_pair("view", if all { "all" } else { "important" })
                             .append_pair("limit", "30")
                             .append_pair("before", &before.to_string());
+                        if let Some(id) = &anchor {
+                            url.query_pairs_mut().append_pair("anchor", id);
+                        }
                         result = client
                             .get(url.as_str())
                             .header("Authorization", format!("Bearer {token}"))
@@ -81,7 +106,7 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                                 r.body_mut()
                                     .with_config()
                                     .limit(8 << 20)
-                                    .read_json::<Vec<Event>>()
+                                    .read_json::<TimelinePage>()
                                     .map_err(|_| "历史格式无效".into())
                             });
                         if result.is_ok() {
@@ -92,13 +117,16 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                         key,
                         before,
                         generation,
+                        checked_event,
                         result,
                     });
                 }
                 Request::Latest {
                     key,
                     after,
+                    all,
                     generation,
+                    checked_event,
                     run_id,
                 } => {
                     let mut result = Err("新事件暂不可达，正在自动重试".into());
@@ -108,6 +136,7 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                             .append_pair("source_id", &key.source_id)
                             .append_pair("agent", &key.agent)
                             .append_pair("session_id", &key.session_id)
+                            .append_pair("view", if all { "all" } else { "important" })
                             .append_pair("limit", "30")
                             .append_pair("after", &after.to_string());
                         result = client
@@ -119,7 +148,7 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                                 r.body_mut()
                                     .with_config()
                                     .limit(8 << 20)
-                                    .read_json::<Vec<Event>>()
+                                    .read_json::<TimelinePage>()
                                     .map_err(|_| "新事件格式无效".into())
                             });
                         if result.is_ok() {
@@ -129,6 +158,7 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                     let _ = output.send_blocking(Reply::Latest {
                         key,
                         generation,
+                        checked_event,
                         run_id,
                         result,
                     });

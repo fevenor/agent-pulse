@@ -31,6 +31,87 @@ func (h *Hub) SessionEventsAfter(ctx context.Context, key protocol.SessionKey, a
 	return h.eventsLocked(ctx, `WHERE e.source_id=? AND e.agent=? AND e.session_id=? AND e.position>? ORDER BY e.position ASC LIMIT ?`, []any{key.SourceID, key.Agent, key.SessionID, after, limit}, false)
 }
 
+// TimelineQuery 仅描述会话详情的筛选与位置，不改变完整事件存储。
+type TimelineQuery struct {
+	Before    int64
+	After     *int64
+	Anchor    string
+	Important bool
+	Limit     int
+}
+
+type TimelinePage struct {
+	Events []protocol.EventView `json:"events"`
+	More   bool                 `json:"more"`
+	Newer  bool                 `json:"newer"`
+	Cursor int64                `json:"cursor"`
+	RunID  string               `json:"run_id"`
+}
+
+// 只隐藏无正文且仅表达运行的记录；工具错误及其他有意义的标题仍可见。
+const importantEvents = ` AND NOT (trim(COALESCE(json_extract(e.payload,'$.body'),''),' ' || char(9) || char(10) || char(13))='' AND (
+ json_extract(e.payload,'$.kind') IN ('session.started','session.resumed') OR
+ (json_extract(e.payload,'$.kind')='activity.observed' AND json_extract(e.payload,'$.title')=json_extract(e.payload,'$.agent') || ' · 正在运行')))`
+
+func (h *Hub) SessionTimeline(ctx context.Context, key protocol.SessionKey, q TimelineQuery) (TimelinePage, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	page := TimelinePage{Events: []protocol.EventView{}, RunID: h.runID}
+	if q.Limit < 1 || q.Limit > 200 || q.Before < 0 || (q.After != nil && (*q.After < 0 || q.Before != 0 || q.Anchor != "")) || (q.Anchor != "" && q.Before != 0) {
+		return page, errors.New("时间线分页参数无效")
+	}
+	base := `WHERE e.source_id=? AND e.agent=? AND e.session_id=?`
+	args := []any{key.SourceID, key.Agent, key.SessionID}
+	if err := h.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(position),0) FROM events WHERE source_id=? AND agent=? AND session_id=?`, args...).Scan(&page.Cursor); err != nil {
+		return page, err
+	}
+	if q.Important {
+		base += importantEvents
+	}
+	tail := base
+	values := append([]any{}, args...)
+	if q.Anchor != "" {
+		var position int64
+		if err := h.db.QueryRowContext(ctx, `SELECT position FROM events WHERE source_id=? AND agent=? AND session_id=? AND event_id=?`, append(args, q.Anchor)...).Scan(&position); err != nil {
+			return page, err
+		}
+		tail += ` AND e.position<=?`
+		values = append(values, position)
+	} else if q.Before != 0 {
+		tail += ` AND e.position<?`
+		values = append(values, q.Before)
+	}
+	if q.After != nil {
+		tail += ` AND e.position>? AND e.position<=? ORDER BY e.position ASC LIMIT ?`
+		values = append(values, *q.After, page.Cursor, q.Limit+1)
+	} else {
+		tail += ` ORDER BY e.position DESC LIMIT ?`
+		values = append(values, q.Limit+1)
+	}
+	events, err := h.eventsLocked(ctx, tail, values, false)
+	if err != nil {
+		return page, err
+	}
+	page.More = len(events) > q.Limit
+	if page.More {
+		events = events[:q.Limit]
+	}
+	page.Events = events
+	if q.After != nil {
+		// 一页未扫完时只推进到最后已返回记录；全为隐藏活动时也推进扫描位置。
+		if page.More {
+			page.Cursor = events[len(events)-1].Position
+		}
+	} else if len(events) > 0 {
+		newer, err := h.eventsLocked(ctx, base+` AND e.position>? ORDER BY e.position ASC LIMIT 1`, append(args, events[0].Position), false)
+		if err != nil {
+			return page, err
+		}
+		page.Newer = len(newer) > 0
+	}
+	return page, nil
+}
+
 func (h *Hub) ManageSession(ctx context.Context, req protocol.SessionChange) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

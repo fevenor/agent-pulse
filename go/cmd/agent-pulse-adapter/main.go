@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"agent-pulse/internal/event"
@@ -25,9 +26,11 @@ func main() {
 func run() error {
 	fs := flag.NewFlagSet("adapter", flag.ContinueOnError)
 	hook := fs.String("hook", "", "原生 hook 名")
+	identityCheck := fs.Bool("check-identity", false, "检查待确认会话身份，仅返回main/child/unknown")
 	observe := fs.Bool("observe", false, "观察已登记本轮的原生终态")
 	parent := fs.Int("parent", 0, "观察进程所属Bridge的进程号")
 	source := fs.String("source", "", "主机 ID")
+	diagnosticDir := fs.String("identity-diagnostics", os.Getenv("AGENT_PULSE_IDENTITY_DIAGNOSTICS"), "仅Antigravity：将本次身份判断白名单写入已存在的私有诊断目录")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
@@ -35,8 +38,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if *identityCheck {
+		if adapterID != "antigravity" {
+			return fmt.Errorf("适配器不支持身份观察")
+		}
+		identity, err := event.CheckAntigravityIdentity(raw)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"identity": identity})
+	}
 	if *observe {
-		if adapterID != "codex" {
+		if adapterID != "codex" && adapterID != "antigravity" {
 			return fmt.Errorf("适配器不支持本轮终态观察")
 		}
 		ctx, cancel := context.WithCancel(context.Background())
@@ -63,9 +76,45 @@ func run() error {
 				}
 			}()
 		}
-		return event.ObserveCodex(ctx, raw, *source, func(e protocol.Event) error { return json.NewEncoder(os.Stdout).Encode(e) })
+		emit := func(e protocol.Event) error { return json.NewEncoder(os.Stdout).Encode(e) }
+		if adapterID == "antigravity" {
+			return event.ObserveAntigravity(ctx, raw, *source, func(e protocol.LocalEvent) error { return json.NewEncoder(os.Stdout).Encode(e) })
+		}
+		return event.ObserveCodex(ctx, raw, *source, emit)
 	}
-	result, err := event.Convert(adapterID, *source, *hook, raw, time.Now())
+	var result *protocol.Event
+	var identity json.RawMessage
+	var observation *protocol.Observation
+	var turnID string
+	if adapterID == "antigravity" {
+		var diagnostic event.AntigravityDiagnostic
+		result, diagnostic, err = event.ConvertAntigravityDiagnostic(*source, *hook, raw, time.Now())
+		observation, turnID = event.AntigravityTerminalObservation(*hook, raw, result, diagnostic.Metadata)
+		if result != nil && *hook == "Stop" && result.Kind == "activity.observed" && diagnostic.Metadata != nil && diagnostic.Metadata.Identity == "main" && filepath.Base(diagnostic.Metadata.Root) == "antigravity" && observation == nil && turnID == "" {
+			result.Kind = "observation.lost"
+			result.Title = "antigravity · 本轮状态待确认"
+			result.Body = "后台任务尚未结束，但本轮原生空闲状态不可读取"
+			diagnostic.Kind = result.Kind
+		}
+
+		if result != nil {
+			identity = event.AntigravityIdentityCursor(result.SessionID, diagnostic.Metadata)
+			if len(identity) > 0 {
+				diagnostic.Decision = "pending_identity"
+			}
+		}
+		// 每调用一文件，避免并发追加交错；目录已有256份时停止新增，不覆盖已有诊断或影响hook回复。
+		if filepath.IsAbs(*diagnosticDir) {
+			if entries, readErr := os.ReadDir(*diagnosticDir); readErr == nil && len(entries) < 256 {
+				if file, openErr := os.CreateTemp(*diagnosticDir, "identity-*.json"); openErr == nil {
+					_ = json.NewEncoder(file).Encode(diagnostic)
+					_ = file.Close()
+				}
+			}
+		}
+	} else {
+		result, err = event.Convert(adapterID, *source, *hook, raw, time.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -78,7 +127,7 @@ func run() error {
 			reply["decision"] = "stop"
 		}
 	}
-	output := protocol.AdapterResult{Event: result, Reply: reply}
+	output := protocol.AdapterResult{Event: result, Identity: identity, TurnID: turnID, Observation: observation, Reply: reply}
 	if adapterID == "codex" {
 		output.Observation = event.CodexObservation(*hook, raw)
 	}

@@ -27,7 +27,7 @@ def command(*args, allow_failure=False):
 
 def validate_tag(tag, version):
     if not re.fullmatch(r"v" + re.escape(version) + r"-rc\.[1-9][0-9]*", tag):
-        raise ValueError("候选标签必须与工程版本一致，形如 v0.5.0-rc.1")
+        raise ValueError("候选标签必须与工程版本一致，形如 v0.6.0-rc.1")
 
 
 def validate_scope(packages):
@@ -157,46 +157,36 @@ def main():
                 "signed_repository": False, "index_sequence_is_placeholder": True,
                 "bridge_assets": [{key: value for key, value in artifact.items() if key != "path"} for artifact in bridge_files]}
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    notes = f"""# AgentPulse {args.tag} 修订草稿
+    notes = f"""# AgentPulse {args.tag} 试运行草稿
 
-**保持草稿与预发布状态。** 更新Bridge、Tray、Hub与实际变化的命令适配包；{("Relay复用 `"+manifest["relay"]+"`，没有发布新Relay镜像。") if args.relay_version else ("Relay同步使用本候选 `"+manifest["relay"]+"`，以保持事件结构与Hub/Bridge一致。")}
+**保持草稿与预发布状态，尚未公开。** 本候选更新Hub、Bridge、Windows Tray及有变化的命令适配包，Relay使用 `{manifest['relay']}`。原公开RC4及其附件保持不可变，不推广稳定latest。
 
-## 修复范围
+## 本次行为
 
-- 保留已验证的OpenCode JSONC恢复与Windows等价路径钩子去重；Bridge支持version/--version。
-- Windows原生钩子固定执行边界并保留原始stdin；Codex的SessionEnd与Interrupt采用三秒，其他事件五秒，适配器冷启动预算两秒；更新命令后按宿主要求重新审核。
-- 普通运行记录在Tray显示为已读且静默，连续无正文活动合并展示，原始事件仍保留；完成、等待、错误等事件不合并。
-- 共享Codex目录遵循CODEX_HOME与CODEX_SQLITE_HOME；WSL管理共享钩子，Windows提示并保留，原生command_windows选择平台入口。
-- 离开检测提供5分钟、10分钟、自定义和关闭；自定义整数分钟在输入框失焦时校验保存。
-- Codex临时记忆整理在适配器转换阶段精确识别宿主专用目录，不依赖持久会话库，也不误伤同名普通项目。
-- 本机递交改为Linux/WSL Unix套接字与Windows命名管道，OpenCode和Tray健康查询同步切换；新Bridge不监听TCP，不提供TCP回退，避免镜像网络端口冲突。
-- Tray详情渲染Markdown，支持查看/复制原文；不自动加载图片，不执行HTML。
-- Hub各push渠道可配置body_format为preserve（默认）或plain_text；仅修改发送副本，原始正文及其他渠道不变。
+- Tray展开事件标题在前台完整可见连续1.5秒后标读；切后台、折叠、滚出或离开后重新计时。
+- 打开详情优先定位最近未读，支持下一条未读及回到最新；默认关键事件在Hub筛选后分页，普通运行记录不占页额，完整历史按需查看。
+- Antigravity App首次hook早于子会话身份落盘时，Bridge暂存并调用签名适配器核对身份；主会话按序转发，子会话不进入Hub。身份游标只在本机流转，不采集历史正文。
+- 正常Stop后台尚未空闲保持运行，明确错误/取消按原生原因处理；主会话后台收尾按同轮原生状态观察，不用超时猜完成。原生与观察终态按本机轮次去重。
+- Agent内已读同步不实施；保留AgentPulse已有跨客户端和离线已读。
 
-## 下载与安装
+## 附件与安装
 
-本页仅提供Linux两架构Bridge、Windows Tray便携包及SHA256SUMS。源码由对应GitHub标签归档提供；构建清单、签名仓库准备材料与详细证据只在CI Artifact。安装脚本统一从raw读取：
+用户附件仅两架构Linux Bridge、Windows便携ZIP和SHA256SUMS；源码由标签归档提供。构建清单、签名准备仓库及Hub内部构建保留在CI Artifact。草稿附件需有权限的账号下载，不能作为匿名默认安装目标。
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash
-```
+Linux安装脚本入口为 `https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh`。下载并核验预构建后，使用该raw安装入口显式指定 `--version {args.tag} --file /已下载文件 --sha256 对应摘要`；安装器不编译。停止Bridge前检查health的pending为0，pending包含等待身份确认的事件。Windows正常退出Tray，备份后替换EXE，保留tray.yaml、data、原来源标识和发布公钥。
 
-raw默认仍选择已公开RC3；RC4草稿不能匿名下载。草稿试用需下载Bridge并核验SHA256后，通过raw脚本的--version {args.tag} --file 文件 --sha256 摘要安装；已有安装停止前确认待发队列为空。
+Hub须使用由发布者附加同候选官方签名仓库后核验的成品 `{manifest['hub']}`；草稿创建不代表此镜像已发布。先更新匹配Hub/Bridge/Tray和适配包，再验收新查询与本机身份暂存能力。本次不更改Hub/Relay数据库结构或Tray缓存格式，不迁移、不清空旧数据、不合并/删除历史子会话。
 
-本机接入方式已改变：先检查旧healthz的pending为0、正常停止并备份配置；仅将原Bridge YAML的listen改为空或删除，保留source_id、公钥、令牌和其他私人设置。先使用同修订Hub签名仓库，再替换、同步适配包及OpenCode受管理配置（bridge_address），用新health命令检查IPC与队列。记忆过滤和插件IPC位于独立适配包，只换Bridge/Tray程序而仍取旧包不能完成修复。
+身份等待复用Bridge有界内存队列：进程退出会失去尚未交付的事件，与原内存暂存边界一致。长期无法确认身份时保留等待并报告pending_identity，不猜主身份。正式切换前备份配置、数据和旧产物；新适配包应在匹配Bridge已更新后启用。
 
-Windows退出后替换EXE、保留tray.yaml和data，并按上段修改data/bridge.yaml或指定的bridge_config；普通运行不会提醒。共享Codex目录以实际hook执行环境验证Windows/WSL，正常直接启动，无需包装；宿主信任由用户确认。
+## 验证边界
 
-Hub成品目标 `{manifest['hub']}` 须由发布者沿用原密钥签署同候选仓库并完成镜像核验后才可使用，创建草稿本身不代表镜像已发布。Relay保持RC3。正文配置示例：
+Antigravity App 2.32.1 / WSL Debian已取得原生浏览器子任务首次缺行、后续父子关系出现的证据；修复后的新子任务未进入隔离Hub，主会话完成。原生网页点击曾因宿主访问授权超时未完成，不将该步骤写为通过。App最终回答字段仍受宿主能力限制，不从历史补正文。
 
-```yaml
-body_format: plain_text
-```
-
-此次不清空或迁移数据，不自动部署服务、不改私人手机模板或盲目补发历史任务。实际另一主机的共享会话、原生事件和手机实收不由自动测试替代；原有computer use/RDP及主子/记忆完整矩阵仍按证据验收。
+自动测试、模拟数据和隔离服务分别记录，不替代手机实收、所有主机或全部Windows交互验收。草稿范围不包含新手机渠道、后台历史重放或宿主Agent自动升级。
 
 构建提交：{args.commit}
-[候选流水线](https://github.com/{args.repository}/actions/runs/{args.run_id})
+[候选构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
 """
     (assets / "trial-guide.md").write_text(notes, encoding="utf-8")
     maintenance = output / "maintenance"

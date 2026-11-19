@@ -46,6 +46,7 @@ class DraftTests(unittest.TestCase):
 
     def test_only_matching_rc_tag(self):
         module.validate_tag("v0.5.0-rc.1", "0.5.0")
+        module.validate_tag("v0.6.0-rc.1", "0.6.0")
         for tag in ("v0.5.0", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):
             with self.assertRaises(ValueError):
                 module.validate_tag(tag, "0.5.0")

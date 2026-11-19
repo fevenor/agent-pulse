@@ -1,6 +1,6 @@
 [package]
 name = "agent-pulse-tray"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "AgentPulse Windows 原生会话提醒客户端"
 publish = false

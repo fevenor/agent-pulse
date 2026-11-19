@@ -22,6 +22,7 @@ import (
 type item struct {
 	event   protocol.Event
 	payload []byte
+	turnID  string
 }
 
 type Bridge struct {
@@ -39,11 +40,15 @@ type Bridge struct {
 	cancelObservations context.CancelFunc
 	observations       map[string]*observation
 	observationWG      sync.WaitGroup
+	identities         map[string]*pendingIdentity
+	identityEvents     int
+	identityBytes      int
+	completedTurns     map[string]completedTurn
 }
 
 func New(c config.Bridge) *Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Bridge{config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1), collectorID: protocol.NewID(), observationContext: ctx, cancelObservations: cancel, observations: map[string]*observation{}}
+	return &Bridge{config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1), collectorID: protocol.NewID(), observationContext: ctx, cancelObservations: cancel, observations: map[string]*observation{}, identities: map[string]*pendingIdentity{}, completedTurns: map[string]completedTurn{}}
 }
 
 func (b *Bridge) Handler() http.Handler {
@@ -51,7 +56,7 @@ func (b *Bridge) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		transport.JSON(w, 200, map[string]any{"status": "ok", "pending": len(b.queue), "bytes": b.bytes, "rejected": b.rejected, "failed": b.failed, "last_failed_event_id": b.lastFailedID})
+		transport.JSON(w, 200, map[string]any{"status": "ok", "pending": len(b.queue) + b.identityEvents, "bytes": b.bytes + b.identityBytes, "pending_identity": b.identityEvents, "rejected": b.rejected, "failed": b.failed, "last_failed_event_id": b.lastFailedID})
 	})
 	mux.HandleFunc("POST /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
 		var input protocol.LocalEvent
@@ -74,7 +79,13 @@ func (b *Bridge) Handler() http.Handler {
 			transport.JSON(w, 202, protocol.Receipt{EventID: e.EventID, Accepted: "filtered"})
 			return
 		}
-		status, duplicate := b.enqueue(e)
+		var status int
+		var duplicate bool
+		if len(input.Identity) > 0 {
+			status, duplicate = b.enqueueIdentity(e, input.Identity, input.TurnID)
+		} else {
+			status, duplicate = b.enqueueTurn(e, input.TurnID)
+		}
 		if status == 409 {
 			transport.Error(w, status, "队列内已有相同 event_id 的不同内容")
 			return
@@ -103,18 +114,63 @@ func (b *Bridge) Handler() http.Handler {
 	return transport.Guard("", true, mux)
 }
 
-func (b *Bridge) enqueue(e protocol.Event) (int, bool) {
+func (b *Bridge) enqueue(e protocol.Event) (int, bool) { return b.enqueueTurn(e, "") }
+func (b *Bridge) enqueueTurn(e protocol.Event, turn string) (int, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.enqueueLocked(e)
+	if pending := b.identities[e.Agent+"\x00"+e.SessionID]; pending != nil {
+		// 后续缺少路径的hook也不能证明主身份，共用已登记的实际数据根继续等待。
+		return b.enqueueIdentityLocked(e, pending.cursor, turn)
+	}
+	return b.enqueueTurnLocked(e, turn)
+}
+
+type completedTurn struct {
+	turn string
+	at   time.Time
+}
+
+func (b *Bridge) enqueueTurnLocked(e protocol.Event, turn string) (int, bool) {
+	return b.enqueueTurnWithCollectorLocked(e, turn, b.collectorID)
+}
+func (b *Bridge) enqueueTurnWithCollectorLocked(e protocol.Event, turn, collector string) (int, bool) {
+	key := e.Agent + "\x00" + e.SessionID
+	if e.Agent != "antigravity" || turn == "" {
+		return b.enqueueWithCollectorLocked(e, collector)
+	}
+	if len(turn) > 256 {
+		return 409, false
+	}
+	if done, ok := b.completedTurns[key]; ok && done.turn == turn {
+		return 202, true
+	}
+	status, duplicate := b.enqueueWithCollectorLocked(e, collector)
+	if status == 202 && (e.Kind == "turn.completed" || e.Kind == "run.failed" || e.Kind == "run.interrupted") {
+		if len(b.completedTurns) >= 128 {
+			var oldest string
+			at := time.Now()
+			for id, item := range b.completedTurns {
+				if item.at.Before(at) {
+					oldest = id
+					at = item.at
+				}
+			}
+			delete(b.completedTurns, oldest)
+		}
+		b.completedTurns[key] = completedTurn{turn: turn, at: time.Now()}
+	}
+	return status, duplicate
 }
 
 func (b *Bridge) enqueueLocked(e protocol.Event) (int, bool) {
+	return b.enqueueWithCollectorLocked(e, b.collectorID)
+}
+func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector string) (int, bool) {
 	e.OccurredAt = e.OccurredAt.UTC()
 	if previous := b.byID[e.EventID]; previous != nil {
 		e.CollectorID = previous.event.CollectorID
 	} else {
-		e.CollectorID = b.collectorID
+		e.CollectorID = collector
 	}
 	payload, _ := json.Marshal(e)
 	if previous := b.byID[e.EventID]; previous != nil {
@@ -123,11 +179,17 @@ func (b *Bridge) enqueueLocked(e protocol.Event) (int, bool) {
 		}
 		return 409, false
 	}
-	if len(b.queue) >= b.config.QueueEvents || b.bytes+len(payload) > b.config.QueueBytes {
+	if len(b.queue)+b.identityEvents >= b.config.QueueEvents || b.bytes+b.identityBytes+len(payload) > b.config.QueueBytes {
 		b.rejected++
 		return 503, false
 	}
 	// 明确关闭会话后给最终记录一个短交付窗口，再回收未结束的观察进程；不使用任务空闲超时。
+	if e.Agent == "antigravity" {
+		if current := b.observations[e.Agent+"\x00"+e.SessionID]; current != nil && !current.done {
+			current.cancel()
+			current.done = true
+		}
+	}
 	if e.Kind == "session.closed" {
 		if current := b.observations[e.Agent+"\x00"+e.SessionID]; current != nil && !current.done {
 			time.AfterFunc(2*time.Second, current.cancel)
@@ -252,6 +314,9 @@ func (b *Bridge) presence(ctx context.Context) {
 }
 
 func Emit(ctx context.Context, address string, e protocol.Event) error {
+	return EmitWithIdentity(ctx, address, e, nil, "")
+}
+func EmitWithIdentity(ctx context.Context, address string, e protocol.Event, identity json.RawMessage, turn string) error {
 	client, err := localipc.Client(address, 200*time.Millisecond)
 	if err != nil {
 		return err
@@ -263,7 +328,7 @@ func Emit(ctx context.Context, address string, e protocol.Event) error {
 		e.OccurredAt = time.Now().UTC()
 	}
 	var receipt protocol.Receipt
-	status, err := transport.Request(ctx, client, localipc.BaseURL, "", http.MethodPost, "/api/v1/events", protocol.LocalEvent{Event: e, ProcessID: os.Getpid()}, &receipt)
+	status, err := transport.Request(ctx, client, localipc.BaseURL, "", http.MethodPost, "/api/v1/events", protocol.LocalEvent{Event: e, Identity: identity, TurnID: turn, ProcessID: os.Getpid()}, &receipt)
 	if err != nil {
 		return err
 	}

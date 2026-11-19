@@ -55,6 +55,9 @@ enum Command {
     Manage(Box<Session>, &'static str, serde_json::Value),
     Older,
     Latest,
+    NextUnread,
+    FocusedEvent(String),
+    ToggleActivity,
     Quit,
     #[cfg(feature = "dev-demo")]
     DemoAlert,
@@ -326,6 +329,13 @@ fn run() -> Result<(), String> {
         visible_elapsed: Default::default(),
         read_requested: Default::default(),
         history_more: false,
+        history_newer: false,
+        timeline_cursor: 0,
+        timeline_ready: false,
+        timeline_checked_event: String::new(),
+        show_activity: false,
+        focus_event: None,
+        unread_position: None,
         loading: false,
         latest_loading: false,
         new_events: 0,
@@ -410,7 +420,9 @@ fn run() -> Result<(), String> {
                                 .borrow_mut()
                                 .advance_read_visibility(Duration::from_millis(tick_ms))
                         } else {
-                            shared.borrow_mut().visible_events.clear();
+                            let mut data = shared.borrow_mut();
+                            data.visible_events.clear();
+                            data.visible_elapsed.clear();
                             Vec::new()
                         };
                     if !visible_reads.is_empty() {
@@ -439,12 +451,7 @@ fn run() -> Result<(), String> {
                         {
                             let mut data = shared.borrow_mut();
                             if data.view.state.snapshot.run_id != update.state.snapshot.run_id {
-                                data.generation += 1;
-                                data.history.clear();
-                                data.initialize_history_expansion();
-                                data.latest_loading = false;
-                                data.loading = false;
-                                data.new_events = 0;
+                                data.reset_timeline(None);
                             }
                             let current_unread: std::collections::BTreeSet<_> = update
                                 .state
@@ -460,6 +467,9 @@ fn run() -> Result<(), String> {
                                 .filter(|old| !current_unread.contains(&old.event_id))
                                 .map(|e| e.event_id)
                                 .collect();
+                            // 保存失败时重新允许可见阅读提交；成功后的本地待确认状态仍会覆盖未读。
+                            data.read_requested
+                                .retain(|id| !current_unread.contains(id));
                             // 已读只更新标记，不改变本次浏览的展开状态，避免正文跳动。
                             for event in &mut data.history {
                                 if newly_read.contains(&event.event_id) {
@@ -551,6 +561,7 @@ fn run() -> Result<(), String> {
                                 key,
                                 before,
                                 generation,
+                                checked_event,
                                 result,
                             } => {
                                 let mut data = shared.borrow_mut();
@@ -561,17 +572,28 @@ fn run() -> Result<(), String> {
                                 }
                                 data.loading = false;
                                 match result {
-                                    Ok(events) => {
-                                        data.history_more = events.len() == 30;
+                                    Ok(page) if page.run_id == data.view.state.snapshot.run_id => {
+                                        data.history_more = page.more;
                                         if before == 0 {
-                                            data.history = events;
+                                            data.history = page.events;
+                                            data.history_newer = page.newer;
+                                            data.timeline_cursor = page.cursor;
+                                            data.timeline_checked_event = checked_event;
+                                            data.timeline_ready = true;
                                             data.initialize_history_expansion();
                                         } else {
-                                            data.merge_latest(events);
+                                            data.merge_latest(page.events);
                                         }
                                         data.message.clear();
                                     }
-                                    Err(e) => data.message = e,
+                                    Ok(_) => {
+                                        data.message = "服务已重启，正在刷新时间线".into();
+                                        latest_retry = Instant::now() + Duration::from_secs(2);
+                                    }
+                                    Err(e) => {
+                                        data.message = e;
+                                        latest_retry = Instant::now() + Duration::from_secs(2);
+                                    }
                                 }
                                 drop(data);
                                 notify(detail, cx);
@@ -579,6 +601,7 @@ fn run() -> Result<(), String> {
                             Reply::Latest {
                                 key,
                                 generation,
+                                checked_event,
                                 run_id,
                                 result,
                             } => {
@@ -591,19 +614,30 @@ fn run() -> Result<(), String> {
                                 if !valid {
                                     continue;
                                 }
-                                let follows =
-                                    if result.as_ref().is_ok_and(|events| !events.is_empty()) {
-                                        detail
-                                            .update(cx, |s, _, _| s.prepare_latest_insertion())
-                                            .unwrap_or(false)
-                                    } else {
-                                        false
-                                    };
+                                let follows = if !shared.borrow().history_newer
+                                    && result.as_ref().is_ok_and(|page| {
+                                        page.run_id == run_id && !page.events.is_empty()
+                                    }) {
+                                    detail
+                                        .update(cx, |s, _, _| s.prepare_latest_insertion())
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                };
                                 let mut data = shared.borrow_mut();
                                 data.latest_loading = false;
                                 match result {
-                                    Ok(events) if !events.is_empty() => {
-                                        let count = data.merge_latest(events);
+                                    Ok(page) if page.run_id == run_id => {
+                                        data.timeline_cursor = page.cursor;
+                                        if !page.more {
+                                            data.timeline_checked_event = checked_event;
+                                        }
+                                        // 历史定位与最新扫描分开；不把未加载的中间区域伪装成连续历史。
+                                        let count = if data.history_newer {
+                                            page.events.len()
+                                        } else {
+                                            data.merge_latest(page.events)
+                                        };
                                         if follows {
                                             data.new_events = 0;
                                         } else {
@@ -646,25 +680,22 @@ fn run() -> Result<(), String> {
                             && !data.latest_loading
                             && data.view.status.starts_with("已")
                             && let (Some(session), Some(requests)) = (data.selected(), &requests)
-                            && data
-                                .history
-                                .first()
-                                .is_none_or(|e| e.event_id != session.last_event_id)
+                            && (!data.timeline_ready
+                                || data.timeline_checked_event != session.last_event_id)
                         {
-                            if data.history.is_empty() {
-                                data.loading = true;
-                                let _ = requests.send(Request::History {
-                                    key: session.key(),
-                                    before: 0,
-                                    generation: data.generation,
-                                });
+                            if !data.timeline_ready {
+                                if let Some(request) = data.history_request(0) {
+                                    data.loading = true;
+                                    let _ = requests.send(request);
+                                }
                             } else {
-                                let after = data.history.first().map_or(0, |e| e.position);
                                 data.latest_loading = true;
                                 let _ = requests.send(Request::Latest {
                                     key: session.key(),
-                                    after,
+                                    after: data.timeline_cursor,
+                                    all: data.show_activity,
                                     generation: data.generation,
+                                    checked_event: session.last_event_id,
                                     run_id: data.view.state.snapshot.run_id.clone(),
                                 });
                             }
@@ -865,34 +896,16 @@ fn run() -> Result<(), String> {
                                 let _ = list.update(cx, |_, w, _| platform::hide(w));
                                 let mut data = shared.borrow_mut();
                                 data.selected = Some(key.clone());
-                                data.history.clear();
-                                data.expanded_events.clear();
-                                data.visible_events.clear();
-                                data.visible_elapsed.clear();
-                                data.read_requested.clear();
-                                data.message.clear();
-                                data.generation += 1;
+                                data.show_activity = false;
+                                let target = data.unread_target(false);
+                                data.reset_timeline(target);
                                 data.loading = !demo_mode;
-                                data.history_more = false;
-                                data.latest_loading = false;
-                                data.new_events = 0;
-                                if demo_mode {
-                                    data.history = data
-                                        .view
-                                        .state
-                                        .snapshot
-                                        .unread
-                                        .iter()
-                                        .filter(|e| e.key() == key)
-                                        .cloned()
-                                        .collect();
-                                    data.initialize_history_expansion();
-                                } else if let Some(requests) = &requests {
-                                    let _ = requests.send(Request::History {
-                                        key,
-                                        before: 0,
-                                        generation: data.generation,
-                                    });
+                                if demo_mode || !data.view.status.starts_with("已") {
+                                    data.load_cached_unread();
+                                } else if let Some(requests) = &requests
+                                    && let Some(request) = data.history_request(0)
+                                {
+                                    let _ = requests.send(request);
                                 }
                                 drop(data);
                                 let _ = detail.update(cx, |s, w, cx| {
@@ -933,7 +946,10 @@ fn run() -> Result<(), String> {
                             }
                             Command::ToggleEvent(id) => {
                                 let mut data = shared.borrow_mut();
-                                if !data.expanded_events.remove(&id) {
+                                if data.expanded_events.remove(&id) {
+                                    data.visible_events.remove(&id);
+                                    data.visible_elapsed.remove(&id);
+                                } else {
                                     data.expanded_events.insert(id);
                                 }
                                 drop(data);
@@ -942,7 +958,69 @@ fn run() -> Result<(), String> {
                             Command::ReportVisible(id) => {
                                 shared.borrow_mut().visible_events.insert(id);
                             }
+                            Command::FocusedEvent(id) => {
+                                let mut data = shared.borrow_mut();
+                                if data.focus_event.as_ref() == Some(&id) {
+                                    data.focus_event = None;
+                                }
+                            }
+                            Command::NextUnread => {
+                                let mut data = shared.borrow_mut();
+                                if let Some(event) = data.unread_target(true) {
+                                    if data.history.iter().any(|e| e.event_id == event.event_id) {
+                                        data.focus_event = Some(event.event_id.clone());
+                                        data.unread_position = Some(event.position);
+                                        data.expanded_events.insert(event.event_id);
+                                        data.visible_events.clear();
+                                        data.visible_elapsed.clear();
+                                    } else {
+                                        data.reset_timeline(Some(event));
+                                        if let (Some(request), Some(requests)) =
+                                            (data.history_request(0), &requests)
+                                        {
+                                            data.loading = true;
+                                            let _ = requests.send(request);
+                                        }
+                                    }
+                                }
+                                drop(data);
+                                notify(detail, cx);
+                            }
+                            Command::ToggleActivity => {
+                                let mut data = shared.borrow_mut();
+                                data.show_activity = !data.show_activity;
+                                let target = data.unread_target(false);
+                                data.reset_timeline(target);
+                                if data.demo || !data.view.status.starts_with("已") {
+                                    data.load_cached_unread();
+                                }
+                                if let (Some(request), Some(requests)) =
+                                    (data.history_request(0), &requests)
+                                {
+                                    data.loading = true;
+                                    let _ = requests.send(request);
+                                }
+                                drop(data);
+                                let _ = detail.update(cx, |s, _, cx| {
+                                    s.reset_timeline_scroll();
+                                    cx.notify();
+                                });
+                            }
                             Command::Latest => {
+                                let mut data = shared.borrow_mut();
+                                if data.history_newer {
+                                    data.reset_timeline(None);
+                                    if data.demo || !data.view.status.starts_with("已") {
+                                        data.load_cached_unread();
+                                    }
+                                    if let (Some(request), Some(requests)) =
+                                        (data.history_request(0), &requests)
+                                    {
+                                        data.loading = true;
+                                        let _ = requests.send(request);
+                                    }
+                                }
+                                drop(data);
                                 let _ = detail.update(cx, |s, _, cx| {
                                     s.back_to_latest();
                                     cx.notify();
@@ -951,14 +1029,11 @@ fn run() -> Result<(), String> {
                             Command::Older => {
                                 let mut data = shared.borrow_mut();
                                 if !data.loading
-                                    && let (Some(key), Some(event), Some(requests)) =
-                                        (data.selected.clone(), data.history.last(), &requests)
+                                    && let (Some(event), Some(requests)) =
+                                        (data.history.last(), &requests)
+                                    && let Some(request) = data.history_request(event.position)
                                 {
-                                    let _ = requests.send(Request::History {
-                                        key,
-                                        before: event.position,
-                                        generation: data.generation,
-                                    });
+                                    let _ = requests.send(request);
                                     data.loading = true;
                                 }
                                 drop(data);

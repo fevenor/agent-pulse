@@ -112,10 +112,10 @@ impl Event {
         )
     }
     pub fn ordinary_running(&self) -> bool {
-        matches!(
-            self.kind.as_str(),
-            "activity.observed" | "session.started" | "session.resumed"
-        ) && self.body.trim().is_empty()
+        self.body.trim().is_empty()
+            && (matches!(self.kind.as_str(), "session.started" | "session.resumed")
+                || (self.kind == "activity.observed"
+                    && self.title == format!("{} · 正在运行", self.agent)))
     }
     pub fn key(&self) -> SessionKey {
         SessionKey {
@@ -569,6 +569,8 @@ mod activity_tests {
     fn running_never_notifies_and_grouping_stops_at_attention() {
         let running = Event {
             kind: "activity.observed".into(),
+            title: "test · 正在运行".into(),
+            agent: "test".into(),
             valid: true,
             event_id: "a".into(),
             ..Default::default()

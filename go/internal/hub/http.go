@@ -145,6 +145,29 @@ func (h *Hub) Handler(token string) http.Handler {
 		}
 		includeArchived := r.URL.Query().Get("include_archived") == "true"
 		key := protocol.SessionKey{SourceID: r.URL.Query().Get("source_id"), Agent: r.URL.Query().Get("agent"), SessionID: r.URL.Query().Get("session_id")}
+		view := r.URL.Query().Get("view")
+		anchor := r.URL.Query().Get("anchor")
+		if view != "" || anchor != "" {
+			if (view != "important" && view != "all") || key.SourceID == "" || key.Agent == "" || key.SessionID == "" || includeArchived || len(anchor) > 256 || (anchor != "" && (hasAfter || before != 0)) {
+				transport.Error(w, 400, "时间线需要完整会话、view=important/all及有效的单一分页位置")
+				return
+			}
+			query := TimelineQuery{Before: before, Anchor: anchor, Important: view == "important", Limit: limit}
+			if hasAfter {
+				query.After = &after
+			}
+			page, err := h.SessionTimeline(r.Context(), key, query)
+			if errors.Is(err, sql.ErrNoRows) {
+				transport.Error(w, 404, "定位事件已不可用，请刷新后重试")
+				return
+			}
+			if err != nil {
+				transport.Error(w, 503, "时间线读取失败")
+				return
+			}
+			transport.JSON(w, 200, page)
+			return
+		}
 		var items []protocol.EventView
 		if key != (protocol.SessionKey{}) {
 			if key.SourceID == "" || key.Agent == "" || key.SessionID == "" {

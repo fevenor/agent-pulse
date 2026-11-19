@@ -30,8 +30,11 @@ func (b *Bridge) registerObservation(req protocol.LocalObservation) error {
 	if b.observationContext.Err() != nil {
 		return errors.New("Bridge正在停止")
 	}
+	if done, ok := b.completedTurns[key]; ok && done.turn == req.TurnID {
+		return nil
+	}
 	if previous := b.observations[key]; previous != nil {
-		if previous.turn == req.TurnID {
+		if previous.turn == req.TurnID && (!previous.done || req.Adapter != "antigravity") {
 			return nil
 		}
 		previous.cancel()
@@ -55,13 +58,18 @@ func (b *Bridge) registerObservation(req protocol.LocalObservation) error {
 	b.observationWG.Add(1)
 	go func() {
 		defer b.observationWG.Done()
-		err := adapters.Observe(ctx, b.config, req.Adapter, req.Cursor, func(e protocol.Event) error {
+		err := adapters.Observe(ctx, b.config, req.Adapter, req.Cursor, func(e protocol.LocalEvent) error {
 			b.mu.Lock()
 			defer b.mu.Unlock()
-			if b.observations[key] != current || e.SessionID != req.SessionID {
+			if b.observations[key] != current || e.SessionID != req.SessionID || ctx.Err() != nil {
 				return context.Canceled
 			}
-			status, _ := b.enqueueLocked(e)
+			var status int
+			if pending := b.identities[e.Agent+"\x00"+e.SessionID]; pending != nil {
+				status, _ = b.enqueueIdentityLocked(e.Event, pending.cursor, e.TurnID)
+			} else {
+				status, _ = b.enqueueTurnLocked(e.Event, e.TurnID)
+			}
 			if status != 202 {
 				return errors.New("本轮终态未进入队列")
 			}

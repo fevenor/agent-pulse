@@ -17,9 +17,11 @@ const MaxHookBytes = 8 << 20
 
 // AdapterResult 仅在本机适配包与 dispatch 间使用；Reply 必须是宿主的被动回复。
 type AdapterResult struct {
-	Event       *Event         `json:"event,omitempty"`
-	Observation *Observation   `json:"observation,omitempty"`
-	Reply       map[string]any `json:"reply"`
+	Event       *Event          `json:"event,omitempty"`
+	TurnID      string          `json:"turn_id,omitempty"`
+	Identity    json.RawMessage `json:"identity,omitempty"`
+	Observation *Observation    `json:"observation,omitempty"`
+	Reply       map[string]any  `json:"reply"`
 }
 
 // Observation 是当前主会话的本轮终态观察登记；游标只在本机传递，不进入 Hub。
@@ -55,7 +57,9 @@ type Event struct {
 // LocalEvent 只在本机 Bridge 入口使用，进程信息不会转发到 Hub/Relay 或出现在界面。
 type LocalEvent struct {
 	Event
-	ProcessID int `json:"process_id,omitempty"`
+	Identity  json.RawMessage `json:"identity,omitempty"`
+	TurnID    string          `json:"turn_id,omitempty"`
+	ProcessID int             `json:"process_id,omitempty"`
 }
 
 func NewID() string {

@@ -29,6 +29,13 @@ pub struct Shared {
     pub visible_elapsed: std::collections::BTreeMap<String, std::time::Duration>,
     pub read_requested: BTreeSet<String>,
     pub history_more: bool,
+    pub history_newer: bool,
+    pub timeline_cursor: i64,
+    pub timeline_ready: bool,
+    pub timeline_checked_event: String,
+    pub show_activity: bool,
+    pub focus_event: Option<String>,
+    pub unread_position: Option<i64>,
     pub loading: bool,
     pub latest_loading: bool,
     pub new_events: usize,
@@ -77,6 +84,63 @@ impl Shared {
                 .then_with(|| a.key().cmp(&b.key()))
         });
         rows
+    }
+    pub fn unread_target(&self, next: bool) -> Option<Event> {
+        next_unread(
+            self.view.state.unread(),
+            self.selected.as_ref(),
+            if next { self.unread_position } else { None },
+        )
+    }
+    pub fn reset_timeline(&mut self, target: Option<Event>) {
+        self.generation += 1;
+        self.history.clear();
+        self.initialize_history_expansion();
+        self.history_more = false;
+        self.history_newer = false;
+        self.timeline_cursor = 0;
+        self.timeline_ready = false;
+        self.timeline_checked_event.clear();
+        self.loading = false;
+        self.latest_loading = false;
+        self.new_events = 0;
+        self.message.clear();
+        self.focus_event = target.as_ref().map(|e| e.event_id.clone());
+        self.unread_position = target.map(|e| e.position);
+    }
+    pub fn load_cached_unread(&mut self) {
+        self.history = self
+            .view
+            .state
+            .snapshot
+            .unread
+            .iter()
+            .filter(|e| {
+                Some(e.key()) == self.selected && (self.show_activity || !e.ordinary_running())
+            })
+            .cloned()
+            .collect();
+        self.history.sort_by_key(|e| std::cmp::Reverse(e.position));
+        self.initialize_history_expansion();
+        self.loading = false;
+        if !self.demo {
+            self.message = "当前显示本机未读缓存；联网后核对完整历史".into();
+        }
+    }
+    pub fn history_request(&self, before: i64) -> Option<agent_pulse_tray::sessions::Request> {
+        let session = self.selected()?;
+        Some(agent_pulse_tray::sessions::Request::History {
+            key: session.key(),
+            before,
+            anchor: if before == 0 {
+                self.focus_event.clone()
+            } else {
+                None
+            },
+            all: self.show_activity,
+            generation: self.generation,
+            checked_event: session.last_event_id,
+        })
     }
     pub fn initialize_history_expansion(&mut self) {
         self.expanded_events.clear();
@@ -155,6 +219,24 @@ impl Shared {
             .cloned()
     }
 }
+fn next_unread(
+    events: Vec<Event>,
+    selected: Option<&SessionKey>,
+    before: Option<i64>,
+) -> Option<Event> {
+    let mut events: Vec<_> = events
+        .into_iter()
+        .filter(|e| Some(&e.key()) == selected)
+        .collect();
+    events.sort_by_key(|e| std::cmp::Reverse(e.position));
+    if let Some(position) = before
+        && let Some(event) = events.iter().find(|e| e.position < position)
+    {
+        return Some(event.clone());
+    }
+    events.into_iter().next()
+}
+
 fn merge_timeline(
     history: &mut Vec<Event>,
     expanded: &mut BTreeSet<String>,
@@ -177,6 +259,7 @@ fn merge_timeline(
     history.sort_by_key(|e| std::cmp::Reverse(e.position));
     if count > 0
         && let Some(event) = history.first()
+        && !event.ordinary_running()
     {
         expanded.insert(event.event_id.clone());
     }
@@ -190,15 +273,21 @@ fn advance_visible_reads(
     requested: &mut BTreeSet<String>,
     elapsed: std::time::Duration,
 ) -> Vec<String> {
-    elapsed_by_id.retain(|id, _| unread.contains(id));
+    elapsed_by_id.retain(|id, _| unread.contains(id) && visible.contains(id));
     let mut ready = Vec::new();
     for id in visible {
         if !unread.contains(&id) || requested.contains(&id) {
             continue;
         }
-        let accumulated = elapsed_by_id.entry(id.clone()).or_default();
+        let accumulated = match elapsed_by_id.entry(id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(std::time::Duration::ZERO);
+                continue;
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        };
         *accumulated += elapsed;
-        if *accumulated >= std::time::Duration::from_secs(3) {
+        if *accumulated >= std::time::Duration::from_millis(1500) {
             requested.insert(id.clone());
             ready.push(id);
         }
@@ -226,6 +315,7 @@ pub struct Surface {
     detail_scroll: ScrollHandle,
     pending_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     pending_latest: bool,
+    follow_latest: bool,
     away_input: Entity<InputState>,
     away_custom: bool,
     away_error: String,
@@ -300,18 +390,21 @@ impl Surface {
         self.detail_scroll.set_offset(point(px(0.), px(0.)));
         self.pending_anchor.borrow_mut().take();
         self.pending_latest = false;
+        self.follow_latest = true;
         self.shared.borrow_mut().new_events = 0;
     }
     pub fn back_to_latest(&mut self) {
         self.pending_anchor.borrow_mut().take();
         self.pending_latest = true;
+        self.follow_latest = true;
         self.shared.borrow_mut().new_events = 0;
     }
     // 直接记录当前视口中的事件与相对位置，插入变高正文也不让历史阅读跳动。
     pub fn prepare_latest_insertion(&mut self) -> bool {
         let (index, within) = self.detail_scroll.logical_scroll_top();
-        let follow = self.detail_scroll.offset().y >= px(-4.)
-            || (index == 0 || (index == 1 && within >= px(-4.)));
+        let follow = self.follow_latest
+            && (self.detail_scroll.offset().y >= px(-4.)
+                || (index == 0 || (index == 1 && within >= px(-4.))));
         if follow {
             self.back_to_latest();
         } else {
@@ -416,6 +509,7 @@ impl Surface {
             detail_scroll: ScrollHandle::new(),
             pending_anchor: Rc::default(),
             pending_latest: false,
+            follow_latest: true,
         }
     }
 }
@@ -1129,7 +1223,7 @@ impl Render for Surface {
             if expanded {
                 let tx = sender.clone();
                 let id = event.event_id.clone();
-                // 每次绘制均报告当前可见事件，由主循环累计前台可见时间。
+                // 标题完整可见才报告，避免边缘一闪而过也累计阅读时间。
                 let visible_title = canvas(
                     |_, _, _| (),
                     move |bounds, _, w, _| {
@@ -1137,7 +1231,7 @@ impl Render for Surface {
                         if !unread
                             || !w.is_window_active()
                             || bounds.is_empty()
-                            || bounds.intersect(&mask).is_empty()
+                            || bounds.intersect(&mask) != bounds
                         {
                             return;
                         }
@@ -1239,12 +1333,35 @@ impl Render for Surface {
             entries.push(entry);
         }
         if data.history.is_empty() && !data.loading {
-            body = body.child("暂无已采集事件");
+            body = body.child(if data.show_activity {
+                "暂无已采集事件"
+            } else {
+                "暂无关键事件；运行状态显示在上方"
+            });
         }
         let older = sender.clone();
+        let unread_next = sender.clone();
+        let activity = sender.clone();
+        let unread_count = data
+            .view
+            .state
+            .unread()
+            .iter()
+            .filter(|e| e.key() == key)
+            .count();
         let latest = sender.clone();
         let (top_index, top_within) = self.detail_scroll.logical_scroll_top();
         let below_latest = top_index > 1 || (top_index == 1 && top_within < px(-4.));
+        if let Some(id) = &data.focus_event
+            && self.timeline_ids.contains(id)
+        {
+            self.pending_latest = false;
+            self.follow_latest = false;
+            *self.pending_anchor.borrow_mut() = Some((id.clone(), px(0.)));
+            let id = id.clone();
+            let tx = sender.clone();
+            let _ = tx.try_send(Command::FocusedEvent(id));
+        }
         let anchor = self.pending_anchor.clone();
         let scroll = self.detail_scroll.clone();
         let anchor_index = anchor
@@ -1284,23 +1401,57 @@ impl Render for Surface {
             .flex_wrap()
             .gap_2()
             .justify_between()
-            .child(format!("已加载 {} 条 · 最新在上", data.history.len()))
-            .when(below_latest || data.new_events > 0, |d| {
+            .child(format!(
+                "{} · 已加载 {} 条",
+                if data.show_activity {
+                    "完整活动"
+                } else {
+                    "关键事件"
+                },
+                data.history.len()
+            ))
+            .child(
+                button(
+                    "timeline-view",
+                    if data.show_activity {
+                        "仅看关键事件"
+                    } else {
+                        "查看完整活动"
+                    },
+                    t,
+                )
+                .on_click(move |_, _, _| {
+                    let _ = activity.try_send(Command::ToggleActivity);
+                }),
+            )
+            .when(unread_count > 0, |d| {
                 d.child(
-                    button(
-                        "back-latest",
-                        if data.new_events > 0 {
-                            format!("{} 条新事件 · 回到最新", data.new_events)
-                        } else {
-                            "回到最新".into()
+                    button("next-unread", format!("下一条未读（{unread_count}）"), t).on_click(
+                        move |_, _, _| {
+                            let _ = unread_next.try_send(Command::NextUnread);
                         },
-                        t,
-                    )
-                    .on_click(move |_, _, _| {
-                        let _ = latest.try_send(Command::Latest);
-                    }),
+                    ),
                 )
             })
+            .when(
+                below_latest || data.new_events > 0 || data.history_newer,
+                |d| {
+                    d.child(
+                        button(
+                            "back-latest",
+                            if data.new_events > 0 {
+                                format!("{} 条新事件 · 回到最新", data.new_events)
+                            } else {
+                                "回到最新".into()
+                            },
+                            t,
+                        )
+                        .on_click(move |_, _, _| {
+                            let _ = latest.try_send(Command::Latest);
+                        }),
+                    )
+                },
+            )
             .when(data.history_more && !data.loading, |d| {
                 d.child(button("older", "加载更早", t).on_click(move |_, _, _| {
                     let _ = older.try_send(Command::Older);
@@ -1333,7 +1484,7 @@ impl Render for Surface {
 
 #[cfg(test)]
 mod timeline_tests {
-    use super::{Shared, advance_visible_reads, merge_timeline};
+    use super::{Shared, advance_visible_reads, merge_timeline, next_unread};
     use agent_pulse_tray::model::Event;
     use std::collections::BTreeSet;
 
@@ -1394,7 +1545,48 @@ mod timeline_tests {
     }
 
     #[test]
-    fn visible_unread_time_accumulates_only_for_reported_events() {
+    fn unread_navigation_uses_session_and_persistent_position() {
+        let older = Event {
+            position: 5,
+            event_id: "old".into(),
+            session_id: "main".into(),
+            ..Default::default()
+        };
+        let newer = Event {
+            position: 800,
+            event_id: "new".into(),
+            ..older.clone()
+        };
+        let other = Event {
+            position: 900,
+            session_id: "other".into(),
+            ..older.clone()
+        };
+        let key = older.key();
+        let events = vec![older, other, newer];
+        assert_eq!(
+            next_unread(events.clone(), Some(&key), None)
+                .unwrap()
+                .event_id,
+            "new"
+        );
+        assert_eq!(
+            next_unread(events.clone(), Some(&key), Some(800))
+                .unwrap()
+                .event_id,
+            "old"
+        );
+        assert_eq!(
+            next_unread(events.clone(), Some(&key), Some(5))
+                .unwrap()
+                .event_id,
+            "new"
+        );
+        assert!(next_unread(events, None, None).is_none());
+    }
+
+    #[test]
+    fn visible_unread_requires_continuous_one_and_half_seconds() {
         let unread = BTreeSet::from(["u".to_string()]);
         let mut elapsed = std::collections::BTreeMap::new();
         let mut requested = BTreeSet::new();
@@ -1410,8 +1602,38 @@ mod timeline_tests {
             .is_empty()
         );
         assert!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                std::time::Duration::from_millis(1000)
+            )
+            .is_empty()
+        );
+        assert!(
             advance_visible_reads(BTreeSet::new(), &unread, &mut elapsed, &mut requested, tick,)
                 .is_empty()
+        );
+        assert!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                tick
+            )
+            .is_empty()
+        );
+        assert!(
+            advance_visible_reads(
+                BTreeSet::from(["u".to_string()]),
+                &unread,
+                &mut elapsed,
+                &mut requested,
+                std::time::Duration::from_millis(1499)
+            )
+            .is_empty()
         );
         assert_eq!(
             advance_visible_reads(
@@ -1419,7 +1641,7 @@ mod timeline_tests {
                 &unread,
                 &mut elapsed,
                 &mut requested,
-                tick,
+                std::time::Duration::from_millis(1),
             ),
             vec!["u".to_string()],
         );

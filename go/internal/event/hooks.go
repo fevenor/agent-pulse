@@ -54,6 +54,10 @@ type Hook struct {
 }
 
 func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.Event, error) {
+	return convert(agent, source, hook, raw, now, nil)
+}
+
+func convert(agent, source, hook string, raw []byte, now time.Time, diagnostic *AntigravityDiagnostic) (*protocol.Event, error) {
 	var h Hook
 	if len(raw) > protocol.MaxHookBytes || json.Unmarshal(raw, &h) != nil {
 		return nil, errors.New("hook JSON 无效")
@@ -166,25 +170,7 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 		case "PostToolUse":
 			kind = "activity.observed"
 		case "Stop":
-			switch h.Termination {
-			case "model_stop":
-				kind = "turn.completed"
-			case "NO_TOOL_CALL":
-				// agy 1.5.3 ACP 的真实终止值；仅完全空闲时确认完成。
-				kind = "observation.lost"
-				if h.FullyIdle != nil && *h.FullyIdle {
-					kind = "turn.completed"
-				}
-			case "error", "max_steps_exceeded":
-				kind = "run.failed"
-			case "user_cancelled", "interrupted":
-				kind = "run.interrupted"
-			default:
-				kind = "observation.lost"
-			}
-			if kind == "turn.completed" && h.FullyIdle != nil && !*h.FullyIdle {
-				kind = "activity.observed"
-			}
+			kind = antigravityStopKind(h.Termination, h.FullyIdle)
 		}
 	default:
 		return nil, errors.New("不支持的来源")
@@ -213,11 +199,14 @@ func Convert(agent, source, hook string, raw []byte, now time.Time) (*protocol.E
 	case "qoderclicn":
 		e.SessionTitle = qoderSessionTitle(h.SessionID, h.CWD, h.Transcript)
 	case "antigravity":
-		name, internal := antigravityMetadataAt(h.SessionID, h.TranscriptCamel)
-		if internal {
+		metadata := inspectAntigravityMetadata(h.SessionID, h.TranscriptCamel)
+		if diagnostic != nil {
+			diagnostic.Metadata = &metadata
+		}
+		if metadata.Identity == "child" {
 			return nil, nil
 		}
-		e.SessionTitle = name
+		e.SessionTitle = metadata.Title
 	}
 	// 仅采集本事件的最终回答或提问字段，不读思考、用户提示词、历史正文或任意工具参数。
 	{
@@ -318,5 +307,25 @@ func title(kind string) string {
 		return "运行状态待确认"
 	default:
 		return "正在运行"
+	}
+}
+
+// App与CLI的停止名称不同；正常停止仍须等待后台任务空闲，错误和取消不被空闲标志吞掉。
+func antigravityStopKind(reason string, fullyIdle *bool) string {
+	switch reason {
+	case "model_stop", "NO_TOOL_CALL":
+		if fullyIdle != nil && !*fullyIdle {
+			return "activity.observed"
+		}
+		if fullyIdle == nil && reason == "NO_TOOL_CALL" {
+			return "observation.lost"
+		}
+		return "turn.completed"
+	case "error", "max_steps_exceeded", "ERROR", "MAX_INVOCATIONS", "MAX_FORCED_INVOCATIONS", "MAX_TOKEN_BUDGET_EXCEEDED":
+		return "run.failed"
+	case "user_cancelled", "interrupted", "USER_CANCELED":
+		return "run.interrupted"
+	default:
+		return "observation.lost"
 	}
 }
