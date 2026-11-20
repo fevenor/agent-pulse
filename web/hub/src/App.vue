@@ -35,7 +35,7 @@ async function refresh(){
  try{
   if(tab.value==="适配器")hosts.value=await api<Host[]>("adapters/status");
   if(tab.value==="推送记录")pushes.value=await api<Push[]>("push-jobs");
-  if(tab.value==="设备")hostList.value=await api<HostInfo[]>("hosts");
+  if(tab.value==="主机")hostList.value=await api<HostInfo[]>("hosts");
   if(tab.value==="历史事件")await loadHistory();
   activeTab=tab.value;error.value="";changedAt.value=new Date().toISOString();
  }catch(reason){error.value=reason instanceof Error?reason.message:"页面读取失败";}
@@ -55,7 +55,7 @@ function connect(){
   const message=await decodeSync(event.data);
   if(message.type==="sync"){
    const next=applyDelta(snapshot.value,message.payload as Delta);await fillBodies(next.unread,snapshot.value.unread);
-   if(current!==socket)return;snapshot.value=next;changedAt.value=new Date().toISOString();if(tab.value==="设备"||tab.value==="历史事件")void refresh();current.send(JSON.stringify({type:"ack",payload:{run_id:next.run_id,version:next.version}}));
+   if(current!==socket)return;snapshot.value=next;changedAt.value=new Date().toISOString();if(tab.value==="主机"||tab.value==="历史事件")void refresh();current.send(JSON.stringify({type:"ack",payload:{run_id:next.run_id,version:next.version}}));
   }else if(message.type==="checkpoint"){
    const value=message.payload as {run_id:string;version:number;admin_version?:number;probe:string};
    if(value.run_id!==snapshot.value.run_id||value.version!==snapshot.value.version)throw new Error("同步确认不一致");
