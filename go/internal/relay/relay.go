@@ -287,7 +287,7 @@ func (r *Relay) flushOne(ctx context.Context) bool {
 }
 
 func (r *Relay) connectHub(w http.ResponseWriter, req *http.Request) {
-	u := websocket.Upgrader{CheckOrigin: transport.OriginOK}
+	u := websocket.Upgrader{CheckOrigin: transport.OriginOK, HandshakeTimeout: 5 * time.Second, Subprotocols: []string{"agent-pulse"}}
 	ws, err := u.Upgrade(w, req, nil)
 	if err != nil {
 		return
@@ -340,7 +340,7 @@ func (r *Relay) connectHub(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Relay) connectClient(w http.ResponseWriter, req *http.Request) {
-	u := websocket.Upgrader{CheckOrigin: transport.OriginOK}
+	u := websocket.Upgrader{CheckOrigin: transport.OriginOK, HandshakeTimeout: 5 * time.Second, Subprotocols: []string{"agent-pulse"}}
 	ws, err := u.Upgrade(w, req, nil)
 	if err != nil {
 		return
