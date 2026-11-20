@@ -27,20 +27,23 @@ type connection struct {
 	device protocol.Device
 	ws     stateSocket
 	wake   chan struct{}
+	admin  bool
 }
 
 type Hub struct {
-	config      config.Hub
-	mu          sync.Mutex
-	db          *sql.DB
-	runID       string
-	version     uint64
-	ttl         time.Duration
-	channels    []config.Channel
-	connections map[*connection]bool
-	devices     map[string]*connection
-	closed      bool
-	pushAfter   time.Time
+	config       config.Hub
+	mu           sync.Mutex
+	db           *sql.DB
+	runID        string
+	version      uint64
+	syncState    syncState
+	adminVersion uint64
+	ttl          time.Duration
+	channels     []config.Channel
+	connections  map[*connection]bool
+	devices      map[string]*connection
+	closed       bool
+	pushAfter    time.Time
 }
 
 func Open(c config.Hub) (*Hub, error) {
@@ -167,6 +170,9 @@ func timestamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.
 func (h *Hub) changedLocked() {
 	h.version++
 	for c := range h.connections {
+		if c.device.Role == "bridge" {
+			continue
+		}
 		select {
 		case c.wake <- struct{}{}:
 		default:
@@ -337,6 +343,14 @@ func (h *Hub) MarkRead(ctx context.Context, ids []string) error {
 func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.snapshotLocked(ctx)
+}
+
+func (h *Hub) snapshotLocked(ctx context.Context) (protocol.Snapshot, error) {
+	return h.snapshotModeLocked(ctx, false)
+}
+
+func (h *Hub) snapshotModeLocked(ctx context.Context, metadata bool) (protocol.Snapshot, error) {
 	s := protocol.Snapshot{Version: h.versionLocked(), Sessions: []protocol.Session{}, Unread: []protocol.EventView{}, Devices: []protocol.Device{}}
 	s.Sources = map[string]protocol.SourceLabel{}
 	for id, label := range h.config.Sources {
@@ -426,7 +440,7 @@ func (h *Hub) Snapshot(ctx context.Context) (protocol.Snapshot, error) {
 			return s, err
 		}
 	}
-	s.Unread, err = h.eventsLocked(ctx, `WHERE e.notify=1 AND r.event_id IS NULL ORDER BY e.position`, nil, false)
+	s.Unread, err = h.eventsModeLocked(ctx, `WHERE e.notify=1 AND r.event_id IS NULL ORDER BY e.position`, nil, false, metadata)
 	if err != nil {
 		return s, err
 	}
@@ -456,6 +470,10 @@ func (h *Hub) HistoryWithArchived(ctx context.Context, before int64, limit int, 
 }
 
 func (h *Hub) eventsLocked(ctx context.Context, tail string, args []any, includeArchived bool) ([]protocol.EventView, error) {
+	return h.eventsModeLocked(ctx, tail, args, includeArchived, false)
+}
+
+func (h *Hub) eventsModeLocked(ctx context.Context, tail string, args []any, includeArchived, metadata bool) ([]protocol.EventView, error) {
 	if !includeArchived {
 		tail = strings.Replace(tail, "WHERE ", "WHERE NOT EXISTS (SELECT 1 FROM hosts archived_host WHERE archived_host.source_id=e.source_id AND archived_host.archived=1) AND ", 1)
 	}
@@ -473,13 +491,21 @@ func (h *Hub) eventsLocked(ctx context.Context, tail string, args []any, include
 		if err = rows.Scan(&v.Position, &payload, &v.Valid, &at, &v.Read); err != nil {
 			return nil, err
 		}
-		size += len(payload)
-		if size > 8<<20 {
-			return nil, fmt.Errorf("快照超过 8 MiB；未截断，请减少查询范围或扩展快照协议")
-		}
 		if err = json.Unmarshal(payload, &v.Event); err != nil {
 			return nil, err
 		}
+		if metadata {
+			v.BodyHash = bodyHash(v.Body)
+			v.Body = ""
+			encoded, _ := json.Marshal(v)
+			size += len(encoded)
+		} else {
+			size += len(payload)
+		}
+		if size > 8<<20 {
+			return nil, fmt.Errorf("状态超过8MiB，未截断")
+		}
+
 		v.ReceivedAt, err = time.Parse(time.RFC3339Nano, at)
 		if err != nil {
 			return nil, err

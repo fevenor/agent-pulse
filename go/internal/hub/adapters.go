@@ -1,8 +1,11 @@
 package hub
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +55,20 @@ func (h *Hub) adapterRoutes(mux *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		http.ServeFile(w, r, filepath.Join(h.config.AdapterDirectory, "index.json"))
+		raw, err := os.ReadFile(filepath.Join(h.config.AdapterDirectory, "index.json"))
+		if err != nil {
+			transport.Error(w, 503, "索引暂不可读")
+			return
+		}
+		sum := sha256.Sum256(raw)
+		etag := `"` + hex.EncodeToString(sum[:]) + `"`
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(raw)
 	})
 	mux.HandleFunc("GET /api/v1/adapters/packages/{hash}", func(w http.ResponseWriter, r *http.Request) {
 		hash := r.PathValue("hash")
@@ -71,17 +87,26 @@ func (h *Hub) adapterRoutes(mux *http.ServeMux) {
 			transport.Error(w, 400, "报告大小或来源无效")
 			return
 		}
+		report.UpdatedAt = time.Time{}
+		comparable, _ := json.Marshal(report)
+		h.mu.Lock()
+		var previousRaw []byte
+		var previous adapters.Report
+		_ = h.db.QueryRowContext(r.Context(), "SELECT report FROM adapter_hosts WHERE source_id=?", report.SourceID).Scan(&previousRaw)
+		_ = json.Unmarshal(previousRaw, &previous)
+		previous.UpdatedAt = time.Time{}
+		oldComparable, _ := json.Marshal(previous)
+		stateChanged := !bytes.Equal(comparable, oldComparable)
 		report.UpdatedAt = time.Now().UTC()
 		data, _ := json.Marshal(report)
-		h.mu.Lock()
 		// 删除与状态登记共用锁，并由 SQL 检查删除标记，旧报告不能重建主机记录。
 		result, err := h.db.ExecContext(r.Context(), `INSERT INTO adapter_hosts(source_id,report) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_hosts WHERE source_id=?) ON CONFLICT(source_id) DO UPDATE SET report=excluded.report`, report.SourceID, data, report.SourceID)
 		var affected int64
 		if err == nil {
 			affected, err = result.RowsAffected()
 		}
-		if err == nil && affected > 0 {
-			h.changedLocked()
+		if err == nil && affected > 0 && stateChanged {
+			h.adminChangedLocked()
 		}
 		h.mu.Unlock()
 		if err != nil {

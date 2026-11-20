@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { applyDelta, decodeSync, fillBodies, type Delta } from "./sync";
 import { displaySessionTitle, api, setToken, socketProtocols, type Device, type Event, type Host, type HostInfo, type Push, type Session, type Snapshot } from "./api";
 
 const snapshot = ref<Snapshot>({ run_id: "", version: 0, sessions: [], unread: [], devices: [] });
@@ -26,35 +27,45 @@ const sessions = computed(() => snapshot.value.sessions.filter(s =>
 const unread = computed(() => snapshot.value.unread.filter(e=>searching([e.title,e.source_id,sourceName(e.source_id),sourceEnvironment(e.source_id),e.agent])));
 const runningCount = computed(() => snapshot.value.sessions.filter(s=>!s.archived && !snapshot.value.sources?.[s.source_id]?.archived && effectiveState(s) === "running").length);
 const waitingCount = computed(() => snapshot.value.sessions.filter(s=>!s.archived && !snapshot.value.sources?.[s.source_id]?.archived && effectiveState(s) === "waiting").length);
-let socket: WebSocket | undefined, heartbeat: ReturnType<typeof setInterval> | undefined, retry: ReturnType<typeof setTimeout> | undefined, refreshTimer: ReturnType<typeof setInterval> | undefined;
-let disposed = false, refreshing = false, refreshAgain = false;
-const deviceID = "web-" + Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,"0")).join("");
-
-async function refresh() {
-  if (refreshing) { refreshAgain = true; return; }
-  refreshing = true; busy.value = true;
-  try {
-    const [next, adapters, jobs, knownHosts] = await Promise.all([api<Snapshot>("snapshot"),api<Host[]>("adapters/status"),api<Push[]>("push-jobs"),api<HostInfo[]>("hosts")]);
-    snapshot.value = next; hosts.value = adapters; pushes.value = jobs; hostList.value = knownHosts; error.value = ""; changedAt.value = new Date().toISOString();
-  } catch (reason) { error.value = String(reason instanceof Error ? reason.message : reason); connected.value = false; }
-  finally { busy.value = false; refreshing = false; if (refreshAgain) { refreshAgain = false; void refresh(); } }
+let socket:WebSocket|undefined,heartbeat:ReturnType<typeof setInterval>|undefined,retry:ReturnType<typeof setTimeout>|undefined;
+let disposed=false,refreshing=false,refreshAgain=false;let confirmedAt=0;let adminVersion=-1;let activeTab="";
+const deviceID="web-"+Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,"0")).join("");
+async function refresh(){
+ if(refreshing){refreshAgain=true;return;}refreshing=true;busy.value=true;
+ try{
+  if(tab.value==="适配器")hosts.value=await api<Host[]>("adapters/status");
+  if(tab.value==="推送记录")pushes.value=await api<Push[]>("push-jobs");
+  if(tab.value==="设备")hostList.value=await api<HostInfo[]>("hosts");
+  if(tab.value==="历史事件")await loadHistory();
+  activeTab=tab.value;error.value="";changedAt.value=new Date().toISOString();
+ }catch(reason){error.value=reason instanceof Error?reason.message:"页面读取失败";}
+ finally{busy.value=false;refreshing=false;if(refreshAgain){refreshAgain=false;void refresh();}}
 }
-function connect() {
-  if (disposed) return;
-  socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/v1/connect`, socketProtocols());
-  const current = socket;
-  current.onopen = () => {
-    current.send(JSON.stringify({type:"hello",payload:{id:deviceID,role:"web"}}));
-    heartbeat = setInterval(()=>{ if(current.readyState===WebSocket.OPEN) current.send(JSON.stringify({type:"heartbeat",payload:{}})); },10000);
-  };
-  current.onmessage = message => {
-    try {
-      const value = JSON.parse(message.data);
-      if(value.type === "hello" || value.type === "changed") { connected.value = true; void refresh(); }
-    } catch { current.close(); }
-  };
-  current.onclose = () => { connected.value = false; if(heartbeat) clearInterval(heartbeat); if(!disposed) retry=setTimeout(connect,2500); };
-  current.onerror = () => current.close();
+function connect(){
+ if(disposed)return;
+ socket=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/api/v1/sync`,socketProtocols());socket.binaryType="arraybuffer";const current=socket;let chain=Promise.resolve();const probes=new Map<string,number>();
+ const probe=()=>{const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,"0")).join("");for(const [k,v]of probes)if(Date.now()-v>35000)probes.delete(k);probes.set(id,Date.now());return id;};
+ current.onopen=()=>{
+  current.send(JSON.stringify({type:"sync_hello",request_id:probe(),payload:{device:{id:deviceID,role:"web"},admin:true,cursor:{run_id:snapshot.value.run_id,version:snapshot.value.version}}}));
+  if(heartbeat)clearInterval(heartbeat);
+  heartbeat=setInterval(()=>{if(current.readyState===WebSocket.OPEN){current.send(JSON.stringify({type:"heartbeat",request_id:probe(),payload:{run_id:snapshot.value.run_id,version:snapshot.value.version}}));if(confirmedAt&&Date.now()-confirmedAt>35000){connected.value=false;current.close();}}},10000);
+ };
+ current.onmessage=event=>{chain=chain.then(async()=>{
+  if(current!==socket)return;
+  const message=await decodeSync(event.data);
+  if(message.type==="sync"){
+   const next=applyDelta(snapshot.value,message.payload as Delta);await fillBodies(next.unread,snapshot.value.unread);
+   if(current!==socket)return;snapshot.value=next;changedAt.value=new Date().toISOString();if(tab.value==="设备"||tab.value==="历史事件")void refresh();current.send(JSON.stringify({type:"ack",payload:{run_id:next.run_id,version:next.version}}));
+  }else if(message.type==="checkpoint"){
+   const value=message.payload as {run_id:string;version:number;admin_version?:number;probe:string};
+   if(value.run_id!==snapshot.value.run_id||value.version!==snapshot.value.version)throw new Error("同步确认不一致");
+   if(!probes.has(value.probe)||Date.now()-probes.get(value.probe)!>35000)throw new Error("权威确认过期");
+   connected.value=true;confirmedAt=probes.get(value.probe)!;error.value="";
+   if(value.admin_version!==adminVersion||activeTab!==tab.value){adminVersion=value.admin_version??0;void refresh();}
+  }else throw new Error("同步消息类型无效");
+ }).catch(reason=>{error.value=reason instanceof Error?reason.message:"同步失败";snapshot.value.run_id="";current.close();});};
+ current.onclose=()=>{if(current!==socket)return;connected.value=false;confirmedAt=0;if(heartbeat)clearInterval(heartbeat);if(!disposed)retry=setTimeout(connect,2500);};
+ current.onerror=()=>current.close();
 }
 async function markRead(ids: string[]) {
   if (!ids.length) return;
@@ -64,10 +75,10 @@ async function markRead(ids: string[]) {
   finally { for(const id of ids) reading.value.delete(id); }
 }
 async function loadHistory(more = false) {
-  try { const last=more ? history.value.at(-1)?.position : undefined; const page=await api<Event[]>("events?limit=50&include_archived=true"+(last?`&before=${last}`:"")); history.value=more?[...history.value,...page]:page; }
+  try { const last=more ? history.value.at(-1)?.position : undefined; const page=await api<Event[]>("events?limit=50&include_archived=true&bodies=omit"+(last?`&before=${last}`:"")); await fillBodies(page,history.value); history.value=more?[...history.value,...page]:page; }
   catch(reason) { error.value=reason instanceof Error?reason.message:"历史读取失败"; }
 }
-function chooseTab(value: string) { tab.value=value; filter.value=""; if(value==="历史事件") void loadHistory(); }
+function chooseTab(value: string) { tab.value=value; filter.value=""; void refresh(); }
 function applyToken() { setToken(tokenDraft.value); tokenDraft.value=""; showToken.value=false; socket?.close(); void refresh(); }
 async function patchHost(host: HostInfo, change: {display_name?: string; archived?: boolean}) {
   try { await api(`hosts/${encodeURIComponent(host.source_id)}`, change, "PATCH"); await refresh(); }
@@ -84,8 +95,8 @@ async function deleteHost(host: HostInfo) {
   catch(reason) { error.value=reason instanceof Error?reason.message:"主机删除失败"; }
 }
 function hostOnline(source: string) { return connected.value && snapshot.value.devices.some(d=>(d.role==="bridge"||d.role==="tray")&&d.id===source); }
-onMounted(()=>{ void refresh(); connect(); refreshTimer=setInterval(()=>void refresh(),15000); });
-onUnmounted(()=>{ disposed=true; socket?.close(); if(heartbeat)clearInterval(heartbeat);if(retry)clearTimeout(retry);if(refreshTimer)clearInterval(refreshTimer); });
+onMounted(()=>{void refresh();connect();});
+onUnmounted(()=>{ disposed=true; socket?.close(); if(heartbeat)clearInterval(heartbeat);if(retry)clearTimeout(retry); });
 </script>
 
 <template>

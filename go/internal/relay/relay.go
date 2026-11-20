@@ -36,7 +36,7 @@ type Relay struct {
 }
 type socket struct {
 	ws   *websocket.Conn
-	send chan []byte
+	send chan transport.Frame
 }
 
 func Open(c config.Relay) (*Relay, error) {
@@ -94,6 +94,8 @@ func (r *Relay) Handler() http.Handler {
 	})
 	m.HandleFunc("GET /api/v1/relay", r.connectHub)
 	m.HandleFunc("GET /api/v1/connect", r.connectClient)
+	m.HandleFunc("GET /api/v1/sync", r.connectClient)
+	m.HandleFunc("GET /api/v1/traffic", func(w http.ResponseWriter, q *http.Request) { transport.JSON(w, 200, transport.TrafficSnapshot()) })
 	m.HandleFunc("POST /api/v1/adapters/status", r.ForwardStatus)
 	m.HandleFunc("POST /api/v1/sessions/manage", func(w http.ResponseWriter, req *http.Request) {
 		var change protocol.SessionChange
@@ -158,21 +160,21 @@ func (r *Relay) Handler() http.Handler {
 			transport.Error(w, 404, "接口不存在")
 			return
 		}
-		reply, err := r.forward(req.Context(), transport.Frame{Method: "GET", Path: req.URL.RequestURI(), Headers: map[string]string{"Range": req.Header.Get("Range")}})
+		reply, err := r.forward(req.Context(), transport.Frame{Method: "GET", Path: req.URL.RequestURI(), Headers: map[string]string{"Range": req.Header.Get("Range"), "Accept-Encoding": req.Header.Get("Accept-Encoding"), "If-None-Match": req.Header.Get("If-None-Match")}})
 		if err != nil {
 			transport.Error(w, 503, "Hub 暂不可达，不能返回实时数据")
 			return
 		}
 		writeReply(w, reply)
 	})
-	return transport.Guard(r.config.Token, false, m)
+	return transport.Guard(r.config.Token, false, transport.MeasureHTTP(m))
 }
 
 func Allowed(method, path string) bool {
 	if method == "POST" {
 		return path == "/api/v1/sessions/manage" || path == "/api/v1/events" || path == "/api/v1/read" || path == "/api/v1/adapters/status"
 	}
-	return method == "GET" && (path == "/api/v1/snapshot" || path == "/api/v1/events" || path == "/api/v1/push-jobs" || (path == "/api/v1/adapters/index" || path == "/api/v1/adapters/status") || strings.HasPrefix(path, "/api/v1/adapters/packages/"))
+	return method == "GET" && (path == "/api/v1/snapshot" || path == "/api/v1/events/bodies" || path == "/api/v1/events" || path == "/api/v1/push-jobs" || (path == "/api/v1/adapters/index" || path == "/api/v1/adapters/status") || strings.HasPrefix(path, "/api/v1/adapters/packages/"))
 }
 
 func (r *Relay) forward(ctx context.Context, frame transport.Frame) (transport.Frame, error) {
@@ -330,7 +332,7 @@ func (r *Relay) connectHub(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		select {
-		case c.send <- f.Body:
+		case c.send <- f:
 		default:
 			_ = c.ws.Close()
 		}
@@ -338,22 +340,41 @@ func (r *Relay) connectHub(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Relay) connectClient(w http.ResponseWriter, req *http.Request) {
-	peer := r.current()
-	if peer == nil {
-		transport.Error(w, 503, "Hub 暂不可达")
-		return
-	}
 	u := websocket.Upgrader{CheckOrigin: transport.OriginOK}
 	ws, err := u.Upgrade(w, req, nil)
 	if err != nil {
 		return
 	}
 	defer ws.Close()
-	ws.SetReadLimit(4096)
+	ws.SetReadLimit(256 << 10)
+	_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+	kind, first, err := ws.ReadMessage()
+	if err != nil {
+		return
+	}
+	var hello struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if transport.DecodeMessage(kind, first, &hello) != nil {
+		return
+	}
+	var device protocol.Device
+	if hello.Type == "hello" {
+		if json.Unmarshal(hello.Payload, &device) != nil {
+			return
+		}
+	} else if hello.Type != "sync_hello" {
+		return
+	}
+	peer := r.current()
+	if peer == nil && device.Role != "bridge" {
+		return
+	}
 	id := protocol.NewID()
-	c := &socket{ws: ws, send: make(chan []byte, 8)}
+	c := &socket{ws: ws, send: make(chan transport.Frame, 16)}
 	r.mu.Lock()
-	if r.peer != peer || r.closed {
+	if r.closed || r.peer != peer {
 		r.mu.Unlock()
 		return
 	}
@@ -363,35 +384,107 @@ func (r *Relay) connectClient(w http.ResponseWriter, req *http.Request) {
 		r.mu.Lock()
 		delete(r.clients, id)
 		r.mu.Unlock()
-		_ = peer.Send(transport.Frame{Type: "stream_close", ID: id})
+		if peer != nil {
+			_ = peer.Send(transport.Frame{Type: "stream_close", ID: id})
+		}
 	}()
+	if peer != nil {
+		if peer.Send(transport.Frame{Type: "stream_input", ID: id, Body: first, Binary: kind == websocket.BinaryMessage}) != nil {
+			return
+		}
+	} else {
+		c.send <- transport.Frame{Body: transport.Encode(protocol.Message{Type: "hello", Payload: map[string]string{"accepted": "relay", "hub": "offline"}})}
+	}
 	done := make(chan struct{})
-	defer func() { _ = ws.Close(); <-done }()
+	stop := make(chan struct{})
+	defer func() { close(stop); _ = ws.Close(); <-done }()
 	go func() {
 		defer close(done)
 		defer ws.Close()
 		for {
 			_ = ws.SetReadDeadline(time.Now().Add(35 * time.Second))
-			kind, data, err := ws.ReadMessage()
-			if err != nil || kind != websocket.TextMessage {
+			k, data, e := ws.ReadMessage()
+			if e != nil {
 				return
 			}
-			if peer.Send(transport.Frame{Type: "stream_input", ID: id, Body: data}) != nil {
+			transport.RecordTraffic("client_stream", 0, uint64(len(data)), false)
+			var msg struct {
+				Type      string          `json:"type"`
+				RequestID string          `json:"request_id"`
+				Payload   json.RawMessage `json:"payload"`
+			}
+			if transport.DecodeMessage(k, data, &msg) != nil {
+				return
+			}
+			if msg.Type == "events" {
+				if device.Role != "bridge" {
+					return
+				}
+				var batch protocol.EventBatch
+				if json.Unmarshal(msg.Payload, &batch) != nil || len(batch.Events) == 0 || len(batch.Events) > 16 || len(msg.RequestID) > 128 {
+					return
+				}
+				receipt := protocol.BatchReceipt{Results: []protocol.EventResult{}}
+				for _, event := range batch.Events {
+					item := protocol.EventResult{EventID: event.EventID, Status: 400}
+					eventRaw, encodeErr := json.Marshal(event)
+					if event.SourceID == device.ID && event.Validate() == nil && encodeErr == nil && len(eventRaw) <= protocol.MaxEventBytes {
+						event.OccurredAt = event.OccurredAt.UTC()
+						duplicate, status := r.enqueue(req.Context(), "event:"+event.EventID, "/api/v1/events", transport.Encode(event))
+						item.Status = status
+						item.Duplicate = duplicate
+						if status == 202 {
+							item.Accepted = "durable"
+						}
+					}
+					receipt.Results = append(receipt.Results, item)
+				}
+				rk, raw, encodeErr := transport.EncodeMessage(protocol.Message{Type: "receipts", RequestID: msg.RequestID, Payload: receipt})
+				if encodeErr != nil {
+					return
+				}
+				select {
+				case c.send <- transport.Frame{Body: raw, Binary: rk == websocket.BinaryMessage}:
+				case <-stop:
+					return
+				}
+				continue
+			}
+			if peer != nil {
+				if peer.Send(transport.Frame{Type: "stream_input", ID: id, Body: data, Binary: k == websocket.BinaryMessage}) != nil {
+					return
+				}
+			} else if msg.Type == "heartbeat" {
+				select {
+				case c.send <- transport.Frame{Body: transport.Encode(protocol.Message{Type: "hello", Payload: map[string]string{"accepted": "relay", "hub": "offline"}})}:
+				default:
+					return
+				}
+			} else {
 				return
 			}
 		}
 	}()
+	var peerDone <-chan struct{}
+	if peer != nil {
+		peerDone = peer.Done()
+	}
 	for {
 		select {
-		case <-peer.Done():
+		case <-peerDone:
 			return
 		case <-done:
 			return
-		case data := <-c.send:
+		case frame := <-c.send:
 			_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if ws.WriteMessage(websocket.TextMessage, data) != nil {
+			k := websocket.TextMessage
+			if frame.Binary {
+				k = websocket.BinaryMessage
+			}
+			if ws.WriteMessage(k, frame.Body) != nil {
 				return
 			}
+			transport.RecordTraffic("client_stream", uint64(len(frame.Body)), 0, false)
 		}
 	}
 }

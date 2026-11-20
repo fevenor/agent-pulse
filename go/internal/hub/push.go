@@ -31,7 +31,7 @@ func (h *Hub) Run(ctx context.Context) {
 func (h *Hub) expireReminders(ctx context.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	result, err := h.db.ExecContext(ctx, `UPDATE events SET valid=0 WHERE valid=1 AND julianday(json_extract(payload,'$.occurred_at'))<=julianday(?)`, timestamp(time.Now().Add(-h.ttl)))
+	result, err := h.db.ExecContext(ctx, `UPDATE events SET valid=0 WHERE notify=1 AND valid=1 AND julianday(json_extract(payload,'$.occurred_at'))<=julianday(?)`, timestamp(time.Now().Add(-h.ttl)))
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Error("提醒有效期更新失败")
@@ -57,6 +57,7 @@ func (h *Hub) pushOne(ctx context.Context) {
 	if err != nil {
 		slog.Error("推送结果未保存", "event_id", e.EventID)
 	} else {
+		h.adminChangedLocked()
 		slog.Info("推送处理完成", "event_id", e.EventID, "channel", ch.Name, "result", status, "http_status", result.HTTPStatus, "reason", result.Reason)
 	}
 }

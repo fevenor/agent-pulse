@@ -9,6 +9,8 @@ use std::{
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Event {
     #[serde(default)]
+    pub body_hash: String,
+    #[serde(default)]
     pub position: i64,
     #[serde(default)]
     pub kind: String,
@@ -262,6 +264,7 @@ impl State {
 pub struct Store {
     // 仅内存中的权威快照确认时间，不随本地缓存恢复，不由界面操作续期。
     pub snapshot_confirmed_at: Option<std::time::Instant>,
+    pub force_baseline: bool,
     pub state: State,
     pub error: Option<String>,
     path: PathBuf,
@@ -292,6 +295,7 @@ impl Store {
         }
         let mut store = Self {
             snapshot_confirmed_at: None,
+            force_baseline: false,
             state,
             error: None,
             path: path.into(),

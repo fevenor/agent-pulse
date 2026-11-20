@@ -83,7 +83,7 @@ func Guard(token string, local bool, next http.Handler) http.Handler {
 			return
 		}
 		authorization := r.Header.Get("Authorization")
-		if authorization == "" && r.URL.Path == "/api/v1/connect" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		if authorization == "" && (r.URL.Path == "/api/v1/connect" || r.URL.Path == "/api/v1/sync") && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			for _, item := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 				item = strings.TrimSpace(item)
 				if strings.HasPrefix(item, "pulse-token.") {

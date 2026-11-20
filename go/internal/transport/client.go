@@ -41,6 +41,9 @@ func Request(ctx context.Context, client *http.Client, base, token, method, path
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp.StatusCode, fmt.Errorf("服务返回 HTTP %d", resp.StatusCode)
 	}
+	if result == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 65536))
+	}
 	if result != nil {
 		data, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 		if err != nil || len(data) > 8<<20 {
@@ -54,7 +57,7 @@ func Request(ctx context.Context, client *http.Client, base, token, method, path
 }
 
 func Client(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &http.Client{Transport: measuredDefault, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // Watch 先建立订阅，再由回调读取快照；断线交给调用方重新连接。

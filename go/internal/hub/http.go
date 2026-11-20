@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"agent-pulse/internal/transport"
@@ -112,9 +113,7 @@ func (h *Hub) Handler(token string) http.Handler {
 			transport.Error(w, 503, "快照超过 8 MiB，未截断")
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(data)
+		transport.WriteJSONBytes(w, r, 200, data)
 	})
 	mux.HandleFunc("GET /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
 		before := int64(0)
@@ -165,7 +164,11 @@ func (h *Hub) Handler(token string) http.Handler {
 				transport.Error(w, 503, "时间线读取失败")
 				return
 			}
-			transport.JSON(w, 200, page)
+			if r.URL.Query().Get("bodies") == "omit" {
+				omitBodies(page.Events)
+			}
+			raw, _ := json.Marshal(page)
+			transport.WriteJSONBytes(w, r, 200, raw)
 			return
 		}
 		var items []protocol.EventView
@@ -194,13 +197,18 @@ func (h *Hub) Handler(token string) http.Handler {
 			transport.Error(w, 503, "历史读取失败")
 			return
 		}
-		transport.JSON(w, 200, items)
+		if r.URL.Query().Get("bodies") == "omit" {
+			omitBodies(items)
+		}
+		raw, _ := json.Marshal(items)
+		transport.WriteJSONBytes(w, r, 200, raw)
 	})
 	mux.HandleFunc("GET /api/v1/connect", h.connect)
+	h.syncRoutes(mux)
 	h.sessionRoutes(mux)
 	h.adapterRoutes(mux)
 	h.hostRoutes(mux)
-	return transport.Guard(token, false, mux)
+	return transport.Guard(token, false, transport.MeasureHTTP(mux))
 }
 
 func (h *Hub) connect(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +217,7 @@ func (h *Hub) connect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	h.serveSocket(ws)
+	h.serveSocket(&transport.JSONSocket{Conn: ws, Category: "presence"})
 }
 
 type stateSocket interface {
@@ -223,7 +231,7 @@ type stateSocket interface {
 
 func (h *Hub) serveSocket(ws stateSocket) {
 	defer ws.Close()
-	ws.SetReadLimit(4096)
+	ws.SetReadLimit(256 << 10)
 	_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var hello struct {
 		Type    string          `json:"type"`
@@ -274,7 +282,10 @@ func (h *Hub) serveSocket(ws stateSocket) {
 		}
 		h.mu.Unlock()
 	}()
+	var writeMu sync.Mutex
 	write := func(msg protocol.Message) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		return ws.WriteJSON(msg)
 	}
@@ -289,14 +300,26 @@ func (h *Hub) serveSocket(ws stateSocket) {
 		for {
 			_ = ws.SetReadDeadline(time.Now().Add(35 * time.Second))
 			var msg struct {
-				Type    string `json:"type"`
-				Payload struct {
-					Locked     *bool `json:"locked"`
-					Fullscreen *bool `json:"fullscreen"`
+				Type      string `json:"type"`
+				RequestID string `json:"request_id"`
+				Payload   struct {
+					Events     []protocol.Event `json:"events"`
+					Locked     *bool            `json:"locked"`
+					Fullscreen *bool            `json:"fullscreen"`
 				} `json:"payload"`
 			}
 			if ws.ReadJSON(&msg) != nil {
 				return
+			}
+			if msg.Type == "events" {
+				if c.device.Role != "bridge" || len(msg.Payload.Events) == 0 || len(msg.Payload.Events) > 16 || len(msg.RequestID) > 128 {
+					return
+				}
+				receipt := h.acceptBatch(context.Background(), c.device.ID, protocol.EventBatch{Events: msg.Payload.Events})
+				if write(protocol.Message{Type: "receipts", RequestID: msg.RequestID, Payload: receipt}) != nil {
+					return
+				}
+				continue
 			}
 			if msg.Type != "heartbeat" && msg.Type != "state" {
 				return

@@ -226,6 +226,9 @@ func get(ctx context.Context, client *http.Client, base, token, path string, hea
 		return nil, 0, errors.New("更新源不可达")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, resp.StatusCode, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, resp.StatusCode, errors.New("更新源返回失败")
 	}
@@ -236,9 +239,16 @@ func get(ctx context.Context, client *http.Client, base, token, path string, hea
 	return data, resp.StatusCode, nil
 }
 func download(ctx context.Context, c config.Bridge, p Package) ([]byte, error) {
+	partial := filepath.Join(c.Adapters.Directory, "downloads", p.SHA256+".part")
 	var data []byte
+	if p.Size <= 0 || p.Size > MaxPackageBytes || !hashPattern.MatchString(p.SHA256) {
+		return nil, errors.New("适配包大小或摘要无效")
+	}
+	if info, err := os.Stat(partial); err == nil && info.Size() <= p.Size && (info.Size()%(256<<10) == 0 || info.Size() == p.Size) {
+		data, _ = os.ReadFile(partial)
+	}
 	client := transport.Client(15 * time.Second)
-	for offset := int64(0); offset < p.Size; offset += 256 << 10 {
+	for offset := int64(len(data)); offset < p.Size; offset += 256 << 10 {
 		end := offset + (256 << 10) - 1
 		if end >= p.Size {
 			end = p.Size - 1
@@ -252,11 +262,16 @@ func download(ctx context.Context, c config.Bridge, p Package) ([]byte, error) {
 			return nil, errors.New("分块下载失败")
 		}
 		data = append(data, chunk...)
+		if err := AtomicFile(partial, data, 0600); err != nil {
+			return nil, err
+		}
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != p.SHA256 {
+		_ = os.Remove(partial)
 		return nil, errors.New("适配包摘要不匹配")
 	}
+	_ = os.Remove(partial)
 	return data, nil
 }
 
@@ -281,9 +296,21 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 	if err != nil {
 		return err
 	}
-	raw, _, err := get(ctx, transport.Client(10*time.Second), c.HubURL, c.Token, "/api/v1/adapters/index", nil, 1<<20)
+	cached, _ := os.ReadFile(filepath.Join(dir, "index.cached.json"))
+	headers := map[string]string{}
+	if len(cached) > 0 && len(cached) <= 1<<20 {
+		sum := sha256.Sum256(cached)
+		headers["If-None-Match"] = `"` + hex.EncodeToString(sum[:]) + `"`
+	}
+	raw, status, err := get(ctx, transport.Client(10*time.Second), c.HubURL, c.Token, "/api/v1/adapters/index", headers, 1<<20)
 	if err != nil && c.RelayURL != "" {
-		raw, _, err = get(ctx, transport.Client(10*time.Second), c.RelayURL, c.RelayToken, "/api/v1/adapters/index", nil, 1<<20)
+		raw, status, err = get(ctx, transport.Client(10*time.Second), c.RelayURL, c.RelayToken, "/api/v1/adapters/index", headers, 1<<20)
+	}
+	if err == nil && status == http.StatusNotModified {
+		if len(cached) == 0 {
+			return errors.New("索引304缺少已核验缓存")
+		}
+		raw = cached
 	}
 	if err != nil {
 		return err
@@ -304,6 +331,9 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 	hash := hex.EncodeToString(digest[:])
 	if index.Sequence < state.Sequence || index.Sequence == state.Sequence && state.IndexHash != "" && state.IndexHash != hash {
 		return errors.New("发布索引回退或同序号内容发生变化")
+	}
+	if err = AtomicFile(filepath.Join(dir, "index.cached.json"), raw, 0600); err != nil {
+		return err
 	}
 	if index.Sequence > state.Sequence {
 		state.Rejected = map[string]string{}
@@ -481,19 +511,23 @@ func ReportState(c config.Bridge, lastErr error) Report {
 	sort.Slice(r.Items, func(i, j int) bool { return r.Items[i].ID < r.Items[j].ID })
 	return r
 }
-func Run(ctx context.Context, c config.Bridge, path string) {
+func Run(ctx context.Context, c config.Bridge, path string, reconnect <-chan struct{}) {
 	if c.Adapters.Directory == "" {
 		return
 	}
 	var lastErr error
 	next := time.Time{}
-	ticker := time.NewTicker(10 * time.Second)
+	lastSent := time.Time{}
+	lastReport := ""
+	nextReport := time.Time{}
+	retry := 5 * time.Second
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		if time.Now().After(next) {
-			selected, readErr := currentAdapterSelection(c, path)
-			if readErr != nil {
-				lastErr = readErr
+			selected, err := currentAdapterSelection(c, path)
+			if err != nil {
+				lastErr = err
 			} else {
 				lastErr = Sync(ctx, selected, path)
 			}
@@ -504,16 +538,33 @@ func Run(ctx context.Context, c config.Bridge, path string) {
 			next = time.Now().Add(time.Duration(interval)*time.Second + time.Duration(rand.IntN(max(1, interval/5)))*time.Second)
 		}
 		report := ReportState(c, lastErr)
-		_, err := transport.Request(ctx, transport.Client(5*time.Second), c.HubURL, c.Token, "POST", "/api/v1/adapters/status", report, nil)
-		if err != nil {
-			next = time.Time{}
-		}
-		if err != nil && c.RelayURL != "" {
-			_, _ = transport.Request(ctx, transport.Client(5*time.Second), c.RelayURL, c.RelayToken, "POST", "/api/v1/adapters/status", report, nil)
+		report.UpdatedAt = time.Time{}
+		raw, _ := json.Marshal(report)
+		if time.Now().After(nextReport) && (string(raw) != lastReport || time.Since(lastSent) >= 5*time.Minute) {
+			report.UpdatedAt = time.Now().UTC()
+			_, err := transport.Request(ctx, transport.Client(5*time.Second), c.HubURL, c.Token, "POST", "/api/v1/adapters/status", report, nil)
+			if err != nil && c.RelayURL != "" {
+				_, err = transport.Request(ctx, transport.Client(5*time.Second), c.RelayURL, c.RelayToken, "POST", "/api/v1/adapters/status", report, nil)
+			}
+			if err == nil {
+				lastReport = string(raw)
+				lastSent = time.Now()
+				retry = 5 * time.Second
+				nextReport = time.Time{}
+			} else {
+				nextReport = time.Now().Add(retry)
+				retry *= 2
+				if retry > time.Minute {
+					retry = time.Minute
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-reconnect:
+			lastSent = time.Time{}
+			nextReport = time.Time{}
 		case <-ticker.C:
 		}
 	}

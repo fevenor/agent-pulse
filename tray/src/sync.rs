@@ -1,5 +1,5 @@
 use crate::{
-    model::{Event, Snapshot, State, Store},
+    model::{Event, State, Store},
     settings::Settings,
 };
 use serde_json::{Value, json};
@@ -81,6 +81,7 @@ fn worker(
         .build()
         .into();
     let mut desktop = crate::desktop::status();
+    let mut retry_seconds = 2;
     let _ = updates.send_blocking(view(
         &store,
         if settings.hub_url.is_empty() && settings.relay().relay_url.is_empty() {
@@ -96,6 +97,7 @@ fn worker(
             (&settings.hub_url, &settings.token, "已直连服务"),
             (&relay.relay_url, &relay.relay_token, "已通过中继连接"),
         ];
+        let connection_started = Instant::now();
         for (base, token, label) in endpoints.iter().filter(|e| !e.0.is_empty()) {
             let result = connected(
                 (base, token, label),
@@ -118,13 +120,17 @@ fn worker(
             "连接中断 · 显示本地缓存"
         };
         let _ = updates.send_blocking(view(&store, status));
-        match input.recv_timeout(Duration::from_secs(2)) {
+        if connection_started.elapsed() > Duration::from_secs(35) {
+            retry_seconds = 2
+        }
+        match input.recv_timeout(Duration::from_secs(retry_seconds)) {
             Ok(Input::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
             Ok(command) => {
                 apply(command, &mut store, &updates, status, &mut desktop);
             }
             _ => {}
         }
+        retry_seconds = (retry_seconds * 2).min(30);
     }
 }
 
@@ -165,7 +171,7 @@ fn connect(
         "ws"
     })
     .map_err(|_| "服务地址无效")?;
-    url.set_path("/api/v1/connect");
+    url.set_path("/api/v1/sync");
     let mut request = url
         .as_str()
         .into_client_request()
@@ -212,19 +218,29 @@ fn flush_reads(
 ) -> Result<(), String> {
     let ids: Vec<_> = store.state.pending_reads.iter().cloned().collect();
     for chunk in ids.chunks(256) {
-        let response = client
+        let payload = json!({"event_ids":chunk});
+        crate::network::record("reads", payload.to_string().len(), 0);
+        let mut response = client
             .post(format!("{base}/api/v1/read"))
             .header("Authorization", format!("Bearer {token}"))
-            .send_json(json!({"event_ids":chunk}))
+            .send_json(payload)
             .map_err(|_| "已读同步失败")?;
         // 202 只说明中继已落盘；必须保留本地操作直到收到 Hub 的 200。
-        if response.status().as_u16() == 200 {
+        let status = response.status().as_u16();
+        let raw = response
+            .body_mut()
+            .with_config()
+            .limit(65536)
+            .read_to_vec()
+            .map_err(|_| "已读回执读取失败")?;
+        crate::network::record("reads", 0, raw.len());
+        if status == 200 {
             store.change(|s| {
                 for id in chunk {
                     s.pending_reads.remove(id);
                 }
             })?;
-        } else if response.status().as_u16() != 202 {
+        } else if status != 202 {
             return Err("已读确认无效".into());
         }
     }
@@ -242,121 +258,140 @@ fn connected(
 ) -> Result<bool, String> {
     let (base, token, label) = endpoint;
     store.snapshot_confirmed_at = None;
+    flush_reads(client, base, token, store)?;
     let mut socket = connect(base, token)?;
-    socket.send(Message::Text(json!({"type":"hello","payload":{"id":store.state.device_id,"role":"tray","host_name":settings.host_name,"locked":desktop.0,"fullscreen":desktop.1}}).to_string().into())).map_err(|_|"登记设备失败")?;
-    let start = Instant::now();
+    crate::network::record("connections", 0, 0);
+    let cursor = if store.force_baseline {
+        json!({"run_id":"","version":0})
+    } else {
+        json!({"run_id":store.state.snapshot.run_id,"version":store.state.snapshot.version})
+    };
+    let probe = uuid::Uuid::new_v4().to_string();
+    let mut probes = std::collections::BTreeMap::from([(probe.clone(), Instant::now())]);
+    let hello=json!({"type":"sync_hello","request_id":probe,"payload":{"device":{"id":store.state.device_id,"role":"tray","host_name":settings.host_name,"locked":desktop.0,"fullscreen":desktop.1},"cursor":cursor}}).to_string();
+    crate::network::record("sync", hello.len(), 0);
+    socket
+        .send(Message::Text(hello.into()))
+        .map_err(|_| "增量登记失败")?;
     let mut response_at = Instant::now();
     let mut heartbeat = Instant::now();
-    let mut hello = false;
-    let mut refresh = false;
     let mut synced = false;
-    let mut required: Option<(String, u64)> = None;
+    let mut next_probe = Instant::now() + Duration::from_secs(30);
+    let mut probe_interval = 30;
+    let (mut probe_tx, mut probe_rx): (Option<mpsc::Sender<bool>>, Option<mpsc::Receiver<bool>>) =
+        (None, None);
+    let mut stats_at = Instant::now();
     loop {
         let old_desktop = *desktop;
         *desktop = crate::desktop::status();
+        let mut read_changed = false;
         while let Ok(command) = input.try_recv() {
+            read_changed |= matches!(command, Input::Read(_) | Input::Refresh);
             if !apply(command, store, updates, label, desktop) {
                 let _ = socket.close(None);
                 return Ok(false);
             }
-            if hello {
-                refresh = true;
-                synced = false;
-            }
+        }
+        if read_changed {
+            flush_reads(client, base, token, store)?;
         }
         if old_desktop != *desktop {
-            refresh = hello;
-            synced = false;
-            let _ = updates.send_blocking(view(store, label));
+            let msg = json!({"type":"state","payload":{"locked":desktop.0,"fullscreen":desktop.1}})
+                .to_string();
+            crate::network::record("sync", msg.len(), 0);
             socket
-                .send(Message::Text(
-                    json!({"type":"state","payload":{"locked":desktop.0,"fullscreen":desktop.1}})
-                        .to_string()
-                        .into(),
-                ))
-                .map_err(|_| "设备状态更新失败")?;
+                .send(Message::Text(msg.into()))
+                .map_err(|_| "设备状态递交失败")?;
         }
         if heartbeat.elapsed() >= Duration::from_secs(10) {
+            let probe = uuid::Uuid::new_v4().to_string();
+            probes.retain(|_, at| at.elapsed() < Duration::from_secs(35));
+            probes.insert(probe.clone(), Instant::now());
+            let msg=json!({"type":"heartbeat","request_id":probe,"payload":{"run_id":store.state.snapshot.run_id,"version":store.state.snapshot.version}}).to_string();
+            crate::network::record("sync", msg.len(), 0);
             socket
-                .send(Message::Text(
-                    json!({"type":"heartbeat"}).to_string().into(),
-                ))
-                .map_err(|_| "心跳失败")?;
+                .send(Message::Text(msg.into()))
+                .map_err(|_| "同步心跳失败")?;
             heartbeat = Instant::now();
             if !store.state.pending_reads.is_empty() {
-                refresh = true;
+                flush_reads(client, base, token, store)?;
             }
-        }
-        // 定期核对权威快照，单纯连接心跳或本地操作不能延长旧任务的唤醒。
-        if hello
-            && store
-                .snapshot_confirmed_at
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(15))
-        {
-            refresh = true;
         }
         let mut quiet = false;
-        match socket.read() {
+        let bytes = match socket.read() {
             Ok(Message::Text(text)) => {
-                response_at = Instant::now();
-                if synced {
-                    let _ = updates.send_blocking(view(store, label));
-                }
-                let message: Value = serde_json::from_str(&text).map_err(|_| "订阅消息无效")?;
-                match message["type"].as_str() {
-                    Some("hello") => {
-                        hello = true;
-                        refresh = true;
-                    }
-                    Some("changed") => {
-                        let version = message["payload"]["version"].as_u64().unwrap_or(0);
-                        let run = message["payload"]["run_id"].as_str().unwrap_or("");
-                        if run != store.state.snapshot.run_id
-                            || version > store.state.snapshot.version
-                        {
-                            refresh = true;
-                            required = Some((run.into(), version));
-                        }
-                    }
-                    _ => {}
-                }
+                crate::network::record("sync", 0, text.len());
+                Some(text.as_bytes().to_vec())
             }
-            Ok(Message::Close(_)) => return Err("订阅关闭".into()),
-            Ok(_) => {}
+            Ok(Message::Binary(raw)) => {
+                crate::network::record("sync", 0, raw.len());
+                Some(crate::network::decode(&raw, true)?)
+            }
+            Ok(Message::Close(_)) => return Err("同步连接已关闭".into()),
+            Ok(_) => None,
             Err(tungstenite::Error::Io(e))
                 if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
             {
                 quiet = true;
+                None
             }
-            Err(_) => return Err("订阅断开".into()),
-        }
-        if hello && refresh {
-            flush_reads(client, base, token, store)?;
-            let snapshot: Snapshot = client
-                .get(format!("{base}/api/v1/snapshot"))
-                .header("Authorization", format!("Bearer {token}"))
-                .call()
-                .map_err(|_| "快照请求失败")?
-                .body_mut()
-                .with_config()
-                .limit(8 << 20)
-                .read_json()
-                .map_err(|_| "快照无效或超过大小限制")?;
-            if required.as_ref().is_some_and(|(run, version)| {
-                run == &snapshot.run_id && *version > snapshot.version
-            }) {
-                continue;
+            Err(_) => return Err("同步连接中断".into()),
+        };
+        if let Some(bytes) = bytes {
+            if bytes.len() > 8 << 20 {
+                return Err("同步消息过大".into());
             }
-            store.change(|s| {
-                s.notified
-                    .retain(|id| snapshot.unread.iter().any(|e| &e.event_id == id));
-                s.snapshot = snapshot;
-            })?;
-            store.snapshot_confirmed_at = Some(Instant::now());
-            refresh = false;
-            synced = true;
-            quiet = false;
-            let _ = updates.send_blocking(view(store, label));
+            response_at = Instant::now();
+            let message: Value = serde_json::from_slice(&bytes).map_err(|_| "同步消息无效")?;
+            match message["type"].as_str() {
+                Some("sync") => {
+                    store.snapshot_confirmed_at = None;
+                    synced = false;
+                    let delta: crate::delta::Delta =
+                        serde_json::from_value(message["payload"].clone())
+                            .map_err(|_| "增量格式无效")?;
+                    store.force_baseline = true;
+                    let mut snapshot = delta.apply(&store.state.snapshot)?;
+                    crate::body_cache::hydrate(
+                        client,
+                        base,
+                        token,
+                        &settings.data_dir,
+                        &mut snapshot.unread,
+                        &store.state.snapshot.unread,
+                    )?;
+                    store.change(|s| {
+                        s.notified
+                            .retain(|id| snapshot.unread.iter().any(|e| &e.event_id == id));
+                        s.snapshot = snapshot;
+                    })?;
+                    store.force_baseline = false;
+                    let ack=json!({"type":"ack","payload":{"run_id":store.state.snapshot.run_id,"version":store.state.snapshot.version}}).to_string();
+                    crate::network::record("sync", ack.len(), 0);
+                    socket
+                        .send(Message::Text(ack.into()))
+                        .map_err(|_| "同步确认失败")?;
+                }
+                Some("checkpoint") => {
+                    if message["payload"]["run_id"].as_str() != Some(&store.state.snapshot.run_id)
+                        || message["payload"]["version"].as_u64()
+                            != Some(store.state.snapshot.version)
+                    {
+                        store.force_baseline = true;
+                        return Err("权威状态位置不匹配".into());
+                    }
+                    let confirmed = message["payload"]["probe"]
+                        .as_str()
+                        .and_then(|id| probes.get(id))
+                        .copied()
+                        .filter(|at| at.elapsed() < Duration::from_secs(35))
+                        .ok_or("权威状态确认已过期")?;
+                    store.snapshot_confirmed_at = Some(confirmed);
+                    synced = true;
+                    let _ = updates.send_blocking(view(store, label));
+                }
+                _ => return Err("不支持的同步消息".into()),
+            }
         }
         // 设备未知、锁屏和全屏均不弹出；解锁后先同步已读与快照。
         if synced && quiet && desktop.0 == Some(false) && desktop.1 == Some(false) {
@@ -386,13 +421,47 @@ fn connected(
                 let _ = updates.send_blocking(update);
             }
         }
-        if response_at.elapsed() > Duration::from_secs(35)
-            || (!hello && start.elapsed() > Duration::from_secs(10))
-        {
-            return Err("订阅超时".into());
+
+        if response_at.elapsed() > Duration::from_secs(35) {
+            return Err("同步确认超时".into());
         }
-        if label == "已通过中继连接" && start.elapsed() > Duration::from_secs(30) {
-            return Ok(true);
+        if label == "已通过中继连接" {
+            if let Some(rx) = &probe_rx
+                && let Ok(healthy) = rx.try_recv()
+            {
+                probe_tx = None;
+                probe_rx = None;
+                if healthy {
+                    return Ok(true);
+                }
+                probe_interval = (probe_interval * 2).min(300);
+                next_probe = Instant::now() + Duration::from_secs(probe_interval);
+            }
+            if probe_tx.is_none() && Instant::now() >= next_probe {
+                let (tx, rx) = mpsc::channel();
+                probe_tx = Some(tx.clone());
+                probe_rx = Some(rx);
+                let hub = settings.hub_url.clone();
+                let token = settings.token.clone();
+                std::thread::spawn(move || {
+                    let c: ureq::Agent = ureq::Agent::config_builder()
+                        .timeout_global(Some(Duration::from_secs(3)))
+                        .max_redirects(0)
+                        .build()
+                        .into();
+                    let good = c
+                        .get(format!("{hub}/healthz"))
+                        .header("Authorization", format!("Bearer {token}"))
+                        .call()
+                        .is_ok();
+                    let _ = tx.send(good);
+                });
+            }
+        }
+        if stats_at.elapsed() >= Duration::from_secs(60) {
+            crate::network::save(&settings.data_dir.join("traffic.json"));
+            crate::body_cache::prune(&settings.data_dir);
+            stats_at = Instant::now();
         }
     }
 }

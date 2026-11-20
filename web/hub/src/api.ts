@@ -1,5 +1,5 @@
 export interface Session { source_id: string; agent: string; session_id: string; title: string; state: string; project?: string; updated_at: string; alias?: string; archived?: boolean; override_state?: string; override_at?: string }
-export interface Event { event_id: string; source_id: string; agent: string; session_id: string; kind: string; title: string; body: string; project?: string; occurred_at: string; position: number; valid: boolean; read: boolean }
+export interface Event { body_hash?: string; event_id: string; source_id: string; agent: string; session_id: string; kind: string; title: string; body: string; project?: string; occurred_at: string; position: number; valid: boolean; read: boolean }
 export interface Device { id: string; role: string; host_name?: string; path: string; locked?: boolean; fullscreen?: boolean; last_seen: string }
 export interface SourceLabel { name: string; environment: string; archived?: boolean }
 export interface Snapshot { run_id: string; version: number; sessions: Session[]; unread: Event[]; devices: Device[]; sources?: Record<string, SourceLabel> }

@@ -197,7 +197,7 @@ func run() error {
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); b.Run(ctx) }()
-		go func() { defer wg.Done(); adapters.Run(ctx, c, absolutePath) }()
+		go func() { defer wg.Done(); adapters.Run(ctx, c, absolutePath, b.ConnectionChanges()) }()
 		slog.Info("Bridge 已启动", "listen", c.Listen, "source_id", c.SourceID)
 		err = transport.ServeListener(ctx, listener, b.Handler())
 		cancel()

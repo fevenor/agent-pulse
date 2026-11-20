@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -36,6 +35,8 @@ type Bridge struct {
 	lastFailedID       string
 	wake               chan struct{}
 	collectorID        string
+	connectionChanges  chan struct{}
+	connectedOnce      bool
 	observationContext context.Context
 	cancelObservations context.CancelFunc
 	observations       map[string]*observation
@@ -48,7 +49,7 @@ type Bridge struct {
 
 func New(c config.Bridge) *Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Bridge{config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1), collectorID: protocol.NewID(), observationContext: ctx, cancelObservations: cancel, observations: map[string]*observation{}, identities: map[string]*pendingIdentity{}, completedTurns: map[string]completedTurn{}}
+	return &Bridge{connectionChanges: make(chan struct{}, 1), config: c, byID: map[string]*item{}, wake: make(chan struct{}, 1), collectorID: protocol.NewID(), observationContext: ctx, cancelObservations: cancel, observations: map[string]*observation{}, identities: map[string]*pendingIdentity{}, completedTurns: map[string]completedTurn{}}
 }
 
 func (b *Bridge) Handler() http.Handler {
@@ -56,7 +57,7 @@ func (b *Bridge) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		transport.JSON(w, 200, map[string]any{"status": "ok", "pending": len(b.queue) + b.identityEvents, "bytes": b.bytes + b.identityBytes, "pending_identity": b.identityEvents, "rejected": b.rejected, "failed": b.failed, "last_failed_event_id": b.lastFailedID})
+		transport.JSON(w, 200, map[string]any{"traffic": transport.TrafficSnapshot(), "status": "ok", "pending": len(b.queue) + b.identityEvents, "bytes": b.bytes + b.identityBytes, "pending_identity": b.identityEvents, "rejected": b.rejected, "failed": b.failed, "last_failed_event_id": b.lastFailedID})
 	})
 	mux.HandleFunc("POST /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
 		var input protocol.LocalEvent
@@ -208,65 +209,30 @@ func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector string) 
 
 func (b *Bridge) Run(ctx context.Context) {
 	defer b.stopObservations()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); b.presence(ctx) }()
-	defer wg.Wait()
-	client := transport.Client(5 * time.Second)
 	retry := time.Second
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		b.mu.Lock()
-		var entry *item
-		if len(b.queue) > 0 {
-			entry = b.queue[0]
-		}
-		b.mu.Unlock()
-		if entry == nil {
-			select {
-			case <-ctx.Done():
-				return
-			case <-b.wake:
-			}
-			continue
-		}
-		var receipt protocol.Receipt
-		status, err := transport.Request(ctx, client, b.config.HubURL, b.config.Token, http.MethodPost, "/api/v1/events", entry.event, &receipt)
-		accepted := err == nil && status == 200 && receipt.EventID == entry.event.EventID && receipt.Accepted == "durable"
-		if !accepted && (err != nil && (status == 0 || status >= 500)) && b.config.RelayURL != "" {
-			status, err = transport.Request(ctx, client, b.config.RelayURL, b.config.RelayToken, http.MethodPost, "/api/v1/events", entry.event, &receipt)
-			accepted = err == nil && status == 202 && receipt.EventID == entry.event.EventID && receipt.Accepted == "durable"
-		}
-		// 明确无效的单条事件不阻塞后续事件；保留失败计数和标识供诊断。
-		permanent := status == 400 || status == 409 || status == 410 || status == 413 || status == 422
-		if accepted || permanent {
-			b.mu.Lock()
-			b.queue[0] = nil
-			b.queue = b.queue[1:]
-			delete(b.byID, entry.event.EventID)
-			b.bytes -= len(entry.payload)
-			if permanent {
-				b.failed++
-				b.lastFailedID = entry.event.EventID
-			}
-			b.mu.Unlock()
-			if permanent {
-				slog.Error("上游拒绝事件", "event_id", entry.event.EventID, "status", status)
-			}
+	for ctx.Err() == nil {
+		started := time.Now()
+		err := b.runStream(ctx, b.config.HubURL, b.config.Token, false)
+		if err == nil {
 			retry = time.Second
 			continue
 		}
-		slog.Warn("上游暂不可用，事件保留在内存", "event_id", entry.event.EventID, "status", status)
+		if b.config.RelayURL != "" && ctx.Err() == nil {
+			err = b.runStream(ctx, b.config.RelayURL, b.config.RelayToken, true)
+			if err == nil {
+				retry = time.Second
+				continue
+			}
+		}
+		if time.Since(started) > 35*time.Second {
+			retry = time.Second
+		}
 		if !pause(ctx, retry) {
 			return
 		}
-		if retry < 30*time.Second {
-			retry *= 2
-			if retry > 30*time.Second {
-				retry = 30 * time.Second
-			}
+		retry *= 2
+		if retry > 30*time.Second {
+			retry = 30 * time.Second
 		}
 	}
 }
@@ -279,37 +245,6 @@ func pause(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
-	}
-}
-
-func (b *Bridge) presence(ctx context.Context) {
-	hostName := b.config.HostName
-	if hostName == "" {
-		hostName, _ = os.Hostname()
-	}
-	device := protocol.Device{ID: b.config.SourceID, Role: "bridge", HostName: hostName}
-	first := true
-	connect := func(connectCtx context.Context, base, token string) error {
-		b.mu.Lock()
-		if !first {
-			b.collectorID = protocol.NewID()
-		}
-		first = false
-		device.CollectorID = b.collectorID
-		b.mu.Unlock()
-		return transport.Watch(connectCtx, base, token, device, func(protocol.Version) error { return nil })
-	}
-	for ctx.Err() == nil {
-		err := connect(ctx, b.config.HubURL, b.config.Token)
-		if err != nil && b.config.RelayURL != "" && ctx.Err() == nil {
-			// 定期重建回退连接，以重新探测直连；不让回退路径永久黏住。
-			fallback, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_ = connect(fallback, b.config.RelayURL, b.config.RelayToken)
-			cancel()
-		}
-		if !pause(ctx, 2*time.Second) {
-			return
-		}
 	}
 }
 
@@ -337,3 +272,6 @@ func EmitWithIdentity(ctx context.Context, address string, e protocol.Event, ide
 	}
 	return nil
 }
+
+// ConnectionChanges通知状态上报线程在重新接入后补报，不改变采集身份。
+func (b *Bridge) ConnectionChanges() <-chan struct{} { return b.connectionChanges }

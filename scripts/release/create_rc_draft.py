@@ -159,34 +159,31 @@ def main():
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notes = f"""# AgentPulse {args.tag} 试运行草稿
 
-**保持草稿与预发布状态，尚未公开。** 本候选更新Hub、Bridge、Windows Tray及有变化的命令适配包，Relay使用 `{manifest['relay']}`。原公开RC4及其附件保持不可变，不推广稳定latest。
+**保持草稿与预发布状态，尚未公开。** 本候选为完整通讯优化，Hub、Relay、Bridge、Windows Tray与Web需要一起更新；旧公开RC4和首候选保持，不推广stable/latest。
 
 ## 本次行为
 
-- Tray展开事件标题在前台完整可见连续1.5秒后标读；切后台、折叠、滚出或离开后重新计时。
-- 打开详情优先定位最近未读，支持下一条未读及回到最新；默认关键事件在Hub筛选后分页，普通运行记录不占页额，完整历史按需查看。
-- Antigravity App首次hook早于子会话身份落盘时，Bridge暂存并调用签名适配器核对身份；主会话按序转发，子会话不进入Hub。身份游标只在本机流转，不采集历史正文。
-- 正常Stop后台尚未空闲保持运行，明确错误/取消按原生原因处理；主会话后台收尾按同轮原生状态观察，不用超时猜完成。原生与观察终态按本机轮次去重。
-- Agent内已读同步不实施；保留AgentPulse已有跨客户端和离线已读。
+- 首次建立状态基准，之后直接推送会话、未读、来源及设备变化，不再周期下载完整快照。已读、提醒失效、归档和删除明确同步。
+- 新提醒完整正文自动补齐并缓存，已读/状态变化不重传正文；隐藏详情暂停额外历史下载。离线已读与已缓存正文保持。
+- 断线在有界近期窗口内续接；Hub重启、窗口不足或游标缺口时重建元数据基准。权威状态确认回显客户端探测，保持35秒失联保护。
+- Bridge通过常驻连接发送小批事件并逐条等待持久确认，Relay在Hub离线时仍暂存事件和已读；原有去重与确认规则保持。
+- 大JSON压缩，Relay隧道传原始载荷，不再Base64包裹正文或ZIP；健康中继连接不定时断开。适配报告按变化发送，索引条件读取，包下载支持核验后的分块续传。
+- 增加应用载荷分类统计，不记录正文或凭据，不把其等同移动网络计费。普通运行历史不删除、不减少关键提醒。
 
-## 附件与安装
+## 产物与升级
 
-用户附件仅两架构Linux Bridge、Windows便携ZIP和SHA256SUMS；源码由标签归档提供。构建清单、签名准备仓库及Hub内部构建保留在CI Artifact。草稿附件需有权限的账号下载，不能作为匿名默认安装目标。
+四个用户附件为两架构Linux Bridge、Windows便携ZIP及SHA256SUMS。使用有权限账号取得草稿附件并校验摘要；源码由标签归档提供，维护清单保留在CI Artifact。
 
-Linux安装脚本入口为 `https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh`。下载并核验预构建后，使用该raw安装入口显式指定 `--version {args.tag} --file /已下载文件 --sha256 对应摘要`；安装器不编译。停止Bridge前检查health的pending为0，pending包含等待身份确认的事件。Windows正常退出Tray，备份后替换EXE，保留tray.yaml、data、原来源标识和发布公钥。
+Hub成品为`{manifest['hub']}`，须由发布者附加同候选官方签名仓库后核验；Relay为`{manifest['relay']}`。旧Relay不支持本候选新隧道，须协调更新全部组件。先备份并排空待发，再切换预构建程序；保留原数据库、已读、来源、公钥、配置和手机模板，不重新setup或自动清空数据。原共享签名索引只递增。
 
-Hub须使用由发布者附加同候选官方签名仓库后核验的成品 `{manifest['hub']}`；草稿创建不代表此镜像已发布。先更新匹配Hub/Bridge/Tray和适配包，再验收新查询与本机身份暂存能力。本次不更改Hub/Relay数据库结构或Tray缓存格式，不迁移、不清空旧数据、不合并/删除历史子会话。
-
-身份等待复用Bridge有界内存队列：进程退出会失去尚未交付的事件，与原内存暂存边界一致。长期无法确认身份时保留等待并报告pending_identity，不猜主身份。正式切换前备份配置、数据和旧产物；新适配包应在匹配Bridge已更新后启用。
+Linux raw安装脚本入口为`https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh`，仍以已公开版本为默认，试用草稿显式传入`--version {args.tag} --file /已核验文件 --sha256 对应摘要 --install-only`。Windows原路径替换EXE，保留tray.yaml和data。正文缓存可重建，不能以清缓存为由覆盖state.json。回滚保留升级期间现行事件及已读。
 
 ## 验证边界
 
-Antigravity App 2.32.1 / WSL Debian已取得原生浏览器子任务首次缺行、后续父子关系出现的证据；修复后的新子任务未进入隔离Hub，主会话完成。原生网页点击曾因宿主访问授权超时未完成，不将该步骤写为通过。App最终回答字段仍受宿主能力限制，不从历史补正文。
-
-自动测试、模拟数据和隔离服务分别记录，不替代手机实收、所有主机或全部Windows交互验收。草稿范围不包含新手机渠道、后台历史重放或宿主Agent自动升级。
+自动回归、隔离服务和短时字节测量不等于所有目标日常使用或运营商流量账单。3小时活动和8小时后台需按实际测量记录；手机实收、自然模型最终失败和特殊桌面组合保留已有未验边界。首候选的阅读、历史定位和Antigravity身份修复继续保留。
 
 构建提交：{args.commit}
-[候选构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
+[完整候选构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
 """
     (assets / "trial-guide.md").write_text(notes, encoding="utf-8")
     maintenance = output / "maintenance"

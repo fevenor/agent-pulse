@@ -162,6 +162,7 @@ fn real_services_offline_reads_restart_and_relay() {
     let settings = Settings {
         hub_url: format!("http://127.0.0.1:{}", port()),
         state_file: state.clone(),
+        data_dir: dir.0.clone(),
         ..Default::default()
     };
     // 模拟离开内网后只能连接已发现的中继；不在配置中重复填写凭据。
@@ -310,5 +311,96 @@ fn real_timeline_filter_anchor_and_incremental_cursor() {
     assert_eq!(full.events.len(), 30);
     assert!(full.more);
     assert!(full.events.iter().any(|e| e.kind == "activity.observed"));
+    drop(worker);
+}
+
+#[test]
+#[ignore = "需要真实Hub进程，验证增量正文只取一次与空闲无快照"]
+fn real_incremental_body_cache_and_idle_traffic() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let dir =
+        Directory(std::env::temp_dir().join(format!("pulse-traffic-{}", uuid::Uuid::new_v4())));
+    fs::create_dir(&dir.0).unwrap();
+    let hp = port();
+    let hub = format!("http://127.0.0.1:{hp}");
+    let hc = dir.0.join("hub.json");
+    json_file(
+        &hc,
+        json!({"listen":format!("127.0.0.1:{hp}"),"database":dir.0.join("hub.db"),"push":[]}),
+    );
+    let _server = Service::start(root.join("bin/dev/agent-pulse-hub.exe"), hc);
+    wait(|| ureq::get(format!("{hub}/healthz")).call().is_ok());
+    for i in 0..64 {
+        ureq::post(format!("{hub}/api/v1/events")).send_json(json!({"event_id":format!("history-{i}"),"source_id":"source","agent":"test","session_id":format!("session-{i}"),"kind":"activity.observed","occurred_at":"2099-01-01T00:00:00Z","title":"test · 正在运行","body":"","scope":"main"})).unwrap();
+    }
+    let state = dir.0.join("state.json");
+    let (tx, rx) = async_channel::unbounded();
+    let settings = Settings {
+        hub_url: hub.clone(),
+        state_file: state.clone(),
+        data_dir: dir.0.clone(),
+        ..Default::default()
+    };
+    let worker = sync::start(settings, Store::open(&state).unwrap(), tx);
+    wait_view(&rx, |v| {
+        v.status == "已直连服务" && v.state.snapshot.sessions.len() == 64
+    });
+    let body = "完整正文缓存验证。".repeat(1200);
+    ureq::post(format!("{hub}/api/v1/events")).send_json(json!({"event_id":"body-once","source_id":"source","agent":"test","session_id":"active","kind":"turn.completed","occurred_at":"2099-01-01T00:00:00Z","title":"完成","body":body,"scope":"main"})).unwrap();
+    wait_view(&rx, |v| {
+        v.state
+            .unread()
+            .iter()
+            .any(|e| e.event_id == "body-once" && e.body == body)
+    });
+    for i in 0..30 {
+        ureq::post(format!("{hub}/api/v1/events")).send_json(json!({"event_id":format!("activity-{i}"),"source_id":"source","agent":"test","session_id":"active","kind":"activity.observed","occurred_at":"2099-01-01T00:00:00Z","title":"test · 正在运行","body":"","scope":"main"})).unwrap();
+    }
+    wait_view(&rx, |v| {
+        v.state
+            .snapshot
+            .sessions
+            .iter()
+            .any(|s| s.last_event_id == "activity-29")
+    });
+    let traffic = || -> Value {
+        ureq::get(format!("{hub}/api/v1/traffic"))
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_json()
+            .unwrap()
+    };
+    let before = traffic();
+    assert_eq!(
+        before["categories"]["http_server/bodies"]["requests"].as_u64(),
+        Some(1)
+    );
+    let wait_start = Instant::now();
+    while wait_start.elapsed() < Duration::from_secs(40) {
+        while rx.try_recv().is_ok() {}
+        thread::sleep(Duration::from_millis(100));
+    }
+    let after = traffic();
+    assert_eq!(
+        after["categories"]["http_server/bodies"]["requests"].as_u64(),
+        Some(1)
+    );
+    assert!(after["categories"].get("http_server/snapshot").is_none());
+    let idle_sent = after["categories"]["sync"]["sent"].as_u64().unwrap()
+        - before["categories"]["sync"]["sent"].as_u64().unwrap();
+    assert!(idle_sent < 4096, "40秒空闲不应重传快照或正文：{idle_sent}");
+    eprintln!(
+        "真实Hub/Tray：64条历史会话，约{}字节正文只请求一次，40秒空闲服务端同步发送{}字节，无HTTP快照请求",
+        body.len(),
+        idle_sent
+    );
+    worker
+        .input
+        .send(Input::Read(vec!["body-once".into()]))
+        .unwrap();
+    wait_view(&rx, |v| {
+        v.state.pending_reads.is_empty() && v.state.unread().is_empty()
+    });
     drop(worker);
 }

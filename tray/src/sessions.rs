@@ -92,23 +92,29 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                             .append_pair("agent", &key.agent)
                             .append_pair("session_id", &key.session_id)
                             .append_pair("view", if all { "all" } else { "important" })
+                            .append_pair("bodies", "omit")
                             .append_pair("limit", "30")
                             .append_pair("before", &before.to_string());
                         if let Some(id) = &anchor {
                             url.query_pairs_mut().append_pair("anchor", id);
                         }
-                        result = client
-                            .get(url.as_str())
-                            .header("Authorization", format!("Bearer {token}"))
-                            .call()
-                            .map_err(|_| "历史暂不可达，请重试".into())
-                            .and_then(|mut r| {
-                                r.body_mut()
-                                    .with_config()
-                                    .limit(8 << 20)
-                                    .read_json::<TimelinePage>()
-                                    .map_err(|_| "历史格式无效".into())
-                            });
+                        result = crate::network::get_json::<TimelinePage>(
+                            &client,
+                            url.as_str(),
+                            token,
+                            "timeline",
+                        )
+                        .and_then(|mut page| {
+                            crate::body_cache::hydrate(
+                                &client,
+                                base,
+                                token,
+                                &settings.data_dir,
+                                &mut page.events,
+                                &[],
+                            )?;
+                            Ok(page)
+                        });
                         if result.is_ok() {
                             break;
                         }
@@ -137,20 +143,26 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                             .append_pair("agent", &key.agent)
                             .append_pair("session_id", &key.session_id)
                             .append_pair("view", if all { "all" } else { "important" })
+                            .append_pair("bodies", "omit")
                             .append_pair("limit", "30")
                             .append_pair("after", &after.to_string());
-                        result = client
-                            .get(url.as_str())
-                            .header("Authorization", format!("Bearer {token}"))
-                            .call()
-                            .map_err(|_| "新事件暂不可达，正在自动重试".into())
-                            .and_then(|mut r| {
-                                r.body_mut()
-                                    .with_config()
-                                    .limit(8 << 20)
-                                    .read_json::<TimelinePage>()
-                                    .map_err(|_| "新事件格式无效".into())
-                            });
+                        result = crate::network::get_json::<TimelinePage>(
+                            &client,
+                            url.as_str(),
+                            token,
+                            "timeline",
+                        )
+                        .and_then(|mut page| {
+                            crate::body_cache::hydrate(
+                                &client,
+                                base,
+                                token,
+                                &settings.data_dir,
+                                &mut page.events,
+                                &[],
+                            )?;
+                            Ok(page)
+                        });
                         if result.is_ok() {
                             break;
                         }
@@ -178,7 +190,7 @@ pub fn start(settings: Settings, output: async_channel::Sender<Reply>) -> mpsc::
                             .filter(|(b, _)| !b.is_empty())
                             .find(|(base, token)| {
                                 client
-                                    .get(format!("{base}/api/v1/snapshot"))
+                                    .get(format!("{base}/healthz"))
                                     .header("Authorization", format!("Bearer {token}"))
                                     .call()
                                     .is_ok()

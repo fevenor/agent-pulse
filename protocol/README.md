@@ -66,33 +66,29 @@ Hub 的 `unread` 是完整集合，包含已经失效但未读的历史提醒。
 
 Relay 仅转发会话管理请求，Hub 不可达时返回 503，绝不以 202 伪装保存成功。主机管理只直连 Hub。请求结果未知时客户端先刷新确认，不自动换通路重复提交人工修改。Hub 只使用当前数据库结构，不执行旧库迁移；结构变化时由部署者先备份并明确重建。当前格式重启保留数据和去重，发送中断仍记为未知，不能盲目重发。
 
-## WebSocket
+## WebSocket与对象增量
 
-客户端连接后 10 秒内发送：
+Tray和Web连接`/api/v1/sync`，发送`sync_hello`，payload包含device、已保存cursor（run_id与version）及Web可用的admin标记。首次连接、Hub运行代次变化或游标超出恢复窗口时返回`sync`的reset基准；其他情况按from/version连续返回发生变化的sessions、unread、sources、devices及对应removed列表。删除、已读、失效、归档和来源离线都是状态变化，不仅追加事件。
 
-```json
-{"type":"hello","payload":{"id":"linux-test-client","role":"client"}}
-```
+基准与增量只含正文摘要`body_hash`，不携带完整正文。客户端用`GET /api/v1/events/bodies?id=事件ID`按需补齐，单批最多32条；新未读正文自动获取，SHA256核验后缓存。`GET /api/v1/events`可使用`bodies=omit`复用同一正文缓存。完整事件历史继续保存，客户端已缓存未读正文保留离线查看。
 
-角色支持 `client`、`web`、`bridge`、`tray`。Tray 可附 `locked` 和 `fullscreen` 布尔值，省略代表未知。连接 ID 在同角色内唯一，新连接替换旧连接，旧连接关闭不影响新连接状态。
+客户端先应用并持久保存增量及游标，再发送ack。Hub内存保存最多512批、8MiB且通常不超过15分钟的近期变更；窗口不足时明确重建基准，不静默遗漏，Hub重启无需持久变更日志。基准元数据和解压消息限制8MiB，超限明确失败，不截断后宣称同步完成。
 
-设备列表中的 `path` 由 Hub 根据实际入口填写 `direct` 或 `relay`，不信任客户端自行声称的路径。Hub 重启和中继断开后清除相关在线设备。
+每10秒保活，35秒失联保护保持。sync_hello和heartbeat携带本次随机request_id，Hub的checkpoint回显为probe并附当前业务位置；客户端只在位置追平、状态已保存且该探测仍在35秒内时更新可信时间，按探测发送时刻计时，迟到应答不能延长旧状态。普通pong、中继存活或本地操作不能证明任务仍运行。设备心跳时间戳不产生全局业务增量，适配器报告仅实际变化时通知管理页。
 
-服务端先登记订阅，再返回 `hello`，后续变化通过 `changed` 告知：
+较小消息使用JSON文本，超过1KiB且压缩有收益时使用独立gzip成员的WS二进制消息；客户端限制压缩及解压大小。HTTP正文、历史等大JSON协商gzip，签名ZIP保持原字节。该协议只支持当前组件组合，不通过双协议长期兼容维持旧行为。
 
-```json
-{"type":"changed","payload":{"run_id":"hub-run-id","version":12}}
-```
+## Bridge上行与Relay确认
 
-收到 `hello` 后获取 HTTP 快照；收到更高版本时重新获取。快照旧于已经收到的变化版本时继续刷新；`run_id` 改变则丢弃旧版本判断。变化可合并，版本不持久化，不承诺事件增量重放。已读等操作仍使用 HTTP。
+Bridge使用`/api/v1/connect`常驻连接，hello登记来源及采集代次。事件以events消息按队列顺序小批发送，最多16条且序列化事件累计不超过128KiB；服务器返回相同request_id的receipts，每条含event_id、status、accepted及duplicate。Hub提交后200/durable，Relay本机事务提交后202/durable，Bridge才释放相应事件；单条永久拒绝独立处理，确认丢失以原ID重试。
 
-每 10 秒发送 `{"type":"heartbeat"}`；更新桌面状态用 `{"type":"state","payload":{"locked":false,"fullscreen":true}}`。Hub 35 秒未收到消息关闭连接。心跳返回当前版本的 `changed`，没有变化时可跳过快照；客户端同样以 35 秒无回应判定失联。未提供桌面状态的测试客户端不会抑制手机推送。
+Relay在Hub离线时仍允许Bridge接入并持久保存事件，不返回虚构的会话可信状态。已读继续用HTTP：Relay暂存202后Tray保留本地记录，Hub200才清除。Hub恢复后Relay补发，最终业务去重由Hub执行；原pending表、事件、已读和安装格式不重建。
 
-## Relay 的确认和恢复
+Hub与Relay隧道使用WS二进制帧：4字节大端控制头长度、JSON控制头、原始body字节；不把正文或ZIP编码为Base64。HTTP透传保留Range、If-None-Match、Accept-Encoding，以及对应内容编码和ETag响应。具体大小限制见代码，不接收任意代理目标。
 
-Relay 只持久化事件与已读请求。Hub 断线时查询和包下载返回 503，不返回旧快照；连接恢复后按持久队列重发，只有 Hub 200 才删除。Hub 明确拒绝的无效项保留为 blocked，其他项继续交付。事件 ID 只在当前待发队列中去重，Hub 始终执行最终业务去重。
+健康的Relay连接保持，后台以30秒起步、失败退避到最多5分钟探测直连，成功后切换；不每30秒主动断开。实际切换仍按collector_id保护旧事件不能复活任务。Bridge每5秒检查本地安装/运行/错误是否改变，变化时上报、重连补报、5分钟兜底；报告失败单独退避，不触发每10秒下载索引。
 
-下行查询、设备连接和适配器报告通过同一反向通道转发，不持久化。通道使用有界的请求/响应帧和虚拟连接帧，临时 ID 仅用于关联本次响应。断线关闭相关虚拟连接，客户端重新连接并获取快照。适配器报告丢失由下一次周期报告补齐，不占用事件队列。
+适配索引使用内容ETag，304后继续验签本地缓存；下载以256KiB分块持久保存临时内容，按内容摘要命名，重试续传后校验整包SHA256。与HTTP/WS查询不同，包字节不压缩改写。服务端`GET /api/v1/traffic`及Bridge health中的traffic提供当前进程累计的应用载荷分类统计；不包含VPN封装和TCP重传，不能当作运营商计费统计。
 
 ## 本地命令适配协议
 

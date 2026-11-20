@@ -5,6 +5,8 @@
 - [`agent-pulse-design.md`](agent-pulse-design.md)：组件边界、目录结构、协议、数据模型、部署和分阶段实现设计。
 - [`development-status.md`](development-status.md)：已完成事项、验证平台与版本、复现命令和待验证项。
 - [`development-plan.md`](development-plan.md)：跨平台收尾、实际接入、自动检查和部署验收的后续顺序与完成条件。
+- [`communication-traffic-assessment.md`](communication-traffic-assessment.md)：当前通讯流量放大机制、测量方法与证据边界。
+- [`communication-optimization-proposal.md`](communication-optimization-proposal.md)：待确认的整体传输优化路线、可靠性约束、统一升级与流量验收口径。
 - [`linux-quickstart.md`](linux-quickstart.md)：当前可运行的 Linux 构建、启动、事件接入和 HTTP 推送说明。
 - [`adapters.md`](adapters.md)：来源接入边界、独立包构建、签名发布、多主机安装与更新。
 - [`event-coverage.md`](event-coverage.md)：各 Agent 的事件正文、提问/批准/失败内容及受限原因，时间线增量与长正文阅读规则。

@@ -138,6 +138,7 @@ type Session struct {
 }
 
 type EventView struct {
+	BodyHash string `json:"body_hash,omitempty"`
 	Event
 	Position   int64     `json:"position"`
 	Read       bool      `json:"read"`

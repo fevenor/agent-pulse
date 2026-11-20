@@ -674,7 +674,12 @@ fn run() -> Result<(), String> {
                             }
                         }
                     }
-                    if !demo_mode && Instant::now() >= latest_retry {
+                    if !demo_mode
+                        && detail
+                            .update(cx, |_, w, _| platform::visible(platform::handle(w)))
+                            .unwrap_or(false)
+                        && Instant::now() >= latest_retry
+                    {
                         let mut data = shared.borrow_mut();
                         if !data.loading
                             && !data.latest_loading

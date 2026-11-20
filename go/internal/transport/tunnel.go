@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,7 +21,8 @@ type Frame struct {
 	Path    string            `json:"path,omitempty"`
 	Status  int               `json:"status,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
-	Body    []byte            `json:"body,omitempty"`
+	Body    []byte            `json:"-"`
+	Binary  bool              `json:"binary,omitempty"`
 }
 
 type Tunnel struct {
@@ -41,7 +43,13 @@ func (p *Tunnel) Send(frame Frame) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 	_ = p.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	err := p.ws.WriteJSON(frame)
+	raw, err := EncodeFrame(frame)
+	if err == nil {
+		err = p.ws.WriteMessage(websocket.BinaryMessage, raw)
+		if err == nil {
+			RecordTraffic("relay_tunnel", uint64(len(raw)), 0, false)
+		}
+	}
 	if err != nil {
 		p.Close()
 	}
@@ -94,8 +102,13 @@ func (p *Tunnel) Read(ctx context.Context, handle func(Frame)) {
 	}()
 	for {
 		_ = p.ws.SetReadDeadline(time.Now().Add(35 * time.Second))
-		var frame Frame
-		if p.ws.ReadJSON(&frame) != nil {
+		kind, raw, readErr := p.ws.ReadMessage()
+		if readErr != nil || kind != websocket.BinaryMessage {
+			return
+		}
+		RecordTraffic("relay_tunnel", 0, uint64(len(raw)), false)
+		frame, decodeErr := DecodeFrame(raw)
+		if decodeErr != nil {
 			return
 		}
 		switch frame.Type {
@@ -134,3 +147,31 @@ func DialTunnel(ctx context.Context, base, token string) (*Tunnel, error) {
 }
 
 func Encode(value any) []byte { b, _ := json.Marshal(value); return b }
+
+// 固定长度仅定位JSON控制头，正文和ZIP原始字节直接跟随，避免Base64放大。
+func EncodeFrame(frame Frame) ([]byte, error) {
+	header, err := json.Marshal(frame)
+	if err != nil || len(header) > 65536 || len(frame.Body) > 8<<20 {
+		return nil, errors.New("中继帧超限")
+	}
+	raw := make([]byte, 4+len(header)+len(frame.Body))
+	binary.BigEndian.PutUint32(raw, uint32(len(header)))
+	copy(raw[4:], header)
+	copy(raw[4+len(header):], frame.Body)
+	return raw, nil
+}
+func DecodeFrame(raw []byte) (Frame, error) {
+	var f Frame
+	if len(raw) < 4 || len(raw) > (8<<20)+65540 {
+		return f, errors.New("中继帧大小无效")
+	}
+	n := int(binary.BigEndian.Uint32(raw))
+	if n > 65536 || n > len(raw)-4 {
+		return f, errors.New("中继帧头无效")
+	}
+	if json.Unmarshal(raw[4:4+n], &f) != nil {
+		return f, errors.New("中继帧控制头无效")
+	}
+	f.Body = raw[4+n:]
+	return f, nil
+}

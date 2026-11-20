@@ -3,7 +3,6 @@ package hub
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -18,7 +17,7 @@ import (
 type virtualSocket struct {
 	peer     *transport.Tunnel
 	id       string
-	in       chan []byte
+	in       chan transport.Frame
 	done     chan struct{}
 	once     sync.Once
 	deadline time.Time
@@ -32,14 +31,22 @@ func (v *virtualSocket) SetReadLimit(int64)                {}
 func (v *virtualSocket) SetReadDeadline(t time.Time) error { v.deadline = t; return nil }
 func (v *virtualSocket) SetWriteDeadline(time.Time) error  { return nil }
 func (v *virtualSocket) WriteJSON(data any) error {
-	return v.peer.Send(transport.Frame{Type: "stream_data", ID: v.id, Body: transport.Encode(data)})
+	kind, raw, err := transport.EncodeMessage(data)
+	if err != nil {
+		return err
+	}
+	return v.peer.Send(transport.Frame{Type: "stream_data", ID: v.id, Body: raw, Binary: kind == 2})
 }
 func (v *virtualSocket) ReadJSON(data any) error {
 	timer := time.NewTimer(time.Until(v.deadline))
 	defer timer.Stop()
 	select {
-	case body := <-v.in:
-		return json.Unmarshal(body, data)
+	case frame := <-v.in:
+		kind := 1
+		if frame.Binary {
+			kind = 2
+		}
+		return transport.DecodeMessage(kind, frame.Body, data)
 	case <-v.done:
 		return errors.New("连接关闭")
 	case <-v.peer.Done():
@@ -120,8 +127,10 @@ func (h *Hub) handleRelay(ctx context.Context, p *transport.Tunnel, token string
 						if token != "" {
 							req.Header.Set("Authorization", "Bearer "+token)
 						}
-						if f.Headers["Range"] != "" {
-							req.Header.Set("Range", f.Headers["Range"])
+						for _, key := range []string{"Range", "Accept-Encoding", "If-None-Match"} {
+							if f.Headers[key] != "" {
+								req.Header.Set(key, f.Headers[key])
+							}
 						}
 						out := &responseBuffer{header: make(http.Header)}
 						handler.ServeHTTP(out, req)
@@ -131,7 +140,7 @@ func (h *Hub) handleRelay(ctx context.Context, p *transport.Tunnel, token string
 						}
 						reply.Body = out.body.Bytes()
 						reply.Headers = map[string]string{}
-						for _, key := range []string{"Content-Type", "Content-Range", "Accept-Ranges", "ETag"} {
+						for _, key := range []string{"Content-Type", "Content-Range", "Accept-Ranges", "ETag", "Content-Encoding", "Vary"} {
 							if value := out.header.Get(key); value != "" {
 								reply.Headers[key] = value
 							}
@@ -145,7 +154,7 @@ func (h *Hub) handleRelay(ctx context.Context, p *transport.Tunnel, token string
 				_ = p.Send(reply)
 			}()
 		case "stream_input":
-			if len(f.Body) > 4096 || f.ID == "" {
+			if len(f.Body) > 256<<10 || f.ID == "" {
 				return
 			}
 			mu.Lock()
@@ -154,19 +163,34 @@ func (h *Hub) handleRelay(ctx context.Context, p *transport.Tunnel, token string
 				var msg struct {
 					Type string `json:"type"`
 				}
-				if json.Unmarshal(f.Body, &msg) != nil || msg.Type != "hello" || len(streams) >= 128 {
+				kind := 1
+				if f.Binary {
+					kind = 2
+				}
+				if transport.DecodeMessage(kind, f.Body, &msg) != nil || (msg.Type != "hello" && msg.Type != "sync_hello") || len(streams) >= 128 {
 					mu.Unlock()
 					_ = p.Send(transport.Frame{Type: "stream_close", ID: f.ID})
 					return
 				}
-				v = &virtualSocket{peer: p, id: f.ID, in: make(chan []byte, 8), done: make(chan struct{})}
+				v = &virtualSocket{peer: p, id: f.ID, in: make(chan transport.Frame, 8), done: make(chan struct{})}
 				streams[f.ID] = v
 				wg.Add(1)
-				go func() { defer wg.Done(); h.serveSocket(v); mu.Lock(); delete(streams, v.id); mu.Unlock() }()
+				isSync := msg.Type == "sync_hello"
+				go func() {
+					defer wg.Done()
+					if isSync {
+						h.serveSync(v)
+					} else {
+						h.serveSocket(v)
+					}
+					mu.Lock()
+					delete(streams, v.id)
+					mu.Unlock()
+				}()
 			}
 			mu.Unlock()
 			select {
-			case v.in <- f.Body:
+			case v.in <- f:
 			default:
 				_ = v.Close()
 			}
