@@ -30,13 +30,13 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
 
 如 Hub 需要鉴权，先创建权限为 600 的环境文件 `hub.env` 并在其中设置 `AGENT_PULSE_TOKEN`；重建容器时用 `docker run --env-file hub.env ...` 传入，在 Bridge/Tray 配置同一令牌。若需 Relay，也在该文件中设置 `AGENT_PULSE_RELAY_URL` 和 `AGENT_PULSE_RELAY_TOKEN`，Bridge/Tray 会从 Hub 自动获取。手机推送与自定义 Push 渠道属于额外的 Hub 高级配置。也可使用 [默认 Compose 文件](../deploy/compose/hub.image.yaml)，填写镜像版本和端口绑定即可。不要在命令参数中直接输入真实令牌或将其提交到版本控制。
-## 适配仓库独立维护（当前源码功能，尚未发布）
+## 适配仓库独立维护（0.6.0第四候选草稿，尚未公开）
 
-首次上线需更新Hub和Bridge（Windows内置Bridge随Tray重新构建分发），将已有Bridge配置中的`poll_seconds`改为`min_check_seconds`，不保留旧字段解析；之后普通新增Agent及adapter/hook更新只需发布签名包，不再更新核心程序。Hub默认每天上海时间02:00检查独立适配发布，时间/时区可配置，也可关闭；管理员使用`--update-adapters`或`--import-adapters`手工更新，详见[仓库更新设计](adapter-repository-update-proposal.md)。
+该功能首次上线需更新Hub和Bridge（Windows内置Bridge随Tray重新构建分发），将已有Bridge配置中的`poll_seconds`改为`min_check_seconds`，不保留旧字段解析；之后普通新增Agent及adapter/hook更新只需发布签名包，不再更新核心程序。Hub默认每天上海时间02:00检查独立适配发布，时间/时区可配置，也可关闭；管理员使用`--update-adapters`或`--import-adapters`手工更新，详见[仓库更新设计](adapter-repository-update-proposal.md)。
 
 镜像`/repository`只作首次种子，可写仓库默认`/data/adapters`并随原数据卷保存，已有索引和公钥不被镜像覆盖。自行部署时设置可写`adapter_directory`；初始种子可通过`adapter_seed_directory`指定，固定公钥沿用原值。升级前备份原仓库、公钥及配置，不生成新身份或公钥，不清理业务数据库。
 
-Bridge每次启动检查一次；setup/手工同步默认最小间隔300秒，`--force-sync`可立即检查，失败使用可信本地副本。运行中及重连不检查，紧急更新需手工同步或重启。包更新与hook文件同步提交；宿主是否立即加载按其规则确认，不主动终止Agent。
+Bridge每次启动检查一次；setup/手工同步默认最小间隔300秒，`--force-sync`可立即检查，失败使用可信本地副本。运行中及重连不检查，紧急更新需手工同步或重启。包更新与hook文件同步提交；宿主是否立即加载按其规则确认，不主动终止Agent。ZCode Server仍使用旧配置时，可先仅断开并重连桌面连接（远端任务继续运行），再核对真实事件；不把installed当作已加载。
 
 ## 发布维护者：自定义适配包或准备 RC 镜像
 

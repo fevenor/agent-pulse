@@ -41,7 +41,8 @@ class DraftTests(unittest.TestCase):
         self.assertIn('require_draft(previous, args.tag, previous["targetCommitish"])',text)
         self.assertIn('"delete-asset"',text)
         workflow=(Path(__file__).resolve().parents[2]/".github/workflows/release-draft.yml").read_text(encoding="utf-8")
-        self.assertIn("publish_relay: ${{ inputs.relay_version == '' }}",workflow)
+        self.assertIn("publish_relay: false",workflow)
+        self.assertIn("inputs.relay_version || 'v0.6.0-rc.2'",workflow)
         self.assertIn('--relay-version',workflow)
         self.assertNotIn('--relay-version v0.5.0-rc.3',workflow)
 

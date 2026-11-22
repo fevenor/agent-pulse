@@ -12,6 +12,11 @@ spec.loader.exec_module(module)
 
 
 class CleanupTests(unittest.TestCase):
+    def test_harness_uses_current_adapter_check_interval(self):
+        source = (ROOT / "tests/e2e/zcode_linux.py").read_text(encoding="utf-8")
+        self.assertIn('"min_check_seconds": 300', source)
+        self.assertNotIn('"poll_seconds"', source)
+
     def fixture(self, root):
         config = (root / "bridge.json").resolve()
         hook = {"type": "process", "command": "/test/agent-pulse-bridge",

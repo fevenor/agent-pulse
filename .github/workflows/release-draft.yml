@@ -26,7 +26,7 @@ jobs:
     needs: validate
     uses: ./.github/workflows/images.yml
     with:
-      publish_relay: ${{ inputs.relay_version == '' }}
+      publish_relay: false
   windows:
     needs: validate
     uses: ./.github/workflows/windows.yml
@@ -52,7 +52,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GOTOOLCHAIN: local
           GOPROXY: https://proxy.golang.org
-          RELAY_VERSION: ${{ inputs.relay_version }}
+          RELAY_VERSION: ${{ inputs.relay_version || 'v0.6.0-rc.2' }}
         run: |
           uv run --offline --no-project python scripts/check/test_rc_draft.py
           uv run --offline --no-project python scripts/release/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft --replace-draft --relay-version "$RELAY_VERSION"

@@ -113,7 +113,7 @@ def serve(args):
     write(directory / "hub.json", {"listen": f"127.0.0.1:{hub_port}", "database": str(directory / "hub.db"),
                                    "adapter_directory": str(repository), "push": []})
     write(config, {"listen": "", "source_id": args.source_id, "hub_url": base,
-                   "adapters": {"directory": str(directory / "adapters"), "poll_seconds": 30,
+                   "adapters": {"directory": str(directory / "adapters"), "min_check_seconds": 300,
                                 "public_key": (directory / "publisher.pub").read_text().strip(),
                                 "managed": {"zcode": str(target)}}})
     children, installed = [], None
