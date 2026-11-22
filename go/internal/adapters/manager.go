@@ -9,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -30,6 +30,7 @@ type Installed struct {
 	Previous     *Package `json:"previous,omitempty"`
 	AgentVersion string   `json:"agent_version"`
 	Error        string   `json:"error,omitempty"`
+	Warning      string   `json:"warning,omitempty"`
 	ConfigBefore []byte   `json:"config_before,omitempty"`
 	ConfigAfter  []byte   `json:"config_after,omitempty"`
 }
@@ -172,7 +173,7 @@ func Detect(ctx context.Context, m Manifest) (string, error) {
 		}
 	}
 	if m.ID == "zcode" {
-		return zcodeDesktopVersion()
+		return zcodeHostVersion()
 	}
 	path, err := exec.LookPath(m.Command)
 	if err != nil {
@@ -239,6 +240,10 @@ func get(ctx context.Context, client *http.Client, base, token, path string, hea
 	return data, resp.StatusCode, nil
 }
 func download(ctx context.Context, c config.Bridge, p Package) ([]byte, error) {
+	cache := filepath.Join(c.Adapters.Directory, "downloads", p.SHA256+".zip")
+	if data, err := readBoundedFile(cache, p.Size); err == nil && validatePackageData(data, p) == nil {
+		return data, nil
+	}
 	partial := filepath.Join(c.Adapters.Directory, "downloads", p.SHA256+".part")
 	var data []byte
 	if p.Size <= 0 || p.Size > MaxPackageBytes || !hashPattern.MatchString(p.SHA256) {
@@ -271,86 +276,69 @@ func download(ctx context.Context, c config.Bridge, p Package) ([]byte, error) {
 		_ = os.Remove(partial)
 		return nil, errors.New("适配包摘要不匹配")
 	}
+	if err := AtomicFile(cache, data, 0600); err != nil {
+		return nil, err
+	}
 	_ = os.Remove(partial)
 	return data, nil
 }
 
-// Sync 只应由单个 Bridge 进程调用；dispatch 读取原子替换后的状态，不持有安装锁。
+// Sync 每次启动检查一次；失败仍尝试应用本地可信副本，并返回检查警告。
 func Sync(ctx context.Context, c config.Bridge, configPath string) error {
+	return SyncWithOptions(ctx, c, configPath, true)
+}
+func SyncWithOptions(ctx context.Context, c config.Bridge, configPath string, force bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if c.Adapters.Directory == "" {
+		return nil
+	}
+	checkErr := RefreshCatalog(ctx, c, force)
+	if err := ApplyCached(ctx, c, configPath); err != nil {
+		return err
+	}
+	return checkErr
+}
+
+// ApplyCached 不检查远端索引；setup仅传入本次明确选择的 managed。
+func ApplyCached(ctx context.Context, c config.Bridge, configPath string) error {
 	dir := c.Adapters.Directory
 	if dir == "" {
 		return nil
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	unlock, err := lockInstall(dir)
+	unlock, err := lockSync(dir)
 	if err != nil {
-		return errors.New("适配器安装正在进行")
+		return errors.New("适配器同步正在进行")
 	}
 	defer unlock()
-	if err = recoverInstall(dir); err != nil {
+	commit, err := lockInstall(dir)
+	if err != nil {
+		return errors.New("适配器提交正在进行")
+	}
+	err = recoverInstall(dir)
+	commit()
+	if err != nil {
 		return err
 	}
 	state, err := loadState(dir)
 	if err != nil {
 		return err
 	}
-	cached, _ := os.ReadFile(filepath.Join(dir, "index.cached.json"))
-	headers := map[string]string{}
-	if len(cached) > 0 && len(cached) <= 1<<20 {
-		sum := sha256.Sum256(cached)
-		headers["If-None-Match"] = `"` + hex.EncodeToString(sum[:]) + `"`
-	}
-	raw, status, err := get(ctx, transport.Client(10*time.Second), c.HubURL, c.Token, "/api/v1/adapters/index", headers, 1<<20)
-	if err != nil && c.RelayURL != "" {
-		raw, status, err = get(ctx, transport.Client(10*time.Second), c.RelayURL, c.RelayToken, "/api/v1/adapters/index", headers, 1<<20)
-	}
-	if err == nil && status == http.StatusNotModified {
-		if len(cached) == 0 {
-			return errors.New("索引304缺少已核验缓存")
-		}
-		raw = cached
-	}
+	index, err := cachedIndex(c)
 	if err != nil {
 		return err
 	}
-	publisherKey := strings.TrimSpace(c.Adapters.PublicKey)
-	if publisherKey == "" {
-		keyBytes, keyErr := os.ReadFile(filepath.Join(dir, "publisher.pub"))
-		if keyErr != nil {
-			return fmt.Errorf("发布公钥未配置：设置 adapters.public_key 或将公钥文件放入 %s", filepath.Join(dir, "publisher.pub"))
-		}
-		publisherKey = strings.TrimSpace(string(keyBytes))
-	}
-	index, err := Verify(raw, publisherKey)
-	if err != nil {
-		return err
-	}
-	digest := sha256.Sum256(raw)
-	hash := hex.EncodeToString(digest[:])
-	if index.Sequence < state.Sequence || index.Sequence == state.Sequence && state.IndexHash != "" && state.IndexHash != hash {
-		return errors.New("发布索引回退或同序号内容发生变化")
-	}
-	if err = AtomicFile(filepath.Join(dir, "index.cached.json"), raw, 0600); err != nil {
-		return err
-	}
-	if index.Sequence > state.Sequence {
-		state.Rejected = map[string]string{}
-	}
-	state.Sequence = index.Sequence
-	state.IndexHash = hash
 	candidates := map[string][]Package{}
 	excluded := map[string]bool{}
 	for _, id := range c.Adapters.Exclude {
 		excluded[id] = true
 	}
 	for _, p := range index.Packages {
-		// Windows RC 只安装原生进程钩子，保留旧登记但不重新探测或更新后置的命令/插件来源。
-		if runtime.GOOS == "windows" && (p.Kind != "executable" || (p.ConfigStyle != "process-hooks" && p.ID != "codex" && p.ID != "antigravity")) {
+		// 无控制入口的既有Windows包保留原安装范围；新控制包按平台筛选，不使用产品名单。
+		if runtime.GOOS == "windows" && p.Control == "" && (p.Kind != "executable" || (p.ConfigStyle != "process-hooks" && p.ID != "codex" && p.ID != "antigravity")) {
 			continue
 		}
-		if p.ID == "codex" && windowsDefersCodex(c.Adapters.Managed[p.ID], runtime.GOOS) {
+		if p.Control == "" && p.ID == "codex" && windowsDefersCodex(c.Adapters.Managed[p.ID], runtime.GOOS) {
 			continue
 		}
 		if c.Adapters.Managed[p.ID] == "" {
@@ -377,14 +365,45 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 		agentVersion := ""
 		var compatibilityErr error
 		compatible := false
+		deferredNotice := ""
 		// 每条发布线可支持不同宿主版本；不能让不兼容的新包挡住仍可用的旧包。
 		for _, candidate := range packages {
+			// 已保存的旧JSONC解析误判可在当前配置合法时解除，真正坏入口不解除。
+			if candidate.Kind == "opencode-plugin" && state.Rejected[candidate.SHA256] == "宿主配置必须为 JSON 对象；不覆盖无效配置" {
+				if raw, e := os.ReadFile(c.Adapters.Managed[id]); e == nil {
+					if _, e = hookConfig(c, configPath, candidate, raw); e == nil {
+						delete(state.Rejected, candidate.SHA256)
+					}
+				}
+			}
+			if reason := state.Rejected[candidate.SHA256]; reason != "" {
+				compatibilityErr = errors.New(reason)
+				continue
+			}
 			if candidate.Platform != runtime.GOOS+"/"+runtime.GOARCH && candidate.Platform != "any" {
 				compatibilityErr = errors.New("没有适用于当前平台的包")
 				continue
 			}
-			v, detectErr := Detect(ctx, candidate.Manifest)
+			if candidate.Control != "" {
+				if e := preparePackage(ctx, c, candidate); e != nil {
+					compatibilityErr = e
+					continue
+				}
+			}
+			v, detectErr := detectPackage(ctx, c, candidate)
 			if detectErr != nil {
+				var deferred *deferredPackage
+				if errors.As(detectErr, &deferred) {
+					deferredNotice = deferred.notice
+					if _, ok := version(v); ok {
+						if _, e := hostCompatibility(v, candidate.Manifest); e == nil {
+							p = candidate
+							agentVersion = v
+							compatible = true
+						}
+					}
+					break
+				}
 				compatibilityErr = detectErr
 				continue
 			}
@@ -400,22 +419,44 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 		old := state.Installed[id]
 		old.Target = p.Version
 		old.AgentVersion = agentVersion
+		if deferredNotice != "" {
+			old.Error = ""
+			old.Warning = deferredNotice
+			state.Installed[id] = old
+			if compatible && (old.Package.Version != p.Version || old.Package.SHA256 != p.SHA256) {
+				if old.Package.Version == p.Version && old.Package.SHA256 != "" {
+					old.Error = "同一版本包内容不可修改"
+					state.Installed[id] = old
+					continue
+				}
+				next := Installed{Target: p.Version, Package: p, AgentVersion: agentVersion, Warning: deferredNotice}
+				if old.Package.SHA256 != "" {
+					previous := old.Package
+					next.Previous = &previous
+				}
+				before := cloneState(state)
+				state.Installed[id] = next
+				if err = installPackageOnly(c, p, before, state); err != nil {
+					state = before
+					old.Error = err.Error()
+					state.Installed[id] = old
+				}
+			}
+			continue
+		}
+		old.Warning = ""
 		if !compatible {
 			old.Error = compatibilityErr.Error()
 			state.Installed[id] = old
 			continue
 		}
 		state.Installed[id] = old
-		// 旧Bridge会把JSONC解析失败记成坏包；只解除这条已知误判，且先核验当前配置。
-		// 入口不可启动、解包或摘要错误的隔离不在此处解除。
-		if p.Kind == "opencode-plugin" && state.Rejected[p.SHA256] == "宿主配置必须为 JSON 对象；不覆盖无效配置" {
-			if raw, readErr := os.ReadFile(c.Adapters.Managed[id]); readErr == nil {
-				if _, configErr := hookConfig(c, configPath, p, raw); configErr == nil {
-					delete(state.Rejected, p.SHA256)
-				}
-			}
-		}
 		if old.Package.Version == p.Version && old.Package.SHA256 == p.SHA256 {
+			if !reflect.DeepEqual(old.Package, p) {
+				old.Error = "同一版本包元数据不可修改，请发布新版本"
+				state.Installed[id] = old
+				continue
+			}
 			if state.Rejected[p.SHA256] == "" {
 				old.Error = ""
 				state.Installed[id] = old
@@ -437,31 +478,8 @@ func Sync(ctx context.Context, c config.Bridge, configPath string) error {
 			state.Installed[id] = old
 			continue
 		}
-		data, err := download(ctx, c, p)
-		if err != nil {
+		if err := preparePackage(ctx, c, p); err != nil {
 			old.Error = err.Error()
-			state.Installed[id] = old
-			continue
-		}
-		tmp, err := os.MkdirTemp(dir, ".install-*")
-		if err != nil {
-			return err
-		}
-		err = Extract(data, tmp, p.Manifest)
-		if err == nil {
-			target := packageDir(dir, p)
-			if err = os.MkdirAll(filepath.Dir(target), 0700); err == nil {
-				if _, exists := os.Stat(target); exists == nil {
-					err = os.RemoveAll(tmp)
-				} else {
-					err = os.Rename(tmp, target)
-				}
-			}
-		}
-		_ = os.RemoveAll(tmp)
-		if err != nil {
-			old.Error = err.Error()
-			state.Rejected[p.SHA256] = err.Error()
 			state.Installed[id] = old
 			continue
 		}
@@ -493,8 +511,8 @@ func ReportState(c config.Bridge, lastErr error) Report {
 		return r
 	}
 	for id, p := range s.Installed {
-		status := Status{ID: id, Installed: p.Package.Version, Target: p.Target, AgentVersion: p.AgentVersion, Error: p.Error}
-		if id == "codex" && windowsDefersCodex(c.Adapters.Managed[id], runtime.GOOS) {
+		status := Status{ID: id, Installed: p.Package.Version, Target: p.Target, AgentVersion: p.AgentVersion, Error: p.Error, Warning: p.Warning}
+		if p.Package.Control == "" && id == "codex" && windowsDefersCodex(c.Adapters.Managed[id], runtime.GOOS) {
 			status.Warning = "由WSL管理共享接入，Windows保留现有钩子"
 			status.Error = ""
 		}
@@ -516,7 +534,11 @@ func Run(ctx context.Context, c config.Bridge, path string, reconnect <-chan str
 		return
 	}
 	var lastErr error
-	next := time.Time{}
+	selected, selectionErr := currentAdapterSelection(c, path)
+	lastErr = selectionErr
+	if selectionErr == nil {
+		lastErr = Sync(ctx, selected, path)
+	}
 	lastSent := time.Time{}
 	lastReport := ""
 	nextReport := time.Time{}
@@ -524,19 +546,6 @@ func Run(ctx context.Context, c config.Bridge, path string, reconnect <-chan str
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		if time.Now().After(next) {
-			selected, err := currentAdapterSelection(c, path)
-			if err != nil {
-				lastErr = err
-			} else {
-				lastErr = Sync(ctx, selected, path)
-			}
-			interval := c.Adapters.PollSeconds
-			if interval == 0 {
-				interval = 300
-			}
-			next = time.Now().Add(time.Duration(interval)*time.Second + time.Duration(rand.IntN(max(1, interval/5)))*time.Second)
-		}
 		report := ReportState(c, lastErr)
 		report.UpdatedAt = time.Time{}
 		raw, _ := json.Marshal(report)
@@ -571,10 +580,13 @@ func Run(ctx context.Context, c config.Bridge, path string, reconnect <-chan str
 }
 
 func Dispatch(ctx context.Context, c config.Bridge, id, hook string, input []byte) ([]byte, error) {
+	// 选版等待与转换共享原有两秒预算，不叠加延长宿主hook等待。
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	if !identifier.MatchString(id) {
 		return nil, errors.New("适配器 ID 无效")
 	}
-	state, err := loadState(c.Adapters.Directory)
+	state, err := dispatchState(ctx, c.Adapters.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -584,8 +596,6 @@ func Dispatch(ctx context.Context, c config.Bridge, id, hook string, input []byt
 	}
 	p := installed.Package
 	entry := filepath.Join(packageDir(c.Adapters.Directory, p), filepath.FromSlash(p.Entry))
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	cmd := hostCommand(ctx, entry, "--hook", hook, "--source", c.SourceID)
 	cmd.Stdin = bytes.NewReader(input)
 	var output limitedBuffer
@@ -610,6 +620,11 @@ func cloneState(s State) State {
 	return copy
 }
 func rollback(c config.Bridge, id, failedHash, reason string) error {
+	syncUnlock, syncErr := lockSync(c.Adapters.Directory)
+	if syncErr != nil {
+		return syncErr
+	}
+	defer syncUnlock()
 	unlock, err := lockInstall(c.Adapters.Directory)
 	if err != nil {
 		return err
@@ -649,7 +664,9 @@ func rollback(c config.Bridge, id, failedHash, reason string) error {
 			return err
 		}
 		if err = AtomicJSON(filepath.Join(c.Adapters.Directory, "state.json"), s); err == nil {
-			err = AtomicFile(path, target, 0600)
+			if !bytes.Equal(current, target) {
+				err = AtomicFile(path, target, 0600)
+			}
 		}
 		if err != nil {
 			_ = recoverInstall(c.Adapters.Directory)
@@ -662,6 +679,11 @@ func rollback(c config.Bridge, id, failedHash, reason string) error {
 
 // Disable 从当前有效配置中移除本工具所属钩子，保留用户后续增加的其他配置。
 func Disable(c config.Bridge, id, configPath string) error {
+	syncUnlock, syncErr := lockSync(c.Adapters.Directory)
+	if syncErr != nil {
+		return syncErr
+	}
+	defer syncUnlock()
 	path := c.Adapters.Managed[id]
 	if c.Adapters.Directory == "" || path == "" {
 		return errors.New("该 Agent 未在 adapters.managed 中启用")
@@ -670,8 +692,9 @@ func Disable(c config.Bridge, id, configPath string) error {
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	if err = recoverInstall(c.Adapters.Directory); err != nil {
+	err = recoverInstall(c.Adapters.Directory)
+	unlock()
+	if err != nil {
 		return err
 	}
 	state, err := loadState(c.Adapters.Directory)
@@ -689,6 +712,18 @@ func Disable(c config.Bridge, id, configPath string) error {
 	next, err := updateHookConfig(c, configPath, installed.Package, current, false)
 	if err != nil {
 		return fmt.Errorf("无法安全移除 AgentPulse 钩子，未修改 Agent 配置：%w", err)
+	}
+	commit, err := lockInstall(c.Adapters.Directory)
+	if err != nil {
+		return err
+	}
+	defer commit()
+	latest, e := os.ReadFile(path)
+	if e != nil {
+		return e
+	}
+	if !bytes.Equal(latest, current) {
+		return errors.New("宿主配置已外部修改，未停用")
 	}
 	before := cloneState(state)
 	delete(state.Installed, id)

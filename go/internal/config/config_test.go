@@ -122,7 +122,7 @@ func TestHubDefaultImageConfigLoadsWithoutOptionalEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != "0.0.0.0:18700" || c.Database != "/data/hub.db" || c.WebDirectory != "/web" || c.AdapterDirectory != "/repository" {
+	if c.Listen != "0.0.0.0:18700" || c.Database != "/data/hub.db" || c.WebDirectory != "/web" || c.AdapterDirectory != "/data/adapters" || c.AdapterSeedDirectory != "/repository" {
 		t.Fatalf("容器默认路径或监听地址错误：%+v", c)
 	}
 	if c.Token != "" || c.RelayURL != "" || c.RelayToken != "" {

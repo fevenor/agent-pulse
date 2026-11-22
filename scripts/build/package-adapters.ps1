@@ -14,6 +14,7 @@ foreach ($adapter in @('zcode','codex','antigravity')) {
     $manifest = Get-Content -Raw (Join-Path $projectRoot "adapters/$adapter/manifest.json") | ConvertFrom-Json
     $manifest.platform = 'windows/amd64'
     $manifest.entry = 'adapter.exe'
+    $manifest.control = 'adapter.exe'
     if ($adapter -eq 'antigravity') { $manifest.command = 'Antigravity.exe'; $manifest.agent_min = '2.32.1'; $manifest.agent_max = '2.32.1' }
     $manifestPath = Join-Path $projectRoot "dist/adapter-build-windows/$adapter-manifest.json"
     [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 12))
@@ -23,6 +24,6 @@ foreach ($adapter in @('zcode','codex','antigravity')) {
     $packages += Get-Content -Raw $packagePath | ConvertFrom-Json
 }
 # Windows交付三类原生包；-NativeOnly保留为既有构建参数。
-# OpenCode 通用插件随 Linux 发布，不代表 Windows 宿主属于当前支持范围。
+# OpenCode 插件与随包控制入口随 Linux 发布，不代表 Windows 宿主属于当前支持范围。
 [IO.File]::WriteAllText((Join-Path $repositoryPath 'index-input.json'), (@{sequence=$Sequence;packages=$packages} | ConvertTo-Json -Depth 20))
 Write-Output 'Windows 适配包和未签名索引已生成；当前范围为 ZCode、Codex与Antigravity，真实加载与已验能力分别记录。'

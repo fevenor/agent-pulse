@@ -1,5 +1,5 @@
 {
-  "version": "0.1.11",
+  "version": "0.1.12",
   "format": 1,
   "protocol": 1,
   "platform": "windows/amd64",
@@ -18,5 +18,7 @@
     "PostToolUse": "",
     "PermissionRequest": "",
     "PostToolUseFailure": ""
-  }
+  },
+  "name": "ZCode",
+  "control": "adapter.exe"
 }

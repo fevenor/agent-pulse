@@ -17,7 +17,7 @@
 | Agent 接入组件 | `xxx-adapter` | 对接具体 Agent 的 hook/plugin，转换为统一事件 |
 | 桌面小组件 | `agent-pulse-tray` | 首版用户 Windows 桌面；托盘、会话列表、提醒、设备状态上报和已读同步，结构上保留 macOS/Linux 扩展能力 |
 
-接入范围包含 OpenCode、Codex、Antigravity、ZCode 和 Qoder，但不是每个产品都覆盖每个平台。Linux 接入 OpenCode、Codex、Antigravity CLI/WSL桌面执行器和 Qoder 中国 CLI；Windows 接入 ZCode、Codex/ChatGPT本地任务与 Antigravity App。Windows和WSL按真实hook执行环境分别运行Bridge，不由Tray代理或管理WSL服务。云端编排任务不以本地工具运行冒充本地hook支持。用户关注的主任务事件及宿主已提供的可见内容必须接入；主子归属验证是实施工作，只有缺少原生能力或可靠身份时才保留明确受限项，不将工具失败误报为主任务失败。真实宿主、模型、桌面与手机验收边界单独记录。
+接入范围包含 OpenCode、Codex、Antigravity、ZCode 和 Qoder，但不是每个产品都覆盖每个平台。Linux 接入 OpenCode、Codex、Antigravity CLI/WSL桌面执行器、Qoder 中国 CLI及ZCode Server；Windows 接入 ZCode、Codex/ChatGPT本地任务与 Antigravity App。ZCode Server由实际Linux主机的独立Bridge接入，WSL和SSH连接方式共用同一适配，不由Tray代理或管理远程服务。Windows和各Linux环境按真实hook执行位置分别保留来源身份与配置。云端编排任务不以本地工具运行冒充本地hook支持。用户关注的主任务事件及宿主已提供的可见内容必须接入；主子归属验证是实施工作，只有缺少原生能力或可靠身份时才保留明确受限项，不将工具失败误报为主任务失败。源码支持不等于公开包可用，真实宿主、模型、桌面与手机验收边界单独记录。
 
 ## 2. 部署与通信
 
@@ -104,7 +104,7 @@ Hub 提供简洁的 Web 管理界面，实时展示：
 ### 3.4 Adapter 独立更新
 
 - Adapter 与 Bridge 分别发布，产品专属事件映射和接入修复不得要求每台主机重新部署 Bridge；通用协议或基础运行能力修改时一并更新本项目相关组件，开发阶段不维护旧接收器支持。
-- Bridge 初次安装后，可从配置的 Hub 自动检查并获取兼容适配包；离线主机恢复连接后补更新，经 Relay 连接的主机也能获取。新 Agent 在本机受管理范围内且已安装时可自动接入。
+- Hub支持独立GitHub发布和离线签名包导入，默认每天上海时间02:00检查，可配置或关闭。Bridge每次启动检查一次；setup与显式同步按可配置最小间隔检查并提供强制同步，检查失败使用可信本地副本。日常运行及重连不检查更新，经Relay也可获取。新增Agent须用户启用一次，普通后续包、探测和hook更新不需要升级Hub/Bridge。详细规则见[按需同步设计](adapter-repository-update-proposal.md)。
 - 本地 hook 使用稳定入口，包切换不修改调用路径。更新保留用户已有 hook/plugin 配置，校验失败继续使用旧版本，并支持集中指定版本、单机固定版本和回滚。
 - 只执行可信发布者的适配包；包的来源、内容摘要及 当前格式、Agent 版本政策及目标平台均须校验。免登录的 Web 管理页不得发布可执行代码。
 - Hub 展示目标版本、已安装版本、实际生效版本和失败原因。原生插件只能在 Agent 重新加载或重启后生效时明确标记，不声称任意插件均可热更新，也不强行中断用户的 Agent。

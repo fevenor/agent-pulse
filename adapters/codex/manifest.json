@@ -1,5 +1,5 @@
 {
-  "version": "0.2.13",
+  "version": "0.2.14",
   "format": 1,
   "protocol": 1,
   "platform": "linux/amd64",
@@ -19,5 +19,7 @@
     "PermissionRequest": "",
     "PreToolUse": "request_user_input|AskUserQuestion|ask_user_question",
     "PostToolUse": ""
-  }
+  },
+  "name": "Codex / ChatGPT 本地任务",
+  "control": "adapter"
 }

@@ -136,7 +136,7 @@ func (b *Bridge) enqueueTurnLocked(e protocol.Event, turn string) (int, bool) {
 }
 func (b *Bridge) enqueueTurnWithCollectorLocked(e protocol.Event, turn, collector string) (int, bool) {
 	key := e.Agent + "\x00" + e.SessionID
-	if e.Agent != "antigravity" || turn == "" {
+	if turn == "" {
 		return b.enqueueWithCollectorLocked(e, collector)
 	}
 	if len(turn) > 256 {
@@ -185,7 +185,7 @@ func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector string) 
 		return 503, false
 	}
 	// 明确关闭会话后给最终记录一个短交付窗口，再回收未结束的观察进程；不使用任务空闲超时。
-	if e.Agent == "antigravity" {
+	if e.Kind != "session.closed" {
 		if current := b.observations[e.Agent+"\x00"+e.SessionID]; current != nil && !current.done {
 			current.cancel()
 			current.done = true

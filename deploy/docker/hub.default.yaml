@@ -5,6 +5,8 @@ token: "${env:AGENT_PULSE_TOKEN:-}"
 relay_url: "${env:AGENT_PULSE_RELAY_URL:-}"
 relay_token: "${env:AGENT_PULSE_RELAY_TOKEN:-}"
 web_directory: "/web"
-adapter_directory: "/repository"
+adapter_directory: "/data/adapters"
+# 镜像仓库仅用于首次初始化，后续使用持久目录，不随镜像回退。
+adapter_seed_directory: "/repository"
 reminder_ttl_seconds: 86400
 push: []

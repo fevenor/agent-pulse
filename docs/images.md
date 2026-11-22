@@ -69,7 +69,7 @@ uv run --offline --no-project python scripts/release/publish-hub-release.py \
   --tool ./bin/agent-pulse-adapters --output ./dist/hub-publish
 ```
 
-准备脚本复用 Go 发布工具验签、核对包摘要与大小，只复制公开公钥、索引和不可变包；OCI 归档先核对摘要，拒绝路径越界、链接及非法文件类型。它不读取私钥，不构建、不推送镜像，不覆盖已有输出。命名上下文仅向 Buildx 提供本地 OCI 构建，最终镜像包含默认配置、网页和 `/repository`，普通用户无需挂载包仓库或手填公钥。
+准备脚本复用 Go 发布工具验签、核对包摘要与大小，只复制公开公钥、索引和不可变包；OCI 归档先核对摘要，拒绝路径越界、链接及非法文件类型。它不读取私钥，不构建、不推送镜像，不覆盖已有输出。命名上下文仅向 Buildx 提供本地 OCI 构建，最终镜像包含默认配置、网页和初始`/repository`；启动时仅首次复制到持久`/data/adapters`并固定公钥，后续活动仓库不被镜像覆盖，独立adapter发布无需重建Hub镜像，普通用户无需挂载包仓库或手填公钥。
 
 发布采用 Linux 原生环境；Windows 可以进行脚本与目录准备回归，但不能替代 Linux 容器验收。已经由发布者验证的本地基准镜像仍可显式使用 `--base-image <镜像或digest>`，仅是维护入口，不作为第三种用户交付物。
 

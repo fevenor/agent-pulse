@@ -29,11 +29,13 @@ type setupAgent struct {
 	Manifest                      Manifest
 	Version                       string
 	Detected                      bool
+	Deferred                      bool
+	Notice                        string
 }
 
 // SetupInteractive 扫描当前用户已安装的支持 Agent，逐项询问启用、禁用或跳过。
 // 它只修改明确选择的宿主配置文件；运行中的 Agent 是否立即重新加载由宿主决定。
-func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out io.Writer) error {
+func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out io.Writer, forceSync ...bool) error {
 	if strings.TrimSpace(configPath) == "" {
 		return errors.New("配置路径不能为空")
 	}
@@ -88,7 +90,22 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 		c.Adapters.Managed = map[string]string{}
 	}
 
-	agents := selectSetupAgents(scanSetupAgents(ctx), c.Adapters.Managed)
+	// 共享配置获取失败不阻断setup；本地公钥与可信副本仍可用。
+	resolved, resolveErr := clientconfig.Resolve(ctx, c, absolute)
+	if resolveErr != nil {
+		fmt.Fprintf(out, "Hub接入信息检查失败，使用本地配置：%v\n", resolveErr)
+	} else {
+		c = resolved
+	}
+	force := len(forceSync) > 0 && forceSync[0]
+	if checkErr := RefreshCatalog(ctx, c, force); checkErr != nil {
+		fmt.Fprintf(out, "适配清单检查失败，使用本地可信副本：%v\n", checkErr)
+	}
+	catalog, catalogErr := setupCatalog(ctx, c, absolute)
+	if catalogErr != nil {
+		fmt.Fprintf(out, "适配目录提示：%v\n", catalogErr)
+	}
+	agents := selectSetupAgents(catalog, c.Adapters.Managed)
 	if len(agents) == 0 {
 		if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
 			return err
@@ -107,16 +124,20 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	results := map[string]string{}
 	for _, agent := range agents {
 		current := c.Adapters.Managed[agent.ID]
-		if agent.ID == "codex" && strings.TrimSpace(os.Getenv("CODEX_HOME")) != "" {
+		if agent.Manifest.Control != "" && agent.ConfigPath != "" || agent.ID == "codex" && strings.TrimSpace(os.Getenv("CODEX_HOME")) != "" {
 			current = agent.ConfigPath
 		}
 		if current == "" {
 			current = agent.ConfigPath
 		}
-		if agent.ID == "codex" && windowsDefersCodex(current, runtime.GOOS) {
+		if agent.Deferred || agent.Manifest.Control == "" && agent.ID == "codex" && windowsDefersCodex(current, runtime.GOOS) {
 			paths[agent.ID] = current
-			results[agent.ID] = "由WSL管理共享接入，已保留现有钩子"
-			fmt.Fprintf(out, "\n%s：由WSL管理共享接入，保持现有配置；请在对应WSL中维护。\n", agent.Name)
+			notice := agent.Notice
+			if notice == "" {
+				notice = "由WSL管理共享接入，已保留现有钩子"
+			}
+			results[agent.ID] = notice
+			fmt.Fprintf(out, "\n%s：%s。\n", agent.Name, notice)
 			continue
 		}
 		state := "未启用"
@@ -202,21 +223,16 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 	fmt.Fprintf(out, "\n已更新 Bridge 配置：%s\n", absolute)
 
 	if len(changed) > 0 {
-		resolved, resolveErr := clientconfig.Resolve(ctx, c, absolute)
-		if resolveErr != nil {
+		resolved := c
+		if key, keyErr := publisherKey(c); keyErr != nil || key == "" {
 			for id := range changed {
-				results[id] = "配置已保存，但无法连接 Hub，接入尚未完成"
+				results[id] = "配置已保存，但缺少可信发布公钥，接入尚未完成"
 			}
-			fmt.Fprintf(out, "无法从 Hub 获取接入信息：%v\n", resolveErr)
-		} else if resolved.Adapters.PublicKey == "" {
-			for id := range changed {
-				results[id] = "配置已保存，但 Hub 未提供发布公钥，接入尚未完成"
-			}
-			fmt.Fprintln(out, "Hub 尚未提供适配包发布公钥，请先联系 Hub 部署者补齐。")
+			fmt.Fprintln(out, "请先配置可信的适配包发布公钥。")
 		} else {
 			// setup 只同步本次明确选择的宿主，避免顺带修改其他已授权 Agent。
 			resolved.Adapters.Managed = changed
-			if syncErr := Sync(ctx, resolved, absolute); syncErr != nil {
+			if syncErr := ApplyCached(ctx, resolved, absolute); syncErr != nil {
 				for id := range changed {
 					results[id] = "适配包安装失败：" + syncErr.Error()
 				}
@@ -250,7 +266,7 @@ func SetupInteractive(ctx context.Context, configPath string, in io.Reader, out 
 			fmt.Fprintf(out, "已保存 Agent 配置文件：%s\n", path)
 		}
 	}
-	printSetupSummary(out, agents, paths, results, absolute, changed["codex"] != "" && results["codex"] == "接入配置已完成")
+	printSetupSummary(out, agents, paths, results, absolute, changed["codex"] != "" && results["codex"] == "接入配置已完成" && setupLegacyCodex(agents))
 	for id := range changed {
 		if results[id] != "接入配置已完成" {
 			return &SetupIncompleteError{Reason: "部分 Agent 接入配置未完成，请按上面的结果排查后重新运行 setup"}
@@ -273,11 +289,15 @@ func printSetupSummary(out io.Writer, agents []setupAgent, paths, results map[st
 			versionText = "未检测到或版本无法识别"
 		}
 		fmt.Fprintf(out, "\n%s\n  版本：%s\n  配置路径：%s\n  结果：%s\n", agent.Name, versionText, paths[agent.ID], results[agent.ID])
+		if results[agent.ID] == "接入配置已完成" && agent.Notice != "" {
+			fmt.Fprintln(out, "  提示："+agent.Notice)
+		}
 	}
 	fmt.Fprintf(out, "\n本次配置操作已结束。Bridge 配置文件：%s\n", configPath)
 	if codexEnabled {
 		fmt.Fprintln(out, "Codex CLI：请在 /hooks 中确认 AgentPulse 钩子已审核并信任；已信任的无需重复操作。")
 	}
+	fmt.Fprintln(out, "配置写入不代表运行中宿主已热加载；请按宿主规则重新加载或重启。未自动终止任何Agent。")
 	fmt.Fprintln(out, "以后需要添加、停用 Agent 或调整配置路径，可运行 agent-pulse-bridge setup 修改。")
 }
 
@@ -307,6 +327,7 @@ func setupAgentCatalog(home, platform string) []setupAgent {
 		{ID: "antigravity", Name: "Antigravity CLI", Command: "agy", ConfigPath: filepath.Join(home, ".gemini", "config", "hooks.json"), Manifest: Manifest{ID: "antigravity", Command: "agy"}},
 		{ID: "qoderclicn", Name: "Qoder 中国版 CLI", Command: "qoderclicn", ConfigPath: filepath.Join(home, ".qoder-cn", "settings.json"), Manifest: Manifest{ID: "qoderclicn", Command: "qoderclicn"}},
 		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: defaultOpenCodeConfigPath(home), Manifest: Manifest{ID: "opencode", Command: "opencode"}},
+		{ID: "zcode", Name: "ZCode Server（Linux / WSL / SSH）", Command: "zcode", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "zcode"}},
 	}
 }
 
@@ -326,7 +347,7 @@ func scanSetupAgents(ctx context.Context) []setupAgent {
 func selectSetupAgents(items []setupAgent, managed map[string]string) []setupAgent {
 	selected := make([]setupAgent, 0, len(items))
 	for _, item := range items {
-		if item.Detected || managed[item.ID] != "" {
+		if item.Detected || item.Deferred || managed[item.ID] != "" {
 			selected = append(selected, item)
 		}
 	}

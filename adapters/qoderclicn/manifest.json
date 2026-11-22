@@ -1,5 +1,5 @@
 {
-  "version": "0.2.13",
+  "version": "0.2.14",
   "format": 1,
   "protocol": 1,
   "platform": "linux/amd64",
@@ -23,5 +23,7 @@
     "PostToolUseFailure": "",
     "Elicitation": "",
     "ElicitationResult": ""
-  }
+  },
+  "name": "Qoder 中国版 CLI",
+  "control": "adapter"
 }

@@ -12,6 +12,7 @@ services:
       - hub-data:/data
       # 高级用途：挂载自定义运行配置或替换已验签的发布仓库。
       # - ./hub.custom.yaml:/etc/agent-pulse/hub.yaml:ro
+      # 初始种子可选；活动仓库自动保存到/data/adapters。
       # - ./repository:/repository:ro
 volumes:
   hub-data:

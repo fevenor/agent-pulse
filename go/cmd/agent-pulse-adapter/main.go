@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"agent-pulse/internal/adapters"
 	"agent-pulse/internal/event"
 	"agent-pulse/protocol"
 )
@@ -25,6 +26,7 @@ func main() {
 }
 func run() error {
 	fs := flag.NewFlagSet("adapter", flag.ContinueOnError)
+	control := fs.Bool("control", false, "返回宿主探测或配置计划，不写文件")
 	hook := fs.String("hook", "", "原生 hook 名")
 	identityCheck := fs.Bool("check-identity", false, "检查待确认会话身份，仅返回main/child/unknown")
 	observe := fs.Bool("observe", false, "观察已登记本轮的原生终态")
@@ -33,6 +35,21 @@ func run() error {
 	diagnosticDir := fs.String("identity-diagnostics", os.Getenv("AGENT_PULSE_IDENTITY_DIAGNOSTICS"), "仅Antigravity：将本次身份判断白名单写入已存在的私有诊断目录")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+	if *control {
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, (2<<20)+1))
+		if err != nil || len(raw) > 2<<20 {
+			return fmt.Errorf("适配控制输入读取失败或过大")
+		}
+		var request adapters.ControlRequest
+		if json.Unmarshal(raw, &request) != nil || request.Package.ID != adapterID {
+			return fmt.Errorf("适配控制请求无效")
+		}
+		reply, err := adapters.ExecuteControl(request)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(reply)
 	}
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, protocol.MaxHookBytes+1))
 	if err != nil {

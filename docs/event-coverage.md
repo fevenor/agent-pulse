@@ -7,8 +7,9 @@
 | Agent | 完成 | 等待输入 | 等待批准 | 失败、中断及结束 | 受限原因 |
 | --- | --- | --- | --- | --- | --- |
 | ZCode Windows | Stop的last_assistant_message | 提问工具的问题、选项、说明 | PermissionRequest的工具动作/目标及reason；不代替批准 | 普通工具完成/失败有记录；失败不等于主任务失败 | 强制取消、崩溃、关闭仍缺稳定主任务结束hook；原生工具归属与状态恢复必须实测 |
+| ZCode Server Linux（WSL / SSH） | Stop的last_assistant_message，复用Windows转换 | 提问工具的问题、选项、说明 | PermissionRequest的工具动作/目标及reason；不代替批准 | 工具结果/失败按现有规则记录，不猜取消或进程退出为完成 | 独立Linux Bridge读取Server用户的钩子与会话库；源码已接入、包未公开，真实验证范围见开发记录 |
 | Qoder 中国 CLI | Stop回答；StopFailure可附失败前可见输出 | 原生Elicitation表单及提问工具；ElicitationResult处理结果，不传用户答案 | PermissionRequest；PermissionDenied保留原因并恢复活动 | SessionEnd保留原生原因；工具失败只作普通记录 | 不传完整工具响应、error_details或认证URL；同请求不再重复混合弹框通知 |
-| Antigravity CLI / App | CLI仅使用实际提供的finalModelOutput；App 2.32.1的WSL原生Stop未发送回答字段，不从历史补读；正常停止仍遵循完全空闲规则，App主会话后台收尾可观察同轮原生空闲状态；明确错误和取消按独立终态处理 | ask_question的问题、选项及is_multi_select | ask_permission的动作/目标/原因；App的run_command明确BypassSandbox请求的CommandLine/toolSummary，普通命令不报批准 | Stop错误/中断；PostToolUse的工具错误为普通记录 | App/CLI/IDE按原生路径隔离元数据，ACP及内部会话过滤；App 2.32.1的WSL实测确认多选及工具前后事件；内部描述符字段不等于用户hook载荷 |
+| Antigravity CLI / App | CLI仅使用实际提供的finalModelOutput；App 2.32.1及2.33.0的WSL原生Stop未发送回答字段，不从历史补读；正常停止仍遵循完全空闲规则，App主会话后台收尾可观察同轮原生空闲状态；明确错误和取消按独立终态处理 | ask_question的问题、选项及is_multi_select | ask_permission的动作/目标/原因；App的run_command明确BypassSandbox请求的CommandLine/toolSummary，普通命令不报批准 | Stop错误/中断；PostToolUse的工具错误为普通记录 | App/CLI/IDE按原生路径隔离元数据，ACP及内部会话过滤；App 2.32.1的WSL实测确认多选及工具前后事件；内部描述符字段不等于用户hook载荷 |
 | OpenCode | 本轮最后助手消息的text.ended缓存；全部截断有提示 | 表单标题/字段/说明/选项；可按原生默认值确定的条件字段 | 批准摘要及明确路径目标；结果区分允许/拒绝 | 失败摘要、中断原因；工具/步骤/整理错误及重试提示为普通记录 | 不从历史补回答，不传用户答案、完整response.body或任意权限元数据；不可确定的条件字段明确受限 |
 | Codex CLI / 本地桌面 | 按已登记轮次读取原生最终task_complete的last_agent_message；无持久终态来源时保留Stop提供的字段 | request_user_input等已支持原生提问工具 | PermissionRequest的命令/可见原因 | 原生最终task_complete的error确认整轮失败；Interrupt与SessionEnd；工具返回恢复活动 | 只观察hook登记的主会话轮次及增量终态，不转换其他记录；无持久记录、来源不可读或超限时降为未知，不伪造失败 |
 
@@ -19,6 +20,7 @@
 ## 内容来源证据
 
 - ZCode 3.18.2 的实际捆绑运行代码将 Stop 的 responseText 序列化为 last_assistant_message，并将工具名、参数和子代理身份写入 Pre/PostToolUse。采用原生提问工具前后事件，不操作权限决定。
+- ZCode Server 3.18.2 Linux产物提供相同的原生process/argv钩子与标准输入字段，默认读取所在Linux用户的`.zcode/cli/config.json`；其会话表具有`title/title_source/parent_id`。WSL与SSH目标使用相同Server产物，不因桌面连接方式引入另一套转换；静态字段一致不代替各模式真实事件验收。
 - Qoder 1.1.89 的实际模块 fireStopEvent、firePreToolUseEvent、firePermissionRequestEvent、fireNotificationEvent 明确提供上述字段。
 - Antigravity 1.5.9 的实际二进制 protobuf 描述符：StopHookArgs.final_model_output/error，HookToolCall.args，PostInvocation.model_thinking 与模型输出是独立字段。提问工具原生 schema 提供 questions/question/options；不用字段猜测或扫描会话正文补答案。静态取证不等同真实模型任务验收。
 - OpenCode 2.0.20 的锁定原生 schema：session.text.ended 提供 assistantMessageID/ordinal/text；execution.succeeded 只带 sessionID；form/permission/failed 的可见字段按本页白名单提取。缓存仅当前最后助手消息，分片与会话数有界，重放/重试保留事件首次转换内容。

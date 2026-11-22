@@ -14,7 +14,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SCOPE = {("codex", "linux/amd64"), ("antigravity", "linux/amd64"),
-                  ("qoderclicn", "linux/amd64"), ("opencode", "any"), ("zcode", "windows/amd64"),
+                  ("qoderclicn", "linux/amd64"), ("opencode", "linux/amd64"), ("opencode", "linux/arm64"), ("zcode", "windows/amd64"),
+                  ("zcode", "linux/amd64"),
                   ("codex", "windows/amd64"), ("antigravity", "windows/amd64")}
 
 
@@ -33,7 +34,7 @@ def validate_tag(tag, version):
 def validate_scope(packages):
     actual = {(p["id"], p["platform"]) for p in packages}
     if actual != EXPECTED_SCOPE or len(packages) != len(EXPECTED_SCOPE):
-        raise ValueError("候选适配包范围不符：Windows 为 ZCode、Codex/ChatGPT和Antigravity，Linux 保留四类来源")
+        raise ValueError("候选适配包范围不符：Windows 为三类来源，Linux 为含 ZCode Server 的五类来源，OpenCode 控制入口按两架构分包")
 
 
 def require_draft(release, tag, commit):
@@ -159,28 +160,30 @@ def main():
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notes = f"""# AgentPulse {args.tag} 试运行草稿
 
-**保持草稿与预发布状态，尚未公开。** 本候选为完整通讯优化，Hub、Relay、Bridge、Windows Tray与Web需要一起更新；旧公开RC4和首候选保持，不推广stable/latest。
+**保持草稿与预发布状态，不公开、不推广latest。** 本候选更新Hub、Linux Bridge和Windows Tray内置Bridge；Relay沿用已验证标签，与本候选使用相同网络协议。公开推荐仍为RC4。
 
-## 本次行为
+## 本次能力
 
-- 首次建立状态基准，之后直接推送会话、未读、来源及设备变化，不再周期下载完整快照。已读、提醒失效、归档和删除明确同步。
-- 新提醒完整正文自动补齐并缓存，已读/状态变化不重传正文；隐藏详情暂停额外历史下载。离线已读与已缓存正文保持。
-- 断线在有界近期窗口内续接；Hub重启、窗口不足或游标缺口时重建元数据基准。权威状态确认回显客户端探测，保持35秒失联保护。
-- Bridge通过常驻连接发送小批事件并逐条等待持久确认，Relay在Hub离线时仍暂存事件和已读；原有去重与确认规则保持。
-- 大JSON压缩，Relay隧道传原始载荷，不再Base64包裹正文或ZIP；健康中继连接不定时断开。适配报告按变化发送，索引条件读取，包下载支持核验后的分块续传。
-- 增加应用载荷分类统计，不记录正文或凭据，不把其等同移动网络计费。普通运行历史不删除、不减少关键提醒。
+- Hub默认每日02:00（Asia/Shanghai）获取独立签名adapter发布，时间、时区可配置或关闭；支持管理员手工检查和离线目录/ZIP导入。所有平台包就绪后才推广索引，旧包供在途下载，失败保持旧仓库。
+- 镜像仓库只作首次种子，活动仓库存入持久数据目录；固定公钥及不可变包规则保持，回滚必须使用更高签名序号。
+- Bridge每次启动检查一次；setup/手工检查默认最小间隔300秒，--force-sync绕过时间节流。运行中与重连不检查；离线使用可信包副本，缺包或实际接入失败明确报告未完成。
+- Adapter自带名称、探测及hook配置生成的固定本机控制接口，普通新增来源、映射和配置格式无需更新Hub/Bridge。包与hook联动提交，保留用户其他配置、关闭开关及恢复日志，短提交不暴露半完成选版。
+- 新增ZCode Server Linux接入，WSL和SSH共用相同Server用户路径、原生process/argv和事件转换，不由Tray代理远程hook。OpenCode按amd64/arm64携带Go控制入口，不要求目标新增运行时。
+- 延续会话继续运行时清除此前未读、对象增量、正文缓存、原生身份与既有通知规则。不迁移或清空数据库，不自动终止Agent。
 
-## 产物与升级
+## 升级与产物
 
-四个用户附件为两架构Linux Bridge、Windows便携ZIP及SHA256SUMS。使用有权限账号取得草稿附件并校验摘要；源码由标签归档提供，维护清单保留在CI Artifact。
+用户草稿附件为两架构Linux Bridge、Windows便携ZIP和SHA256SUMS。按本提交校验后使用；完整平台adapter仓库由发布者本机签名，并另行提供独立adapter草稿及离线ZIP，草稿不是匿名在线安装来源。
 
-Hub成品为`{manifest['hub']}`，须由发布者附加同候选官方签名仓库后核验；Relay为`{manifest['relay']}`。旧Relay不支持本候选新隧道，须协调更新全部组件。先备份并排空待发，再切换预构建程序；保留原数据库、已读、来源、公钥、配置和手机模板，不重新setup或自动清空数据。原共享签名索引只递增。
+Hub成品为`{manifest['hub']}`，由发布者附加同提交签名仓库；Relay使用`{manifest['relay']}`。首次上线先升级核心与Bridge配置，将adapters.poll_seconds改为min_check_seconds，再导入较高序号adapter仓库。保留原公钥、来源身份、私人配置、数据卷和现行已读；停止Bridge前确认队列为空。共享Codex hook仍由WSL管理，Windows不能争抢写入。
 
-Linux raw安装脚本入口为`https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh`，仍以已公开版本为默认，试用草稿显式传入`--version {args.tag} --file /已核验文件 --sha256 对应摘要 --install-only`。Windows原路径替换EXE，保留tray.yaml和data。正文缓存可重建，不能以清缓存为由覆盖state.json。回滚保留升级期间现行事件及已读。
+用户安装入口仍为https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh，默认公开版本不变；草稿使用核验后的本地附件，不要求目标编译。
+
+后续普通adapter升级不需要重建Hub镜像或部署Bridge。实际安装和最近运行回执分别验收；hook写入不代表宿主热加载，按其规则重新加载。
 
 ## 验证边界
 
-自动回归、隔离服务和短时字节测量不等于所有目标日常使用或运营商流量账单。3小时活动和8小时后台需按实际测量记录；手机实收、自然模型最终失败和特殊桌面组合保留已有未验边界。首候选的阅读、历史定位和Antigravity身份修复继续保留。
+全模块Go竞态/静态检查、签名仓库安全、未知Agent动态接入及离线修复、平台构建和样例控制入口有回归证据。ZCode的WSL/SSH真实流程曾验证开始、继续、完成、提问和子身份过滤；新控制包在目标上的真实事件、Tray弹卡和手机实收需部署后分别确认。既有Windows PowerShell命令字符串hook在本机返回空stdout的用例未被宣称通过，不关闭防护或跳过断言。ARM模拟构建不代替ARM宿主实测，长期网络流量验收仍独立保留。
 
 构建提交：{args.commit}
 [完整候选构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})

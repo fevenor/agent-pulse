@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+	_ "time/tzdata"
 
 	"agent-pulse/internal/localipc"
 	"gopkg.in/yaml.v3"
@@ -23,17 +25,53 @@ type SourceLabel struct {
 }
 
 type Hub struct {
-	Sources            map[string]SourceLabel `json:"sources"`
-	Listen             string                 `json:"listen"`
-	Database           string                 `json:"database"`
-	Token              string                 `json:"token"`
-	ReminderTTLSeconds int                    `json:"reminder_ttl_seconds"`
-	Push               []Channel              `json:"push"`
-	RelayURL           string                 `json:"relay_url"`
-	RelayToken         string                 `json:"relay_token"`
-	WebDirectory       string                 `json:"web_directory"`
-	AdapterDirectory   string                 `json:"adapter_directory"`
-	AdapterPublicKey   string                 `json:"adapter_public_key"`
+	Sources                  map[string]SourceLabel   `json:"sources"`
+	Listen                   string                   `json:"listen"`
+	Database                 string                   `json:"database"`
+	Token                    string                   `json:"token"`
+	ReminderTTLSeconds       int                      `json:"reminder_ttl_seconds"`
+	Push                     []Channel                `json:"push"`
+	RelayURL                 string                   `json:"relay_url"`
+	RelayToken               string                   `json:"relay_token"`
+	WebDirectory             string                   `json:"web_directory"`
+	AdapterDirectory         string                   `json:"adapter_directory"`
+	AdapterSeedDirectory     string                   `json:"adapter_seed_directory"`
+	AdapterPublicKey         string                   `json:"adapter_public_key"`
+	AdapterRepositoryUpdates AdapterRepositoryUpdates `json:"adapter_repository_updates"`
+}
+
+// 日程只支持每日一个时刻，不引入通用任务调度器。
+type AdapterRepositoryUpdates struct {
+	GithubRepository string `json:"github_repository"`
+	DailyAt          string `json:"daily_at"`
+	Timezone         string `json:"timezone"`
+	Disabled         bool   `json:"disabled"`
+}
+
+func (c AdapterRepositoryUpdates) Defaults() AdapterRepositoryUpdates {
+	if c.GithubRepository == "" {
+		c.GithubRepository = "fevenor/agent-pulse"
+	}
+	if c.DailyAt == "" {
+		c.DailyAt = "02:00"
+	}
+	if c.Timezone == "" {
+		c.Timezone = "Asia/Shanghai"
+	}
+	return c
+}
+func (c AdapterRepositoryUpdates) Validate() error {
+	c = c.Defaults()
+	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(c.GithubRepository) {
+		return fmt.Errorf("github_repository 必须为 owner/repository")
+	}
+	if _, err := time.Parse("15:04", c.DailyAt); err != nil || len(c.DailyAt) != 5 {
+		return fmt.Errorf("daily_at 必须为 HH:MM")
+	}
+	if _, err := time.LoadLocation(c.Timezone); err != nil {
+		return fmt.Errorf("timezone 无效")
+	}
+	return nil
 }
 
 type Relay struct {
@@ -72,12 +110,12 @@ type Bridge struct {
 }
 
 type AdapterUpdates struct {
-	Directory   string            `json:"directory"`
-	PublicKey   string            `json:"public_key"`
-	PollSeconds int               `json:"poll_seconds"`
-	Pins        map[string]string `json:"pins"`
-	Exclude     []string          `json:"exclude"`
-	Managed     map[string]string `json:"managed"`
+	Directory       string            `json:"directory"`
+	PublicKey       string            `json:"public_key"`
+	MinCheckSeconds int               `json:"min_check_seconds"`
+	Pins            map[string]string `json:"pins"`
+	Exclude         []string          `json:"exclude"`
+	Managed         map[string]string `json:"managed"`
 }
 
 func LoadRelay(path string) (Relay, error) {
@@ -127,6 +165,10 @@ func LoadHub(path string) (Hub, error) {
 	}
 	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
 		return c, fmt.Errorf("listen 必须为 host:port")
+	}
+	c.AdapterRepositoryUpdates = c.AdapterRepositoryUpdates.Defaults()
+	if err := c.AdapterRepositoryUpdates.Validate(); err != nil {
+		return c, err
 	}
 	if c.Database == "" || c.ReminderTTLSeconds <= 0 {
 		return c, fmt.Errorf("database 必填，reminder_ttl_seconds 必须为正数")
@@ -191,11 +233,11 @@ func validateBridge(c Bridge) (Bridge, error) {
 	if err := relaySettings(c.RelayURL, c.RelayToken); err != nil {
 		return c, err
 	}
-	if c.Adapters.PollSeconds == 0 {
-		c.Adapters.PollSeconds = 300
+	if c.Adapters.MinCheckSeconds == 0 {
+		c.Adapters.MinCheckSeconds = 300
 	}
-	if c.Adapters.PollSeconds < 5 {
-		return c, fmt.Errorf("adapters.poll_seconds 至少为 5")
+	if c.Adapters.MinCheckSeconds < 5 {
+		return c, fmt.Errorf("adapters.min_check_seconds 至少为 5")
 	}
 	if c.Adapters.Directory == "" && (c.Adapters.PublicKey != "" || len(c.Adapters.Managed) > 0) {
 		return c, fmt.Errorf("配置 adapters.public_key 或 managed 前必须设置 adapters.directory")

@@ -13,7 +13,7 @@
 
 开始前确定：Hub 内网地址、目标架构、运行的 Agent 及版本、是否需要 Relay、手机渠道请求格式。Bridge setup 会为每个接入环境生成稳定主机指纹，默认采用系统主机名显示；需要跨主机统一命名时在 Hub 管理页修改。已有服务先检查并备份配置和数据，避免重复创建 Hub、重新生成签名私钥或覆盖 Agent 配置。获取源码、提交或推送等 Git 操作按使用者授权范围执行。
 
-部署 Hub/Relay 已发布镜像不需要 Go、Node.js 或 Rust。用户安装 Bridge 只需要 Bash、curl 和常用系统工具，不需要编译器。构建维护者使用 Go；构建适配包使用 Go 和 Volta 管理的 Node.js/pnpm。`scripts/build/package-adapters.sh` 当前产出 Linux amd64 适配包，不能直接用于 arm64；其他架构的构建边界见 [适配器文档](adapters.md)。
+部署 Hub/Relay 已发布镜像不需要 Go、Node.js 或 Rust。用户安装 Bridge 只需要 Bash、curl 和常用系统工具，不需要编译器。构建维护者使用 Go；构建适配包使用 Go 和 Volta 管理的 Node.js/pnpm。`scripts/build/package-adapters.sh` 当前命令包按构建目标架构输出，OpenCode另带amd64/arm64控制入口；不能将amd64命令包用于arm64；其他架构的构建边界见 [适配器文档](adapters.md)。
 
 ## 1. 部署 Hub
 
@@ -30,6 +30,14 @@ docker run -d --name agent-pulse-hub --restart unless-stopped \
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
 
 如 Hub 需要鉴权，先创建权限为 600 的环境文件 `hub.env` 并在其中设置 `AGENT_PULSE_TOKEN`；重建容器时用 `docker run --env-file hub.env ...` 传入，在 Bridge/Tray 配置同一令牌。若需 Relay，也在该文件中设置 `AGENT_PULSE_RELAY_URL` 和 `AGENT_PULSE_RELAY_TOKEN`，Bridge/Tray 会从 Hub 自动获取。手机推送与自定义 Push 渠道属于额外的 Hub 高级配置。也可使用 [默认 Compose 文件](../deploy/compose/hub.image.yaml)，填写镜像版本和端口绑定即可。不要在命令参数中直接输入真实令牌或将其提交到版本控制。
+## 适配仓库独立维护（当前源码功能，尚未发布）
+
+首次上线需更新Hub和Bridge（Windows内置Bridge随Tray重新构建分发），将已有Bridge配置中的`poll_seconds`改为`min_check_seconds`，不保留旧字段解析；之后普通新增Agent及adapter/hook更新只需发布签名包，不再更新核心程序。Hub默认每天上海时间02:00检查独立适配发布，时间/时区可配置，也可关闭；管理员使用`--update-adapters`或`--import-adapters`手工更新，详见[仓库更新设计](adapter-repository-update-proposal.md)。
+
+镜像`/repository`只作首次种子，可写仓库默认`/data/adapters`并随原数据卷保存，已有索引和公钥不被镜像覆盖。自行部署时设置可写`adapter_directory`；初始种子可通过`adapter_seed_directory`指定，固定公钥沿用原值。升级前备份原仓库、公钥及配置，不生成新身份或公钥，不清理业务数据库。
+
+Bridge每次启动检查一次；setup/手工同步默认最小间隔300秒，`--force-sync`可立即检查，失败使用可信本地副本。运行中及重连不检查，紧急更新需手工同步或重启。包更新与hook文件同步提交；宿主是否立即加载按其规则确认，不主动终止Agent。
+
 ## 发布维护者：自定义适配包或准备 RC 镜像
 
 普通使用者可跳过本节。Hub 正式 RC 镜像由发布者使用一套长期保管的私钥，随 RC 一并构建签名仓库；私钥不进入 Git、镜像或客户端。自建包与正式发布步骤见[适配包发布说明](adapters.md#发布者构建与签名)。
@@ -72,7 +80,7 @@ host_name: "" # 留空时使用系统主机名
 hub_url: "http://服务器内网地址:18700"
 adapters:
   directory: "/home/your-user/.local/share/agent-pulse/adapters"
-  poll_seconds: 300
+  min_check_seconds: 300
   managed:
     codex: "/home/your-user/.codex/hooks.json"
     qoderclicn: "/home/your-user/.qoder-cn/settings.json"
@@ -99,6 +107,8 @@ curl --fail http://127.0.0.1:18702/healthz
 ```
 
 手工同步使用当前 shell 的 PATH；服务启动后还应在管理页检查适配状态，确认 service 的 PATH 同样可找到宿主。用户服务若要在退出登录后继续运行，需要系统管理员启用该用户的 linger。Bridge 必须保留回环监听；同机 Windows 与 WSL 作为不同观察环境分别运行 setup，生成不同的主机指纹。
+
+当前源码新增ZCode Server Linux接入，尚未包含在公开RC4适配仓库。获得已核验的Linux Bridge及对应签名包后，在Server所在主机、相同用户运行setup，向导读取当前Server安装并管理该用户`.zcode/cli/config.json`；已有配置沿用来源标识、公钥和目录。WSL与SSH使用同一Linux流程，Tray不管理远程Bridge；具体范围见[ZCode Server接入说明](adapters.md#zcode-server-的-linux-接入)。不为这个未发布包修改公开安装脚本的默认版本。
 
 若配置 token 或 Relay token，可以使用权限为 600、版本控制外的 Bridge YAML 保存。若使用 `${env:变量名}`，这些变量必须同时在 systemd 服务及各 Agent 的 hook 进程环境中存在；仅放在 systemd 的 EnvironmentFile 会导致交互式 Agent hook 加载配置失败。
 

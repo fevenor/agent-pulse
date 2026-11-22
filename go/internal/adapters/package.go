@@ -41,6 +41,8 @@ type Manifest struct {
 	Hooks       map[string]string `json:"hooks,omitempty"`
 	ConfigStyle string            `json:"config_style,omitempty"`
 	DirectHooks []string          `json:"direct_hooks,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Control     string            `json:"control,omitempty"`
 }
 type Package struct {
 	Manifest
@@ -63,8 +65,17 @@ func (m Manifest) Validate() error {
 	if m.Kind != "executable" && m.Kind != "opencode-plugin" {
 		return errors.New("不支持的适配包运行方式")
 	}
-	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" {
+	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" && m.Control == "" {
 		return errors.New("不支持的宿主配置格式")
+	}
+	if m.Control != "" && (!fs.ValidPath(m.Control) || m.Control == "." || strings.ContainsAny(m.Control, "\\:")) {
+		return errors.New("适配控制入口无效")
+	}
+	if m.Control != "" && strings.TrimSpace(m.Name) == "" {
+		return errors.New("控制入口包必须提供用户可见名称")
+	}
+	if len(m.Name) > 256 || strings.ContainsAny(m.Name, "\r\n\x00") {
+		return errors.New("适配名称无效")
 	}
 	for _, value := range []string{m.Version, m.AgentMin, m.AgentMax} {
 		if value != "" {
@@ -247,6 +258,11 @@ func BuildPackage(source, repository string, m Manifest) (Package, error) {
 	if _, err = os.Stat(filepath.Join(source, filepath.FromSlash(m.Entry))); err != nil {
 		return p, errors.New("包入口不存在")
 	}
+	if m.Control != "" {
+		if info, e := os.Stat(filepath.Join(source, filepath.FromSlash(m.Control))); e != nil || !info.Mode().IsRegular() {
+			return p, errors.New("适配控制入口不存在")
+		}
+	}
 	sum := sha256.Sum256(buf.Bytes())
 	p.SHA256 = hex.EncodeToString(sum[:])
 	p.Size = int64(buf.Len())
@@ -347,7 +363,7 @@ func Extract(data []byte, directory string, m Manifest) error {
 			return errors.New("解压失败")
 		}
 		mode := fs.FileMode(0600)
-		if name == m.Entry && m.Kind == "executable" {
+		if name == m.Control || name == m.Entry && m.Kind == "executable" {
 			mode = 0700
 		}
 		if err = os.WriteFile(target, content, mode); err != nil {

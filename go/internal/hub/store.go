@@ -47,6 +47,9 @@ type Hub struct {
 }
 
 func Open(c config.Hub) (*Hub, error) {
+	if err := seedAdapterRepository(c); err != nil {
+		return nil, err
+	}
 	publisherKey, err := resolvePublisherKey(c.AdapterDirectory, c.AdapterPublicKey)
 	if err != nil {
 		return nil, err

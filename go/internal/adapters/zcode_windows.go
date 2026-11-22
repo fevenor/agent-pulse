@@ -12,7 +12,7 @@ import (
 )
 
 // 桌面宿主的 --version 会启动界面，改读 PE 版本资源；不依赖开发机安装目录。
-func zcodeDesktopVersion() (string, error) {
+func zcodeHostVersion() (string, error) {
 	var candidates []string
 	if path, err := exec.LookPath("ZCode.exe"); err == nil {
 		candidates = append(candidates, path)

@@ -22,6 +22,9 @@ import (
 
 // 被复制的测试程序只在明确的测试环境变量下模拟宿主和适配包。
 func TestMain(m *testing.M) {
+	if runControlFixture() {
+		os.Exit(0)
+	}
 	mode := os.Getenv("AGENT_PULSE_INSTALL_TEST_HELPER")
 	if mode == "hold-output" {
 		time.Sleep(3 * time.Second)

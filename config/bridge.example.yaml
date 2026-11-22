@@ -14,7 +14,7 @@ queue_bytes: 67108864
 #   directory: "/home/your-user/.local/share/agent-pulse/adapters"
 #   # 通常由 Bridge 直连 Hub 获取并按主机指纹固定信任；仅自建特殊场景需手工指定。
 #   # public_key: "发布者公钥 Base64 内容"
-#   poll_seconds: 300
+#   min_check_seconds: 300 # 仅setup/手工清单检查；启动总是检查，运行中不轮询
 #   pins: {}
 #   exclude: []
 #   # 仅下列显式列出的文件属于自动安装授权范围，保留其中其他条目。

@@ -89,6 +89,27 @@ uv run --offline --no-project python -X utf8 tests/e2e/windows_zcode.py stop --d
 
 默认配置为用户目录下的 `.zcode/cli/config.json`，可用 `--zcode-config` 指定其他测试配置；原配置备份保存在该忽略目录。`stop` 或一小时超时会停止自建进程并移除测试钩子，保留其他配置和钩子。整个测试目录含私人配置备份，不能提交或公开分发。
 
+## ZCode Server Linux（WSL / SSH）
+
+在Server所在Linux用户下运行，使用已经构建并核验的Linux Hub、Bridge、签名工具及ZCode适配器；用户安装流程不调用编译器。默认读取`.zcode/cli/config.json`，配置尚未创建也可安装，但必须先安装有效的ZCode Server。桌面连接同一用户和专用空项目，模型账号、测试请求及修改钩子须先获使用者授权。
+
+```sh
+uv run --offline --no-project python tests/e2e/zcode_linux.py serve \
+  --directory tmp/zcode-linux-native \
+  --binaries /已核验的Linux程序目录 --adapter-source /已核验的ZCode适配器目录
+# 在另一终端验证；真实提问及内部子任务完成后使用两个验证参数。
+uv run --offline --no-project python tests/e2e/zcode_linux.py verify \
+  --directory tmp/zcode-linux-native --require-question --require-child
+uv run --offline --no-project python tests/e2e/zcode_linux.py stop \
+  --directory tmp/zcode-linux-native
+```
+
+脚本启动仅监听回环、无手机渠道的隔离Hub及独立Bridge，使用一次性签名密钥，不读取或替换正式发布公钥、不更改既有Bridge服务。桌面选择对应WSL或SSH项目，新建专用任务并执行不访问文件的短回复、原生提问及内部子任务；普通问号文本不算提问，Hub中没有子会话也需结合原生数据库或工具调用确认实际产生过子任务。取消和崩溃不由正常完成推断。
+
+验证开始/继续/正常完成、非空正文及运行回执；`--require-question`核对原生问题正文，`--require-child`只读核对原生父子记录及Hub过滤。数据仅是隔离Hub实收，不自动等于Tray弹卡或手机实收。SSH目标可复制相同预构建及脚本，使用`--manifest`显式指定Linux清单；不为连接方式另建适配代码。
+
+`stop`及异常退出仅移除本测试拥有的钩子，测试期间的其他修改保留；未发生外部修改时精确恢复原文件，原先不存在的纯测试配置被撤销。备份和结果留在忽略的`tmp/`，不可提交或公开分发。撤销边界回归为`uv run --offline --no-project python scripts/check/test_zcode_linux_harness.py`。
+
 ## Antigravity 普通启动与 ACP 过滤
 
 ```sh

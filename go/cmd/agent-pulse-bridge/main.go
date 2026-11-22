@@ -51,11 +51,12 @@ func run() error {
 		}
 		return printVersion(os.Stdout, *asJSON)
 	case "setup":
+		force := fs.Bool("force-sync", false, "绕过清单检查最小间隔")
 		path := fs.String("config", defaultConfigPath(), "Bridge YAML 配置路径")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			return err
 		}
-		return adapters.SetupInteractive(context.Background(), *path, os.Stdin, os.Stdout)
+		return adapters.SetupInteractive(context.Background(), *path, os.Stdin, os.Stdout, *force)
 	case "check-config":
 		path := fs.String("config", defaultConfigPath(), "Bridge YAML 配置路径")
 		if err := fs.Parse(os.Args[2:]); err != nil {
@@ -139,6 +140,7 @@ func run() error {
 		}
 		return nil
 	case "sync-adapters":
+		force := fs.Bool("force-sync", false, "绕过清单检查最小间隔")
 		path := fs.String("config", defaultConfigPath(), "Bridge 配置")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			return err
@@ -151,7 +153,7 @@ func run() error {
 		if err != nil {
 			slog.Warn("Hub 客户端配置读取失败，将使用本地可用配置", "原因", err)
 		}
-		return adapters.Sync(context.Background(), resolved, *path)
+		return adapters.SyncWithOptions(context.Background(), resolved, *path, *force)
 	case "emit":
 		address := fs.String("address", "", "本机IPC地址（使用check-config获取）")
 		if err := fs.Parse(os.Args[2:]); err != nil {
@@ -220,11 +222,11 @@ func printHelp(w io.Writer) {
 
 用法：
   agent-pulse-bridge version [--json]          查询当前二进制版本、提交及摘要；也支持 --version
-  agent-pulse-bridge setup [--config 路径]       扫描已安装 Agent 并交互配置钩子
+  agent-pulse-bridge setup [--config 路径] [--force-sync]       扫描已安装 Agent 并交互配置钩子
   agent-pulse-bridge check-config [--config 路径] 验证配置并输出本机IPC地址
   agent-pulse-bridge health [--config 路径]      通过本机IPC检查健康与待发队列
   agent-pulse-bridge serve [--config 路径]       启动 Bridge 服务
-  agent-pulse-bridge sync-adapters [--config 路径] 手动检查并更新适配包
+  agent-pulse-bridge sync-adapters [--config 路径] [--force-sync] 手动检查并更新适配包
   agent-pulse-bridge emit --address IPC地址   从标准输入发送事件 JSON
 
 setup 会逐个询问是否启用或禁用支持的 Agent，只修改所选 Agent 配置。

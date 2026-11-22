@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"agent-pulse/internal/adapters"
@@ -22,7 +23,7 @@ func (b *Bridge) enqueueIdentity(e protocol.Event, cursor []byte, turn string) (
 	return b.enqueueIdentityLocked(e, cursor, turn)
 }
 func (b *Bridge) enqueueIdentityLocked(e protocol.Event, cursor []byte, turn string) (int, bool) {
-	if e.Agent != "antigravity" || len(cursor) == 0 || len(cursor) > 8192 || len(turn) > 256 {
+	if len(cursor) == 0 || len(cursor) > 8192 || len(turn) > 256 {
 		return 409, false
 	}
 	if b.observationContext.Err() != nil {
@@ -85,7 +86,7 @@ func (b *Bridge) observeIdentity(ctx context.Context, key string, pending *pendi
 			return
 		case <-time.After(delay):
 		}
-		identity, err := adapters.CheckIdentity(ctx, b.config, "antigravity", pending.cursor)
+		identity, err := adapters.CheckIdentity(ctx, b.config, strings.SplitN(key, "\x00", 2)[0], pending.cursor)
 		b.mu.Lock()
 		if b.identities[key] != pending {
 			b.mu.Unlock()

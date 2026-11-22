@@ -6,6 +6,6 @@ mkdir -p "$project_root/bin"
 cd "$project_root/go"
 GOTOOLCHAIN=local go build -trimpath -buildvcs=false -o "$project_root/bin/" ./cmd/agent-pulse-hub ./cmd/agent-pulse-bridge ./cmd/agent-pulse-client ./cmd/agent-pulse-relay ./cmd/agent-pulse-adapters ./cmd/agent-pulse-push-test
 
-for adapter_id in codex antigravity qoderclicn; do
+for adapter_id in codex antigravity qoderclicn zcode opencode; do
   GOTOOLCHAIN=local go build -trimpath -buildvcs=false -ldflags "-s -w -X main.adapterID=$adapter_id" -o "$project_root/bin/agent-pulse-adapter-$adapter_id" ./cmd/agent-pulse-adapter
 done

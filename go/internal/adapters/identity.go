@@ -14,10 +14,10 @@ import (
 
 // 身份检查仍调用已安装签名包，Bridge不解释任何产品数据库或文件路径。
 func CheckIdentity(ctx context.Context, c config.Bridge, id string, cursor []byte) (string, error) {
-	if id != "antigravity" || len(cursor) == 0 || len(cursor) > 8192 {
+	if !identifier.MatchString(id) || len(cursor) == 0 || len(cursor) > 8192 {
 		return "", errors.New("身份观察请求无效")
 	}
-	state, err := loadState(c.Adapters.Directory)
+	state, err := dispatchState(ctx, c.Adapters.Directory)
 	if err != nil {
 		return "", err
 	}

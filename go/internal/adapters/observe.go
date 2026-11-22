@@ -20,7 +20,7 @@ func Observe(ctx context.Context, c config.Bridge, id string, cursor []byte, emi
 	if !identifier.MatchString(id) || len(cursor) > 65536 {
 		return errors.New("本轮观察登记无效")
 	}
-	state, err := loadState(c.Adapters.Directory)
+	state, err := dispatchState(ctx, c.Adapters.Directory)
 	if err != nil {
 		return err
 	}

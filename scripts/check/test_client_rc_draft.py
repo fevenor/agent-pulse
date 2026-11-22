@@ -34,6 +34,17 @@ class ClientDraftTests(unittest.TestCase):
             with self.assertRaises(ValueError):module.validate_reuse(changed,manifest,tag)
         with self.assertRaises(ValueError):module.validate_reuse(release,{**manifest,"hub":"ghcr.io/example/agent-pulse-hub:v0.5.0-rc.4"},tag)
 
+    def test_published_seven_packages_do_not_require_retroactive_linux_zcode(self):
+        tag="v0.5.0-rc.4";release={"isDraft":False,"tagName":tag,"targetCommitish":"a"*40}
+        scope=(module.common.EXPECTED_SCOPE-{("zcode","linux/amd64"),("opencode","linux/amd64"),("opencode","linux/arm64")})|{("opencode","any")}
+        manifest={"tag":tag,"commit":"a"*40,"hub":"ghcr.io/example/agent-pulse-hub:"+tag,
+                  "relay":"ghcr.io/example/agent-pulse-relay:"+tag,
+                  "packages":[{"id":i,"platform":p} for i,p in scope]}
+        module.validate_reuse(release,manifest,tag)
+        for extra in (manifest["packages"][0],{"id":"other","platform":"linux/amd64"}):
+            with self.assertRaises(ValueError):
+                module.validate_reuse(release,{**manifest,"packages":manifest["packages"]+[extra]},tag)
+
     def test_only_client_assets_are_allowed(self):
         names=["agent-pulse-bridge-linux-amd64","agent-pulse-bridge-linux-arm64","windows-amd64.zip","SHA256SUMS.txt"]
         paths=[Path(n) for n in names];module.validate_client_assets(paths)

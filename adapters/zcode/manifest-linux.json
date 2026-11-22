@@ -1,0 +1,24 @@
+{
+  "version": "0.1.12",
+  "format": 1,
+  "protocol": 1,
+  "platform": "linux/amd64",
+  "kind": "executable",
+  "entry": "adapter",
+  "config_style": "process-hooks",
+  "id": "zcode",
+  "command": "zcode",
+  "agent_min": "3.18.2",
+  "agent_max": "3.18.2",
+  "hooks": {
+    "SessionStart": "",
+    "UserPromptSubmit": "",
+    "Stop": "",
+    "PreToolUse": "AskUserQuestion|ask_user_question",
+    "PostToolUse": "",
+    "PermissionRequest": "",
+    "PostToolUseFailure": ""
+  },
+  "name": "ZCode Server（Linux / WSL / SSH）",
+  "control": "adapter"
+}

@@ -1,6 +1,8 @@
 package adapters
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,18 @@ func hookConfig(c config.Bridge, configPath string, p Package, raw []byte) ([]by
 
 // 禁用与安装共用所有权匹配，只移除本 Bridge 配置所属的钩子。
 func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte, enable bool) ([]byte, error) {
+	if p.Control != "" {
+		reply, err := control(context.Background(), c, configPath, p, "configure", raw, enable)
+		return reply.Content, err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return updateHookConfigWithExecutable(c, configPath, p, raw, enable, exe)
+}
+
+func updateHookConfigWithExecutable(c config.Bridge, configPath string, p Package, raw []byte, enable bool, exe string) ([]byte, error) {
 	if p.Kind == "opencode-plugin" {
 		return updateOpenCodeJSONC(c, p, raw, enable)
 	}
@@ -27,10 +41,6 @@ func updateHookConfig(c config.Bridge, configPath string, p Package, raw []byte,
 		if json.Unmarshal(raw, &root) != nil || root == nil {
 			return nil, errors.New("宿主配置必须为 JSON 对象；不覆盖无效配置")
 		}
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, err
 	}
 	cfg, err := filepath.Abs(configPath)
 	if err != nil {
@@ -165,7 +175,9 @@ func recoverInstall(dir string) error {
 		return errors.New("安装中断后宿主配置被外部修改，请保留 pending.json 并人工合并")
 	}
 	if j.Existed {
-		err = AtomicFile(j.Path, j.Before, 0600)
+		if err != nil || !bytes.Equal(current, j.Before) {
+			err = AtomicFile(j.Path, j.Before, 0600)
+		}
 	} else {
 		err = os.Remove(j.Path)
 		if os.IsNotExist(err) {
@@ -205,7 +217,8 @@ func install(c config.Bridge, configPath string, p Package, before, after State)
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const root = %s, id = %s;
-const state = JSON.parse(readFileSync(%s, "utf8"));
+let state = JSON.parse(readFileSync(%s, "utf8"));
+try { state = JSON.parse(readFileSync(join(root, "pending.json"), "utf8")).state; } catch (error) { if (error.code !== "ENOENT") throw error; }
 const p = state.installed[id].package;
 const entry = join(root, "packages", id, p.version, p.sha256, p.entry);
 const plugin = (await import(pathToFileURL(entry).href)).default;
@@ -221,6 +234,19 @@ export default { ...plugin, setup(ctx) {
 		if err = AtomicFile(filepath.Join(c.Adapters.Directory, "loaders", p.ID, "index.ts"), []byte(loader), 0600); err != nil {
 			return err
 		}
+	}
+	// 配置生成、下载和探测均已结束，仅提交窗口与dispatch互斥。
+	unlock, err := lockInstall(c.Adapters.Directory)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	latest, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if !bytes.Equal(latest, raw) {
+		return errors.New("生成配置后宿主文件被外部修改，未覆盖")
 	}
 	journal := filepath.Join(c.Adapters.Directory, "pending.json")
 	if err = AtomicJSON(journal, installJournal{Path: path, Before: raw, After: next, Existed: existed, State: before}); err != nil {
@@ -274,6 +300,16 @@ func verifySetupHooks(c config.Bridge, configPath, id string) error {
 	}
 	if string(raw) != string(next) {
 		return errors.New("实际宿主配置中缺少当前钩子")
+	}
+	if p.Control != "" {
+		reply, err := control(context.Background(), c, configPath, p, "verify", raw, true)
+		if err != nil {
+			return err
+		}
+		if !reply.Enabled {
+			return errors.New("宿主钩子总开关已关闭；保留原选择，请在宿主中明确开启")
+		}
+		return nil
 	}
 	if p.ConfigStyle == "process-hooks" {
 		var root struct {

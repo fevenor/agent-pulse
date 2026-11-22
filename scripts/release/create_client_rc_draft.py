@@ -24,7 +24,13 @@ def validate_reuse(release,manifest,tag):
     for component in ("hub","relay"):
         if not str(manifest.get(component,"")).endswith("-"+component+":"+tag):
             raise ValueError("复用镜像与公开Release不符")
-    common.validate_scope(manifest.get("packages",[]))
+    packages=manifest.get("packages",[])
+    actual={(p["id"],p["platform"]) for p in packages}
+    # 客户端单独发布仍可原样复用已公开的七包仓库；不能要求旧附件追补新Linux来源。
+    published_scope=(common.EXPECTED_SCOPE-{("zcode","linux/amd64"),("opencode","linux/amd64"),("opencode","linux/arm64")})|{("opencode","any")}
+    previous_scope=published_scope|{("zcode","linux/amd64")}
+    if len(packages)!=len(actual) or actual not in (published_scope,previous_scope,common.EXPECTED_SCOPE):
+        raise ValueError("复用适配仓库必须保持已公开的七包或含Linux ZCode的完整八包或两架构OpenCode控制入口的九包集合")
 
 def validate_client_changes(files):
     blocked=("adapters/","go/internal/event/","go/internal/processmode/","go/internal/hub/","go/internal/relay/","go/cmd/agent-pulse-hub/","go/cmd/agent-pulse-relay/","web/hub/","protocol/")
@@ -109,7 +115,7 @@ def main():
     (maintenance/"candidate-manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     notes=f"""# AgentPulse {args.tag} 客户端修复草稿
 
-**保持草稿和预发布状态，不自动公开。** 本次只更新Linux Bridge及Windows Tray（含内置Bridge）；Hub、Relay和七个适配包沿用已公开{args.reuse_release}，没有构建/发布新镜像、重新签名仓库或改动旧Release。
+**保持草稿和预发布状态，不自动公开。** 本次只更新Linux Bridge及Windows Tray（含内置Bridge）；Hub、Relay和全部适配包沿用已公开{args.reuse_release}，没有构建/发布新镜像、重新签名仓库或改动旧Release。
 
 ## 修复
 

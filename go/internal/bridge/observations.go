@@ -34,7 +34,7 @@ func (b *Bridge) registerObservation(req protocol.LocalObservation) error {
 		return nil
 	}
 	if previous := b.observations[key]; previous != nil {
-		if previous.turn == req.TurnID && (!previous.done || req.Adapter != "antigravity") {
+		if previous.turn == req.TurnID && !previous.done {
 			return nil
 		}
 		previous.cancel()

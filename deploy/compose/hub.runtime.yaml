@@ -1,6 +1,8 @@
 listen: "0.0.0.0:18700"
 database: "/data/hub.db"
 web_directory: "/web"
-adapter_directory: "/repository"
+adapter_directory: "/data/adapters"
+# 镜像仓库仅用于首次初始化，后续使用持久目录，不随镜像回退。
+adapter_seed_directory: "/repository"
 push: []
 # 按需添加 relay_url/relay_token，并在 Compose environment 传入对应变量。

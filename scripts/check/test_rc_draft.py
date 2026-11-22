@@ -41,7 +41,8 @@ class DraftTests(unittest.TestCase):
         self.assertIn('require_draft(previous, args.tag, previous["targetCommitish"])',text)
         self.assertIn('"delete-asset"',text)
         workflow=(Path(__file__).resolve().parents[2]/".github/workflows/release-draft.yml").read_text(encoding="utf-8")
-        self.assertIn('publish_relay: true',workflow)
+        self.assertIn("publish_relay: ${{ inputs.relay_version == '' }}",workflow)
+        self.assertIn('--relay-version',workflow)
         self.assertNotIn('--relay-version v0.5.0-rc.3',workflow)
 
     def test_only_matching_rc_tag(self):
@@ -65,6 +66,15 @@ class DraftTests(unittest.TestCase):
         module.validate_scope(packages)
         with self.assertRaises(ValueError):
             module.validate_scope(packages + [{"id": "qoderclicn", "platform": "windows/amd64"}])
+
+    def test_linux_zcode_server_is_required_without_changing_windows_scope(self):
+        packages = [{"id": i, "platform": p} for i, p in module.EXPECTED_SCOPE]
+        self.assertEqual(len(packages), 9)
+        self.assertIn(("opencode", "linux/arm64"), module.EXPECTED_SCOPE)
+        self.assertIn(("zcode", "linux/amd64"), module.EXPECTED_SCOPE)
+        self.assertEqual(sum(p["platform"] == "windows/amd64" for p in packages), 3)
+        with self.assertRaises(ValueError):
+            module.validate_scope([p for p in packages if (p["id"], p["platform"]) != ("zcode", "linux/amd64")])
 
     def test_bridge_assets_are_complete_and_bound_to_hash_and_architecture(self):
         with tempfile.TemporaryDirectory() as value:
