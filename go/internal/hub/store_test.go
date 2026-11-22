@@ -151,8 +151,12 @@ func TestMainScopeAndReactivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Unread) != 1 || s.Unread[0].Valid || s.Sessions[0].State != "running" {
-		t.Fatal("恢复活动未使等待提醒失效")
+	if len(s.Unread) != 0 || s.Sessions[0].State != "running" {
+		t.Fatal("恢复活动未清除等待提醒的未读")
+	}
+	history, err := h.SessionHistory(ctx, protocol.SessionKey{SourceID: e.SourceID, Agent: e.Agent, SessionID: e.SessionID}, 0, 10)
+	if err != nil || len(history) != 2 || history[1].EventID != "wait" || !history[1].Read || history[1].Valid {
+		t.Fatal("已读等待提醒应保留失效历史", history, err)
 	}
 }
 

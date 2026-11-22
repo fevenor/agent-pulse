@@ -18,6 +18,8 @@ func TestTimelineFiltersBeforePagingAndLocatesUnreadAcrossActivity(t *testing.T)
 	add := func(id, kind, body string) {
 		t.Helper()
 		e := protocol.Event{EventID: id, SourceID: key.SourceID, Agent: key.Agent, SessionID: key.SessionID, Kind: kind, Title: "antigravity · 正在运行", Body: body, Scope: "main", OccurredAt: time.Now()}
+		// 历史运行记录不清除未读；实时恢复运行的自动已读另有回归。
+		e.Historical = kind == "activity.observed"
 		if _, err := h.Accept(ctx, e); err != nil {
 			t.Fatal(err)
 		}

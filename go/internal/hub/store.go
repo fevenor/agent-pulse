@@ -257,6 +257,15 @@ func (h *Hub) Accept(ctx context.Context, e protocol.Event) (bool, error) {
 	}
 
 	if apply {
+		if e.State() == "running" {
+			// 会话继续运行即视为此前提醒已处理；复用用户级已读，不删除失效提醒或历史。
+			if _, err = tx.ExecContext(ctx, `INSERT INTO reads(event_id,read_at)
+SELECT event_id,? FROM events
+WHERE source_id=? AND agent=? AND session_id=? AND notify=1
+ AND NOT EXISTS(SELECT 1 FROM reads WHERE reads.event_id=events.event_id)`, now, e.SourceID, e.Agent, e.SessionID); err != nil {
+				return false, err
+			}
+		}
 		// 无序号的实时事件按到达顺序处理，但不能抹掉已知原生序号。
 		if e.Sequence > seq {
 			seq = e.Sequence

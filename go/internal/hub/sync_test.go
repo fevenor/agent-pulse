@@ -27,7 +27,7 @@ func currentSync(t *testing.T, h *Hub, c protocol.SyncCursor) ([]protocol.SyncDe
 func TestIncrementalUnreadRemovalValidityAndBodyIdentity(t *testing.T) {
 	h := testHub(t)
 	ctx := context.Background()
-	e := testEvent("result", "turn.completed", 1)
+	e := testEvent("result", "input.required", 1)
 	e.Body = strings.Repeat("正文", 3000)
 	if _, err := h.Accept(ctx, e); err != nil {
 		t.Fatal(err)
@@ -47,19 +47,26 @@ func TestIncrementalUnreadRemovalValidityAndBodyIdentity(t *testing.T) {
 	if len(empty) != 0 || next.Version != check.Version {
 		t.Fatal("无业务变化不得增加同步位置")
 	}
-	if _, err := h.Accept(ctx, testEvent("resume", "session.resumed", 2)); err != nil {
+	if _, err := h.Accept(ctx, testEvent("lost", "observation.lost", 2)); err != nil {
 		t.Fatal(err)
 	}
 	d, check2 := currentSync(t, h, check.SyncCursor)
 	if len(d) != 1 || d[0].Reset != nil || len(d[0].Unread) != 1 || d[0].Unread[0].Valid || d[0].Unread[0].Body != "" {
 		t.Fatal("失效应只更新标记", d)
 	}
-	if err := h.MarkRead(ctx, []string{e.EventID}); err != nil {
+	if _, err := h.Accept(ctx, testEvent("resume", "session.resumed", 3)); err != nil {
 		t.Fatal(err)
 	}
 	d, check3 := currentSync(t, h, check2.SyncCursor)
 	if len(d) != 1 || !reflect.DeepEqual(d[0].UnreadRemoved, []string{e.EventID}) {
-		t.Fatal("已读必须明确移除未读", d)
+		t.Fatal("恢复运行的自动已读必须明确移除未读", d)
+	}
+	if err := h.MarkRead(ctx, []string{e.EventID}); err != nil {
+		t.Fatal(err)
+	}
+	d, unchanged := currentSync(t, h, check3.SyncCursor)
+	if len(d) != 0 || unchanged.Version != check3.Version {
+		t.Fatal("重复手工已读不应产生同步变化", d, unchanged)
 	}
 	if err := h.deleteHost(ctx, e.SourceID); err != nil {
 		t.Fatal(err)
@@ -164,7 +171,7 @@ func TestSyncSocketRestoresCursorAndRejectsPhantomRead(t *testing.T) {
 	}
 	cursor := d.SyncCursor
 	_ = s.Close()
-	if err := h.MarkRead(context.Background(), []string{"notice"}); err != nil {
+	if _, err := h.Accept(context.Background(), testEvent("resume", "session.resumed", 2)); err != nil {
 		t.Fatal(err)
 	}
 	restored := dial(cursor)
