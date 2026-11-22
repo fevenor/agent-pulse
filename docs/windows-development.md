@@ -36,7 +36,10 @@ volta fetch node@24.14.1 pnpm@10.33.2
 ./scripts/build/build.ps1 -Demo
 ./bin/dev/agent-pulse-tray-demo.exe --demo
 uv run --offline --no-project python tests/e2e/windows_desktop.py
+uv run --offline --no-project python tests/e2e/windows_text_startup.py
 ```
+
+`windows_text_startup.py`使用公开中文、emoji和长标题缓存，验证实际发布程序启动和连续重启；不连接Hub、不启动Bridge、不改真实配置。运行前先退出其他Tray实例，`--binary`可指定已核验的待测程序。文本宽度、组合字符及反复窄宽度计算另由Rust单元测试覆盖。
 
 `build.ps1` 默认只将发布 Tray 放入 `bin/`，内置 Bridge 在构建缓存中生成。`-DevelopmentTools` 显式将 Go 测试服务和发布工具放入 `bin/dev/`；`-Demo` 生成前台开发演示 `bin/dev/agent-pulse-tray-demo.exe`。`-Tray` 保留为兼容参数。`check.ps1` 执行 Go 测试和静态检查、锁定版本的 Web/OpenCode 安装与检查；`-Tray` 增加 Rust 检查，`-Integration` 增加真实本地 Hub/Relay 联调。只检查 Go 可用 `-GoOnly`。脚本逐项检查原生命令退出码；不能把 PowerShell 最后一个命令成功当作前面都通过。
 

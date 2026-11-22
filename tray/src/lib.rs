@@ -14,3 +14,4 @@ pub mod markdown_body;
 pub mod body_cache;
 pub mod delta;
 pub mod network;
+pub mod text_display;

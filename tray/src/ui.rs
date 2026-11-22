@@ -360,6 +360,20 @@ impl Theme {
         }
     }
 }
+fn text_width(text: &str, size: f32, w: &Window) -> f32 {
+    let style = TextStyle {
+        font_family: "Microsoft YaHei UI".into(),
+        ..Default::default()
+    };
+    f32::from(
+        w.text_system()
+            .layout_line(text, px(size), &[style.to_run(text.len())], None)
+            .width,
+    )
+}
+fn list_text(text: &str, width: f32, size: f32, w: &Window) -> String {
+    agent_pulse_tray::text_display::fit_single_line(text, width, |text| text_width(text, size, w))
+}
 fn button(id: impl Into<ElementId>, label: impl Into<SharedString>, t: Theme) -> Stateful<Div> {
     div()
         .id(id)
@@ -697,6 +711,26 @@ impl Render for Surface {
                     "running" => t.blue,
                     _ => t.muted,
                 };
+                // 预留行内边距、间隔与右侧标签宽度，不让GPUI反复省略同一字体运行段。
+                let row_width = (f32::from(w.viewport_size().width) - 36.0).max(0.0);
+                let title = list_text(
+                    session.display_title(),
+                    row_width - text_width(session.label(), 11.0, w) - 8.0,
+                    13.0,
+                    w,
+                );
+                let source = format!(
+                    "{} · {}",
+                    data.view.state.snapshot.source_label(&session.source_id),
+                    session.agent
+                );
+                let unread_label = format!("{count} 未读");
+                let source_width = if count > 0 {
+                    row_width - text_width(&unread_label, 11.0, w) - 4.0
+                } else {
+                    row_width
+                };
+                let source = list_text(&source, source_width, 11.0, w);
                 list = list.child(
                     div()
                         .id(("session", i))
@@ -718,8 +752,9 @@ impl Render for Surface {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_ellipsis()
-                                        .child(session.display_title().to_string()),
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
+                                        .child(title),
                                 )
                                 .child(
                                     div()
@@ -736,17 +771,16 @@ impl Render for Surface {
                                 .gap_1()
                                 .text_size(px(11.))
                                 .text_color(rgb(t.muted))
-                                .child(div().flex_1().text_ellipsis().child(format!(
-                                    "{} · {}",
-                                    data.view.state.snapshot.source_label(&session.source_id),
-                                    session.agent
-                                )))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
+                                        .child(source),
+                                )
                                 .when(count > 0, |d| {
-                                    d.child(
-                                        div()
-                                            .text_color(rgb(t.amber))
-                                            .child(format!("{count} 未读")),
-                                    )
+                                    d.child(div().text_color(rgb(t.amber)).child(unread_label))
                                 }),
                         )
                         .on_click(move |_, _, _| {
