@@ -2,6 +2,23 @@
 
 本文件维护需求、设计和工程调整历史。功能实现和验证状态见 [开发记录](docs/development-status.md)；设计调整不表示功能已经交付。
 
+## 未发布：DeepSeek Harness 接入
+
+- 新增 `dsh-agent-pulse-adapter`：DeepSeek Harness 的 Host 插件，由 DSH 自身的 Node 运行时加载，监听 `session/event`、`approval/request`、`user-questions/request` 与 `workspace/session-archived`，转换为本项目统一事件后经本机 IPC 递交 Bridge；不修改审批决定、不采集用户输入、思考或历史，子代理按会话头部 `origin: subagent`/`delegationDepth` 过滤。
+- 持久事件携带会话日志序号 `seq` 作为 `sequence`；首个 `turn/start` 之前无更早轮次报告 `session.started`，宿主重启后恢复的会话只在用户真正继续时报告一次 `session.resumed`。`turn/end` 按 reason 映射完成/失败/中断，`blocked` 不当作完成，`forked` 不生成终态；`agent/error` 不单独转换以避免重复提醒。
+- Bridge 新增 `dsh-plugin` 适配包类型：`managed` 登记 profile 的 `cordis.patch.yml`，在适配目录写入固定 loader（经 `state.json` 导入当前版本包并写运行回执），并在用户 patch 中维护一条 `id: agent-pulse` 的 `insert` 行，`name` 为 loader 的 `file:` URL；保留其他条目、注释与 `!!js` 标签，重新序列化不保证字节一致。已手动安装 bundle、存在其他来源同名行或 `id` 覆盖行时拒绝覆盖。
+- 真实 DSH 会话实测后修正：根会话头部也带 `delegationDepth: 0`，子代理判定改为大于 0；审批/提问观察者以 `prepend` 注册，否则宿主 answerer 认领请求后不再调用 `next()`，观察者永远收不到；`tool/result` 的调用 ID 取 `message.toolCallId` 或 `message.source.callId`，实时事件携带会话标题。
+- 试用后修正（dsh 0.1.1/0.1.2，索引 20/21）：固定 loader 与受管理行均带 `?v=<包摘要>`，否则 Node ESM 缓存使升级后的 profile 重组仍运行旧版本、必须重启宿主；同一 loader 路径的行可被升级接管，OpenCode loader 同步修正。长轮次内每个步骤按 60 秒节流发 `activity.observed` 心跳，避免一次 `turn/start` 丢失后 Hub 停在 idle 直到轮次结束；递交失败诊断附错误类别与端点末 8 位。
+- Linux 向导默认 profile 路径为 `$DSH_HOME/profiles/web/cordis.patch.yml`（未设置 `DSH_HOME` 时为 `~/.dsh`）；`dsh --version` 的预发布后缀按 `x.y.z` 版本线兼容并给出提示。独立包构建增加平台 `any` 的 DSH 包，发布草稿范围脚本未改动。
+- **解耦签名校验与运行方式**：正式 Hub 拒绝含 `dsh-plugin` 的签名索引，暴露出 `Manifest.Validate` 的 kind 白名单被编进 Hub 与 Bridge 两端，新增一种适配包形态就必须升级 Hub，违背"普通新增来源无需升级 Hub"的设计。现 `Validate` 只保留结构校验（签名、摘要、路径、大小），新增 `ValidateRuntime` 在 Bridge 下载/探测/安装与发布者打包时判定 `kind` 与 `config_style`；Hub 接受任何合法签名索引。本次因旧 Hub 仍含旧白名单而同步升级一次，此后新增 kind 不再要求升级 Hub。
+- 本候选只在 Linux 验收；Windows 向导继续跳过无控制入口的非命令包。真实 DSH 会话的事件投递与 Plugins 页显示按开发记录实测，不以单元测试代替。
+
+## 未发布：Codex执行工具后的最终报错提醒
+
+- 修复Codex工具活动、提问或等待批准取消整轮终态观察，导致后续429等最终模型错误漏报、会话仍显示进行中的问题。
+- 原生钩子和观察结果在本机携带已有轮次标识；Bridge保留同一轮运行/等待期间的观察，最终结果按轮次去重，新轮次、中断及关闭继续回收观察。
+- 继续只采集整轮最终结果，最终429生成失败提醒，流错误自动重试成功不会生成失败提醒；修改位于Bridge与Codex适配器，Hub/Relay网络协议、存储结构和Tray展示保持现行规则。
+
 ## 未发布：Windows中文缓存启动修复
 
 - 修复会话列表省略布局反复测量后，截短字体运行段与原始中文文本长度不一致导致的启动崩溃。

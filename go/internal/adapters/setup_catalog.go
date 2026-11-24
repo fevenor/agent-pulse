@@ -60,6 +60,11 @@ func setupCatalog(ctx context.Context, c config.Bridge, configPath string) ([]se
 			item.ConfigPath = c.Adapters.Managed[id]
 		}
 		for _, candidate := range packages {
+			// 本机不支持的运行方式只跳过该候选，不阻断向导，也不隔离包。
+			if e := candidate.Manifest.ValidateRuntime(); e != nil {
+				problems = append(problems, id+"："+e.Error())
+				continue
+			}
 			if candidate.Control != "" {
 				if e := preparePackage(ctx, c, candidate); e != nil {
 					problems = append(problems, id+"："+e.Error())

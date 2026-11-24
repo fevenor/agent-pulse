@@ -36,6 +36,9 @@ func updateHookConfigWithExecutable(c config.Bridge, configPath string, p Packag
 	if p.Kind == "opencode-plugin" {
 		return updateOpenCodeJSONC(c, p, raw, enable)
 	}
+	if p.Kind == "dsh-plugin" {
+		return updateDSHProfilePatch(c, p, raw, enable)
+	}
 	root := map[string]any{}
 	if len(raw) > 0 {
 		if json.Unmarshal(raw, &root) != nil || root == nil {
@@ -221,7 +224,8 @@ let state = JSON.parse(readFileSync(%s, "utf8"));
 try { state = JSON.parse(readFileSync(join(root, "pending.json"), "utf8")).state; } catch (error) { if (error.code !== "ENOENT") throw error; }
 const p = state.installed[id].package;
 const entry = join(root, "packages", id, p.version, p.sha256, p.entry);
-const plugin = (await import(pathToFileURL(entry).href)).default;
+// Node 按 URL 缓存 ESM 模块：带版本查询串，包升级后的 profile 重组才会真正加载新版本。
+const plugin = (await import(pathToFileURL(entry).href + "?v=" + p.sha256)).default;
 export default { ...plugin, setup(ctx) {
   const result = plugin.setup(ctx);
   try { const dir = join(root, "runtime"); mkdirSync(dir, {recursive:true});
@@ -232,6 +236,12 @@ export default { ...plugin, setup(ctx) {
 }};
 `, root, id, statePath)
 		if err = AtomicFile(filepath.Join(c.Adapters.Directory, "loaders", p.ID, "index.ts"), []byte(loader), 0600); err != nil {
+			return err
+		}
+	}
+	if p.Kind == "dsh-plugin" {
+		// DSH 插件行指向固定 loader；包升级只改 state.json，不触碰用户 profile。
+		if err = writeDSHLoader(c, p); err != nil {
 			return err
 		}
 	}

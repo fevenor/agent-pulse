@@ -15,6 +15,10 @@ cd "$project_root/adapters/opencode"
 pnpm check
 pnpm test
 
+cd "$project_root/adapters/dsh"
+pnpm check
+pnpm test
+
 cd "$project_root/web/hub"
 pnpm test
 pnpm build

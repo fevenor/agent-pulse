@@ -6,6 +6,7 @@
 
 | Agent | 完成 | 等待输入 | 等待批准 | 失败、中断及结束 | 受限原因 |
 | --- | --- | --- | --- | --- | --- |
+| DeepSeek Harness | `turn/end` completed 附本轮最高步骤助手消息的 text 块；max-tokens 另附不完整提示 | `user-questions/request` 的 question/detail/header、选项标签及说明，可多选有标记；不传用户答案 | `approval/request` 的工具名与宿主展示原因；带 approval 意图的提问同样映射，5 秒内按 callId 去重 | `turn/end` error→失败、aborted/interrupted/blocked→中断；tool/result 带 error 或 isError 为普通记录；`workspace/session-archived` 关闭 | 不采集 reasoning、工具调用块、历史；宿主退出不报告关闭；`session/title` 投递、`askTimed` 载荷与 blocked/forked 场景需实测 |
 | ZCode Windows | Stop的last_assistant_message | 提问工具的问题、选项、说明 | PermissionRequest的工具动作/目标及reason；不代替批准 | 普通工具完成/失败有记录；失败不等于主任务失败 | 强制取消、崩溃、关闭仍缺稳定主任务结束hook；原生工具归属与状态恢复必须实测 |
 | ZCode Server Linux（WSL / SSH） | Stop的last_assistant_message，复用Windows转换 | 提问工具的问题、选项、说明 | PermissionRequest的工具动作/目标及reason；不代替批准 | 工具结果/失败按现有规则记录，不猜取消或进程退出为完成 | 独立Linux Bridge读取Server用户的钩子与会话库；源码已接入、包未公开，真实验证范围见开发记录 |
 | Qoder 中国 CLI | Stop回答；StopFailure可附失败前可见输出 | 原生Elicitation表单及提问工具；ElicitationResult处理结果，不传用户答案 | PermissionRequest；PermissionDenied保留原因并恢复活动 | SessionEnd保留原生原因；工具失败只作普通记录 | 不传完整工具响应、error_details或认证URL；同请求不再重复混合弹框通知 |
@@ -15,7 +16,7 @@
 
 所有等待记录仍以宿主实际发生、主会话归属可用为前提；界面展示已有正文不意味着宿主的所有事件都已产生 hook。内容为空时状态仍保留，文档中的字段来源与真实验证范围分开。
 
-模型调用的采集边界是整轮最终结束，而非每次请求尝试。单次请求失败及自动重试过程不采集、不入库、不提醒。Codex 持久主会话通过 UserPromptSubmit/Stop 登记本轮的增量终态观察，以最终 task_complete 区分正常完成与最终错误；Stop 可被其他钩子要求继续，不提前确认整轮结束。Interrupt 和 SessionEnd 保持原生接入。没有持久终态来源的临时会话不宣称支持最终模型失败，来源持续不可读时降为未知；不以逐次请求 hook 或任务空闲超时判断代替。
+模型调用的采集边界是整轮最终结束，而非每次请求尝试。单次请求失败及自动重试过程不采集、不入库、不提醒。Codex 持久主会话通过 UserPromptSubmit/Stop 登记本轮的增量终态观察，以最终 task_complete 区分正常完成与最终错误；Stop 可被其他钩子要求继续，不提前确认整轮结束。同一轮工具活动、提问及等待批准保留终态观察，本机按轮次去重；新轮次替换旧观察。Interrupt 和 SessionEnd 保持原生接入。没有持久终态来源的临时会话不宣称支持最终模型失败，来源持续不可读时降为未知；不以逐次请求 hook 或任务空闲超时判断代替。
 
 ## 内容来源证据
 

@@ -90,6 +90,9 @@ type deferredPackage struct{ notice string }
 func (e *deferredPackage) Error() string { return e.notice }
 
 func detectPackage(ctx context.Context, c config.Bridge, p Package) (string, error) {
+	if err := p.Manifest.ValidateRuntime(); err != nil {
+		return "", err
+	}
 	if p.Control == "" {
 		return Detect(ctx, p.Manifest)
 	}

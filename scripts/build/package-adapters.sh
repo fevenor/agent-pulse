@@ -39,11 +39,17 @@ writeFileSync(target,JSON.stringify(m));
 JS
   "$project_root/bin/agent-pulse-adapters" pack --source "$package_dir" --manifest "$manifest_target" --repository "$repository" --out "$repository/opencode-$arch.json"
 done
+# DSH 插件是纯 ESM JavaScript，由 DSH 自身的 Node 运行时加载，不需要构建或平台二进制；平台为 any。
+package_dir="$project_root/dist/adapter-build/dsh"
+mkdir -p "$package_dir"
+cp -R "$project_root/adapters/dsh/index.js" "$project_root/adapters/dsh/adapter.js" "$project_root/adapters/dsh/package.json" \
+  "$project_root/adapters/dsh/cordis.patch.yml" "$project_root/adapters/dsh/locale" "$project_root/adapters/dsh/icon.svg" "$project_root/adapters/dsh/README.md" "$package_dir/"
+"$project_root/bin/agent-pulse-adapters" pack --source "$package_dir" --manifest "$project_root/adapters/dsh/manifest.json" --repository "$repository" --out "$repository/dsh.json"
 node --input-type=module - "$repository" "$sequence" <<'JS'
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 const [directory,sequence] = process.argv.slice(2);
-const packages = ['codex','antigravity','qoderclicn','opencode-amd64','opencode-arm64','zcode'].map(id=>JSON.parse(readFileSync(join(directory,id+'.json'),'utf8')));
+const packages = ['codex','antigravity','qoderclicn','opencode-amd64','opencode-arm64','zcode','dsh'].map(id=>JSON.parse(readFileSync(join(directory,id+'.json'),'utf8')));
 const number = Number(sequence);
 if(!Number.isSafeInteger(number)||number<1) throw new Error('发布序号必须为正整数');
 writeFileSync(join(directory,'index-input.json'),JSON.stringify({sequence:number,packages},null,2)+'\n');

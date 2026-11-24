@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "AgentPulse notifications",
+    "description": "Reports DeepSeek Harness session start, turn completion, failure, interruption, approval and question waits to the local AgentPulse Bridge for phone and tray delivery. Observes only: never changes approval decisions and never collects user input, reasoning or history. Subagent sessions are skipped."
+  }
+}

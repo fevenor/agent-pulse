@@ -1,0 +1,13 @@
+{
+  "id": "dsh",
+  "version": "0.1.2",
+  "format": 1,
+  "protocol": 1,
+  "platform": "any",
+  "kind": "dsh-plugin",
+  "entry": "index.js",
+  "command": "dsh",
+  "agent_min": "0.2.3",
+  "agent_max": "0.2.3",
+  "name": "DeepSeek Harness"
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "AgentPulse 通知",
+    "description": "把 DeepSeek Harness 的会话开始、轮次完成、失败、中断、等待批准和等待输入事件递交到本机 AgentPulse Bridge，由 Hub 转发到手机和托盘。只观察事件，不修改审批决定，不采集用户输入、思考过程或历史对话。子代理会话不推送。"
+  }
+}

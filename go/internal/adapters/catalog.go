@@ -170,7 +170,11 @@ func refreshCatalog(ctx context.Context, c config.Bridge, force bool) error {
 }
 
 // preparePackage 使用可信清单下载缺少的包；同摘要不重复下载，缺入口时从本地ZIP修复。
+// 下载前先判定本机是否支持该运行方式：签名索引可能携带本机 Bridge 不认识的新形态，只拒绝本机安装。
 func preparePackage(ctx context.Context, c config.Bridge, p Package) error {
+	if err := p.Manifest.ValidateRuntime(); err != nil {
+		return err
+	}
 	target := packageDir(c.Adapters.Directory, p)
 	entry, err := os.Stat(filepath.Join(target, filepath.FromSlash(p.Entry)))
 	controlOK := true

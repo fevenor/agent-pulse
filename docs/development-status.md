@@ -2,6 +2,31 @@
 
 本页仅保存可复现的实现验证、相关版本和适用边界。现行安装与运行规则见[部署指南](deployment.md)，功能与正文能力见[事件覆盖表](event-coverage.md)，剩余工作见[开发计划](development-plan.md)，变更历史见[CHANGELOG](../CHANGELOG.md)。实例快照、临时交接清单、原始日志、截图、私人配置和机器目录不进入本页；公开验证结果不等同于所有使用场景均已验收。
 
+## 2026-11-23 DeepSeek Harness 接入（未发布）
+
+- 接口依据：运行中的 DSH `0.2.3-alpha.2`（npm 安装，`@deepseek-ai/dsh` 0.2.3-alpha.2）经 `cordis_inspect` 读取的事件目录与类型：`session/event`（提交后追加流，`SessionEvent.seq/time`）、`approval/request` 与 `user-questions/request`（waterfall）、`workspace/session-archived`、`SessionHeader.origin/parentSession/delegationDepth/cwd`、`TurnEndReason`；`@deepseek-ai/dsh-scope` 规定未标记监听器保持全局；`dsh-subagent` 的 `child-agent.ts` 写入 `origin: 'subagent'` 与 `delegationDepth`；`@deepseek-ai/dsh-llm` 的 `MessageBase.content` 为 `ContentBlock[]`。事件名随 DSH 版本变化，`x.y` 变化需重新适配。
+- Loader 解析：`@deepseek-ai/cordis-plugin-loader` 对非 `.` 开头的 `name` 走 profile 包作用域的原生 `import.meta.resolve`，绝对 `file:` URL 原样导入，因此受管理行不依赖 pnpm 或 profile 的 `node_modules`；`dsh web --patch <含 file: URL 行的覆盖层> --dump-config` 组合成功（只证明配置树接受，不证明挂载）。
+- 插件 `adapters/dsh`：纯 ESM JavaScript，无构建步骤。`node --test` 14 项通过：映射（started/resumed/activity、completed/error/aborted/interrupted/blocked/max-tokens/forked）、子代理过滤、正文白名单与 UTF-8 截断、`event_id` 稳定性、有界缓存、等待去重；`test/index.test.js` 用本机 Unix 套接字模拟 Bridge 202 回执，验证监听器过滤、按日志判断新会话、等待恢复、waterfall 返回 `next()`、归档只对观察过的会话、卸载中止在途递交。
+- Bridge：`go/internal/adapters/dsh_patch.go` 与 `dsh_patch_test.go`。回归覆盖启用保留注释/`!!js`/其他条目、重复启用幂等、来源变化只替换本行、禁用只移除本软件行、非数组/其他来源同名行/`id` 覆盖行/已手动安装 bundle 时拒绝且原文件不变、`Manifest.Validate` 接受 `dsh-plugin`、`0.2.3-alpha.2` 给出预发布提示而 `1.0.0` 拒绝；完整向导用假 `dsh` 命令、一次性签名索引和临时 Hub 走探测、下载、loader 与 profile 行写入，重复执行幂等，并用真实 Node 导入固定 loader、调用 `apply` 后核对 `runtime/dsh.json` 回执。Linux `go test -race ./...` 与 `go vet ./...` 全模块通过。`agent-pulse-adapters pack` 以 `adapters/dsh/manifest.json` 生成平台 `any` 的包（13.4 KiB）。
+- 真实验证（Linux，DSH `0.2.3-alpha.2` web profile，临时 Bridge/Hub 于 127.0.0.1:18799，插件以 `link:` 安装并在 profile patch 覆盖 config）：本会话的 `run.interrupted`（用户取消提问）、`session.resumed`、`session.renamed`（标题"DeepSeek Harness 插件支持开发"，`name_sequence` 正确）、`tool.failed`、`input.required`（含问题/选项标签/说明与会话标题）与 `activity.observed`（回答后"等待已结束，继续处理"）全部经插件→本机 IPC→Bridge→Hub 到达，Hub 会话状态 `waiting`→`running`、旧等待提醒失效符合设计；`session/title` 作为 merge 扩展事件确认经 `session/event` 投递。
+- 实测修正三处实现：(1) 根会话头部也带 `delegationDepth: 0`，子代理判定改为 `origin === 'subagent'` 或 `delegationDepth > 0`，否则主会话被整体过滤；(2) `approval/request` 与 `user-questions/request` 是 waterfall，宿主自带的 answerer 一旦认领请求就不再调用 `next()`，后注册的观察者永远看不到真实提问——两个观察者改为 `{ prepend: true }` 注册，排在所有 answerer 之前只观察并原样交还；单元测试用 Cordis 链式语义复现了该否决；(3) `tool/result` 同时携带 `message.toolCallId` 与 `message.source.callId`，之前取错字段导致工具名显示为"工具"，现二者皆可配对 `tool/call`。
+- 其余实测结论：`dsh` 由 systemd 用户服务 `dsh.service` 运行，`console.warn` 进入 journal；`set_plugin` 禁用→启用会重新执行 `apply`，但**仅修改 patch config 不会重组**——必须经 `plugin_manager` 触发或重启服务。配置热重载后旧监听器随 fiber 效果一起释放，未观察到重复注册。用户取消提问时该轮 `turn/end` 为 `aborted/user`，递交因 AbortController 中止属预期。
+- 仍未实测：`turn.completed` 携带最终回答正文（只在本轮结束时产生）、`askTimed` 超时路径（headless 无浏览器 answerer）、`approval/request` 真实触发（本 profile 审批策略为 never ask）、`blocked`/`forked` 场景、Windows 向导、Plugins 页对 `file:` 行的显示。Windows 向导未接入；发布草稿范围脚本未改动，正式包版本与签名索引在发布准备时递增。
+
+- 解耦验证（2026-11-24）：从运行中 Hub 容器取出二进制，与新构建在同一隔离目录、同一公钥、同一序号 19 输入做 A/B——生产二进制（`7eb4d54b…`）拒绝 `不支持的适配包运行方式`，新二进制推广到 19/10 包；新镜像 `agent-pulse-hub:v0.6.0-rc.4-dsh` 的隔离容器导入同样通过，旧镜像同输入拒绝。`kind_decouple_test.go` 覆盖：`Verify` 接受未知 kind 的合法签名索引但拒绝越界入口/非法版本/重复包；`ValidateRuntime` 在 Bridge 侧拒绝未知 kind 与无配置格式的 executable；`preparePackage`/`detectPackage` 在任何下载前拒绝；`BuildPackage` 拒绝打包未知 kind。全模块 `go test -race ./...` 与 `go vet` 通过。
+- 正式部署验证（2026-11-24，使用者授权）：Hub 镜像行替换为本地 rc.4-dsh 并导入序号 19，健康/网页/包摘要/停写备份完整性通过，其他 15 个容器未动；本机 Bridge 替换后 `setup` 受管理启用 DSH，向导识别 `0.2.3-alpha.2` 与默认 profile 路径，写入 loader 与 `file:` 受管理行，Hub 上报 `running=0.1.0`。headless 独立会话经正式 Bridge→正式 Hub 产出 `session.started`/`session.renamed`/`run.failed` 并生成有效未读。向导在手动 `link:` bundle 仍存在时按设计拒绝受管理安装，移除后成功。
+- 用户侧实收确认（2026-11-24）：使用者在 Tray 收到 headless 探针会话与本开发会话的提醒，正式链路 Bridge→Hub→Tray 端到端通过。同一开发会话在正式 Hub 留下真实 `turn.completed`（seq 2798，附最终回答正文）、`tool.failed`（工具名正确显示为 `edit`）与 `session.renamed`（标题"构建 bridge 部署 dsh-agent-pulse-adapter"），会话状态 `idle`；`turn.completed` 正文经正式链路由此确认。使用者决定后续用一段时间日常使用继续验证 DSH 接入。
+- 试用中发现并修复两个缺陷（2026-11-24 晚，dsh 0.1.1/0.1.2，签名索引 20/21）：(1) **受管理 loader 被 Node ESM 缓存固定**——loader 与包的 `file:` URL 在升级后不变，profile 重组只是复用旧模块，运行回执与实际版本脱节，必须重启 DSH 才生效。现 loader 导入包加 `?v=<sha>`，受管理行 `name` 也带 `?v=<sha>`，重组即加载新版本；同一 loader 路径的行无论查询串为何都视为本安装器所有，可接管旧版无查询串或历史版本的行，路径不同才拒绝。OpenCode loader 同步修正。(2) **长轮次状态脱节**——`turn/start` 是唯一的"进入运行"信号，一次递交丢失后 Hub 停在 `idle` 直到 `turn/end`；实测会话在同一轮里运行 40 余分钟而 Tray 显示"待继续"。现每个步骤按 60 秒节流发一条带当前序号的 `activity.observed` 心跳，丢失后可自愈；实测 0.1.2 加载后 6 秒内会话由 `unknown` 回到 `running`。递交失败诊断改为含错误类别与端点末 8 位，不含正文或令牌。dsh 适配器单元测试 16 项通过，Go DSH 回归覆盖心跳节流与 `?v=` 存在性、旧版行接管。排查期间经正式 Bridge 注入 4 条 `activity.observed` 探针事件（会话 session-f9a0f8d6…，正文"探针"），Hub 协议不删除单个事件，它们不构成强提醒并已被后续运行状态覆盖。
+
+## 2026-11-23 Codex工具活动后的最终报错漏报修复（未发布）
+
+- 复现路径：UserPromptSubmit登记本轮观察后，原生PostToolUse递交活动；旧Bridge会取消观察，而最终模型错误不通过普通Stop重新登记。适配器此前也未将原生turn_id传入既有本机事件结构，导致无法识别同一轮活动。隔离真实Codex执行本地命令后返回400或429，旧产物均缺少run.failed；直接返回错误则能采集。
+- 修复复用本机轮次字段：Codex钩子和观察结果保留turn_id，Bridge维持同轮运行/等待期间的观察，最终结果使用既有轮次去重；新轮次、明确中断、来源失效及关闭继续回收。未提供轮次的活动仍使用原取消行为。没有新增Hub/Relay网络字段、数据库结构或Tray状态种类。
+- Go 1.27.4的全模块`go test -race ./...`、`go vet ./...`通过；回归覆盖原生轮次递交、同轮工具/输入/批准活动不取消观察、最终失败入队及去重、新轮次/无轮次/中断/来源失效回收。Windows amd64静态检查以及Bridge/适配器交叉编译通过，不替代原生运行。
+- Linux amd64 Codex CLI 0.169.0，实际产物SHA-256为`b452ca20f838a8855a88a41050ee4a694033fff4ea3ecdad5633e6e0e8d13f2b`。使用真实执行器、原生hook、一次性签名包、独立Bridge/Hub和本地Responses模拟服务，验证正常完成、直接400/429、真实工具执行后400/429、流中断后重试成功及工具后的流重试成功。各轮仅一条最终结果，429正文保留可见原因，全部结束后无running。该模拟429由宿主直接最终失败；自动重试不误报由流中断后成功用例验证。
+- 原生脚本同步移除已撤销的poll_seconds配置，从当前Codex产物构建隔离签名包，并隔离宿主目录；测试材料只留忽略的tmp。模型为本地模拟，没有在线账号调用、正式服务变更或手机发送；未将此结果记为目标WSL/SSH桌面或Tray实际收件验收。
+- 修复需要同步更新采集端Bridge与Codex适配包；Windows使用内置Bridge时需携带新版。本节记录源码与开发产物验证，不代表正式发布或部署；正式包版本与签名索引须在后续发布准备时递增。
+
 ## 2026-11-22 Hub运行时自动已读
 
 - `v0.6.0-rc.3`为Hub定向更新：有效主会话运行事件在原事件事务内将同一来源、Agent和会话的旧未读写入既有`reads`表，包含失效提醒；保留手工已读时间、全部正文与历史，下一次结果或等待仍正常未读。复用第二候选协议及同步，不调整Bridge、Relay、Tray或适配包。

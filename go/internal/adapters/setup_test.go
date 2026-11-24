@@ -157,12 +157,13 @@ func TestSetupRejectsInvalidHubBeforeWriting(t *testing.T) {
 // 不调用真实宿主，直接验证 Windows 与 Linux 的默认来源边界。
 func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("DSH_HOME", "")
 	for _, tc := range []struct {
 		platform string
 		want     []string
 	}{
 		{"windows", []string{"zcode", "codex", "antigravity"}},
-		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode", "zcode"}},
+		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode", "zcode", "dsh"}},
 	} {
 		t.Run(tc.platform, func(t *testing.T) {
 			home := t.TempDir()
@@ -180,6 +181,11 @@ func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
 				}
 			}
 		})
+	}
+	// DSH_HOME 重定位 DSH 数据目录时，默认 profile 跟随该目录。
+	t.Setenv("DSH_HOME", "/srv/dsh-data")
+	if got := dshProfilePatchPath(t.TempDir()); got != filepath.Join("/srv/dsh-data", "profiles", "web", "cordis.patch.yml") {
+		t.Fatalf("DSH_HOME 未生效：%q", got)
 	}
 }
 

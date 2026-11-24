@@ -58,15 +58,12 @@ type SignedIndex struct {
 	Signature string `json:"signature"`
 }
 
+// Validate 是签名索引的结构校验，Hub 与 Bridge 共用：只检查与分发安全相关的字段
+// （标识、版本、路径、摘要、大小），不判断运行方式是否受支持。Hub 只是分发仓库，
+// 新增适配包形态不应要求升级 Hub；运行方式由 Bridge 在本地安装时用 ValidateRuntime 判定。
 func (m Manifest) Validate() error {
 	if !identifier.MatchString(m.ID) || !identifier.MatchString(m.Version) || m.Format != 1 || m.Protocol != 1 {
 		return errors.New("适配包标识或协议版本无效")
-	}
-	if m.Kind != "executable" && m.Kind != "opencode-plugin" {
-		return errors.New("不支持的适配包运行方式")
-	}
-	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" && m.Control == "" {
-		return errors.New("不支持的宿主配置格式")
 	}
 	if m.Control != "" && (!fs.ValidPath(m.Control) || m.Control == "." || strings.ContainsAny(m.Control, "\\:")) {
 		return errors.New("适配控制入口无效")
@@ -99,6 +96,21 @@ func (m Manifest) Validate() error {
 		}
 	}
 	return nil
+}
+
+// supportedKinds 是当前 Bridge 知道如何安装的运行方式；只有 Bridge 需要它。
+var supportedKinds = map[string]bool{"executable": true, "opencode-plugin": true, "dsh-plugin": true}
+
+// ValidateRuntime 判定本机 Bridge 是否支持该包的运行方式与宿主配置格式。
+// 未知 kind 的签名包仍可经 Hub 分发给支持它的 Bridge；本机不支持的只影响本机安装。
+func (m Manifest) ValidateRuntime() error {
+	if !supportedKinds[m.Kind] {
+		return errors.New("不支持的适配包运行方式")
+	}
+	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" && m.Control == "" {
+		return errors.New("不支持的宿主配置格式")
+	}
+	return m.Validate()
 }
 
 func Verify(raw []byte, publicKey string) (Index, error) {
@@ -195,7 +207,8 @@ func GenerateKey(privatePath, publicPath string) error {
 
 func BuildPackage(source, repository string, m Manifest) (Package, error) {
 	p := Package{Manifest: m}
-	if err := m.Validate(); err != nil {
+	// 发布者侧仍要求本机工具链认识该运行方式，避免打出任何 Bridge 都装不了的包。
+	if err := m.ValidateRuntime(); err != nil {
 		return p, err
 	}
 	var buf bytes.Buffer
