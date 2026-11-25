@@ -10,10 +10,11 @@ bash scripts/build/package-adapters.sh ./dist/repository 1
 ## Codex
 
 ```sh
+bash scripts/build/build.sh
 uv run --offline --no-project python tests/e2e/codex_native.py
 ```
 
-使用 Codex 0.167.0 和本地 Responses 模拟服务，单实例串行运行，不调用在线模型。临时项目中的 `hooks.json` 由真实 Bridge 从签名包安装，捕获原生 SessionStart、UserPromptSubmit、Stop、SessionEnd，并核对 Hub 历史及适配器运行版本。名称索引使用隔离替身，验证真实 Stop hook 获取新名称及同 ID 更新，不等同交互 `/rename` 验收。
+使用已安装的Codex和本地 Responses 模拟服务，单实例串行运行，不调用在线模型。脚本从当前本机Codex适配产物生成隔离签名包，不依赖完整发布仓库；当前Linux 0.169.0已验证。临时项目中的 `hooks.json` 由真实 Bridge 安装，捕获原生SessionStart、UserPromptSubmit、PostToolUse、Stop、SessionEnd，并核对Hub历史及适配器运行版本。覆盖直接报错、真实本地命令后报错（包括429）及流中断后重试成功；每轮只允许一条最终完成或失败，结束后不能残留running。测试目录位于忽略的`tmp/`，不改正式服务或发送手机。名称索引使用隔离替身，验证真实 Stop hook 获取新名称及同 ID 更新，不等同交互 `/rename` 验收。
 
 测试在本次调用中信任自己生成并审阅的 hook，不持久修改用户信任设置，不读取用户模型配置。`projects` 通过 TOML 内联表传递临时目录的信任值；不能把带引号路径的点分参数误当成 TOML 表。正式安装仍由用户在 Codex 中确认 hook 信任。
 

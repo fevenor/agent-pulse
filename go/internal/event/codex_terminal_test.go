@@ -132,7 +132,7 @@ func TestCodexObserverCancellationAndUnsafeSource(t *testing.T) {
 	raw, _ := json.Marshal(cursor)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := ObserveCodex(ctx, raw, "source", func(protocol.Event) error { t.Fatal("凭空发送结束"); return nil }); err != context.Canceled {
+	if err := ObserveCodex(ctx, raw, "source", func(protocol.LocalEvent) error { t.Fatal("凭空发送结束"); return nil }); err != context.Canceled {
 		t.Fatal(err)
 	}
 	raw, _ = json.Marshal(Hook{SessionID: "main", TurnID: "current", AgentID: "child", Transcript: cursor.Path})
@@ -159,5 +159,25 @@ func TestMalformedFinalIsUnavailableAndNotSilentlySkipped(t *testing.T) {
 		if e, done, err := readCodexTerminal(&cursor, "source"); e != nil || done || err == nil || cursor.Offset != 0 {
 			t.Fatal("损坏终态被当成空闲而永久等待", e, done, err, cursor.Offset)
 		}
+	}
+}
+
+func TestCodexObservedFailureCarriesLocalTurnForDeduplication(t *testing.T) {
+	cursor, path := terminalFixture(t)
+	if err := os.WriteFile(path, finalLine("current", true, ""), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(cursor)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	count := 0
+	if err := ObserveCodex(ctx, raw, "source", func(e protocol.LocalEvent) error {
+		count++
+		if e.TurnID != "current" || e.Kind != "run.failed" || e.SessionID != "main" {
+			t.Fatalf("原生终态未保留登记轮次：%+v", e)
+		}
+		return nil
+	}); err != nil || count != 1 {
+		t.Fatal("最终错误没有且仅有一次交付", err, count)
 	}
 }

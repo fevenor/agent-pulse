@@ -258,7 +258,7 @@ func readCodexTerminal(cursor *codexCursor, source string) (*protocol.Event, boo
 
 }
 
-func ObserveCodex(ctx context.Context, raw []byte, source string, emit func(protocol.Event) error) error {
+func ObserveCodex(ctx context.Context, raw []byte, source string, emit func(protocol.LocalEvent) error) error {
 	var cursor codexCursor
 	if json.Unmarshal(raw, &cursor) != nil || cursor.SessionID == "" || cursor.TurnID == "" || cursor.Offset < 0 {
 		return errors.New("本轮终态游标无效")
@@ -279,7 +279,7 @@ func ObserveCodex(ctx context.Context, raw []byte, source string, emit func(prot
 			unavailableSince = time.Time{}
 		}
 		if event != nil {
-			return emit(*event)
+			return emit(protocol.LocalEvent{Event: *event, TurnID: cursor.TurnID})
 		}
 		if done {
 			return nil

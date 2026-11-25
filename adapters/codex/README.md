@@ -6,6 +6,7 @@
 
 - SessionStart/UserPromptSubmit维护会话开始和继续；PermissionRequest及提问工具保持原生等待事件，PostToolUse用于恢复活动。
 - 持久主会话在UserPromptSubmit/Stop登记本轮终态观察。适配器从登记时的位置增量读取对应原生文件，仅将目标turn_id的最终task_complete转换为正常完成或整轮失败；不采集单次模型请求错误或自动重试过程。Stop可能被其他钩子要求继续，不能提前作为持久主会话的最终完成。
+- 原生钩子和观察结果将turn_id保留在本机接入中；Bridge不因同一轮工具活动、提问或等待批准取消观察，最终结果按轮次去重。不同轮次、明确中断和关闭仍回收旧观察。采集端须使用具备此修复的Bridge及新Codex适配包；已有对应Bridge时只需更新适配包。Windows内置Bridge也属于同一实现。
 - 最终事件自身的last_agent_message和error.message提供可见正文，遵循现有32 KiB上限；不转换其他记录，不读取思考、用户输入或完整历史来补内容。Interrupt和SessionEnd保持原生中断与关闭；关闭后交付的真实终态不重新打开会话。
 - 缺少持久终态来源的临时会话保留Stop已有完成字段，但最终模型失败能力明确受限。来源持续不可读取只降为状态未知，不伪造任务失败，也不以长时间无活动判结束。
 

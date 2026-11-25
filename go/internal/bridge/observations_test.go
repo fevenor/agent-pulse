@@ -76,3 +76,61 @@ func TestObservationCapacityAndQueueRetryKeepFirstCollector(t *testing.T) {
 		t.Fatal("缓存事件被改写为新连接的真实进展")
 	}
 }
+
+func TestSameTurnActivityKeepsObservationUntilFinalFailure(t *testing.T) {
+	b := New(config.Bridge{SourceID: "test", QueueEvents: 10, QueueBytes: 1 << 20})
+	defer b.stopObservations()
+	ctx, cancel := context.WithCancel(b.observationContext)
+	defer cancel()
+	current := &observation{turn: "current", cancel: cancel, at: time.Now()}
+	b.observations["codex\x00main"] = current
+	for _, kind := range []string{"session.resumed", "input.required", "approval.required", "activity.observed"} {
+		e := event(kind)
+		e.Agent, e.Kind = "codex", kind
+		if status, duplicate := b.enqueueTurn(e, "current"); status != 202 || duplicate {
+			t.Fatal(status, duplicate)
+		}
+		if ctx.Err() != nil || current.done {
+			t.Fatalf("同轮%s取消了最终模型错误观察", kind)
+		}
+	}
+	failed := event("observed-final")
+	failed.Agent, failed.Kind, failed.Body = "codex", "run.failed", "429 Too Many Requests"
+	if status, duplicate := b.enqueueTurn(failed, "current"); status != 202 || duplicate {
+		t.Fatal(status, duplicate)
+	}
+	if ctx.Err() == nil || !current.done || len(b.queue) != 5 || b.queue[4].event.Kind != "run.failed" {
+		t.Fatal("最终错误未收尾观察或未进入队列")
+	}
+	failed.EventID = "duplicate-final"
+	if status, duplicate := b.enqueueTurn(failed, "current"); status != 202 || !duplicate || len(b.queue) != 5 {
+		t.Fatal("同轮最终错误重复提醒", status, duplicate)
+	}
+}
+
+func TestObservationRetiresForNewTurnUnknownTurnAndTerminal(t *testing.T) {
+	for _, tc := range []struct{ name, kind, turn string }{
+		{"新轮次", "session.resumed", "next"},
+		{"无轮次活动", "activity.observed", ""},
+		{"最终完成", "turn.completed", "current"},
+		{"中断", "run.interrupted", "current"},
+		{"来源失效", "observation.lost", "current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New(config.Bridge{QueueEvents: 10, QueueBytes: 1 << 20})
+			defer b.stopObservations()
+			ctx, cancel := context.WithCancel(b.observationContext)
+			defer cancel()
+			current := &observation{turn: "current", cancel: cancel, at: time.Now()}
+			b.observations["test\x00main"] = current
+			e := event("new-event")
+			e.Kind = tc.kind
+			if status, _ := b.enqueueTurn(e, tc.turn); status != 202 {
+				t.Fatal(status)
+			}
+			if ctx.Err() == nil || !current.done {
+				t.Fatal("旧观察未回收")
+			}
+		})
+	}
+}

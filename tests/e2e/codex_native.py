@@ -17,11 +17,12 @@ binary = project / ("bin/dev" if os.name == "nt" else "bin")
 
 def tool(name):
     return binary / (name + (".exe" if os.name == "nt" else ""))
-root = Path(tempfile.mkdtemp(prefix="agent-pulse-codex-"))
+(project / "tmp").mkdir(exist_ok=True)
+root = Path(tempfile.mkdtemp(prefix="codex-native-", dir=project / "tmp"))
 capture = root / "hooks.jsonl"
 (root / "capture.py").write_text('''import sys,json,pathlib
 data=json.load(sys.stdin)
-keep={k:data[k] for k in ["session_id","hook_event_name","agent_id","agent_type","turn_id","source"] if k in data}
+keep={k:data[k] for k in ["session_id","hook_event_name","agent_id","agent_type","turn_id","source","tool_name"] if k in data}
 with pathlib.Path(sys.argv[1]).open("a") as f:f.write(json.dumps(keep)+"\\n")
 print("{}")
 ''')
@@ -40,14 +41,15 @@ class Mock(http.server.BaseHTTPRequestHandler):
         global scenario_attempts
         scenario_attempts += 1
         requests_received.append(self.path)
-        self.rfile.read(int(self.headers.get("content-length", "0")))
-        if scenario == "fatal":
-            self.send_response(400)
+        request_body = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))))
+        tool_first = scenario.startswith("tool_") and scenario_attempts == 1
+        if scenario in ["fatal", "rate_limit", "tool_fatal", "tool_rate_limit"] and not tool_first:
+            self.send_response(429 if "rate_limit" in scenario else 400)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"error":{"message":"隔离模型最终报错","type":"invalid_request_error"}}).encode())
+            self.wfile.write(json.dumps({"error":{"message":"隔离模型最终报错", "type":"rate_limit_error" if "rate_limit" in scenario else "invalid_request_error"}}).encode())
             return
-        if scenario == "retry" and scenario_attempts == 1:
+        if scenario in ["retry", "tool_retry"] and scenario_attempts == (2 if scenario.startswith("tool_") else 1):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Connection", "close")
@@ -76,6 +78,26 @@ class Mock(http.server.BaseHTTPRequestHandler):
             {"type": "response.output_item.done", "output_index": 0, "item": item},
             {"type": "response.completed", "response": response},
         ]
+        if tool_first:
+            # 让真实执行器执行无副作用的本地命令，再由下一次模型请求触发错误或重试。
+            names = {tool.get("name") for tool in request_body.get("tools", [])}
+            if "exec_command" in names:
+                name, arguments = "exec_command", {"cmd":"printf agent-pulse-tool-probe", "max_output_tokens":64}
+            elif "shell_command" in names:
+                name, arguments = "shell_command", {"command":"printf agent-pulse-tool-probe", "timeout_ms":1000}
+            else:
+                raise RuntimeError("隔离模型请求未提供受支持的命令工具：" + str(sorted(name for name in names if name)))
+            if os.name == "nt":
+                arguments["cmd" if name == "exec_command" else "command"] = "Write-Output agent-pulse-tool-probe"
+            item = {"type":"function_call", "id":"fc_probe", "call_id":"call_probe", "name":name, "arguments":json.dumps(arguments)}
+            response["output"] = [item]
+            events = [
+                {"type":"response.created", "response":{**response,"status":"in_progress","output":[]}},
+                {"type":"response.output_item.added", "output_index":0, "item":{**item,"arguments":""}},
+                {"type":"response.function_call_arguments.delta", "output_index":0, "item_id":item["id"], "delta":item["arguments"]},
+                {"type":"response.output_item.done", "output_index":0, "item":item},
+                {"type":"response.completed", "response":response},
+            ]
         for event in events:
             self.wfile.write(("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n").encode())
         self.wfile.flush()
@@ -92,7 +114,7 @@ config = {
 }
 (root / ".codex").mkdir()
 (root / ".codex/config.toml").write_text("check_for_update_on_startup = false\n")
-(root / ".codex/hooks.json").write_text(json.dumps({"hooks":{event:[{"hooks":[{"type":"command","command":command,"timeout":2}]}] for event in ["SessionStart","UserPromptSubmit","Stop","SessionEnd"]}}))
+(root / ".codex/hooks.json").write_text(json.dumps({"hooks":{event:[{"hooks":[{"type":"command","command":command,"timeout":2}]}] for event in ["SessionStart","UserPromptSubmit","PostToolUse","Stop","SessionEnd"]}}))
 config['projects'] = '{' + json.dumps(str(root)) + '={trust_level="trusted"}}'
 config['project_root_markers'] = '[".codex"]'
 args = [os.environ.get("AGENT_PULSE_CODEX_BINARY", "codex")]
@@ -126,7 +148,7 @@ def wait(check):
 def start(name, args):
     handle = (root / (name + ".log")).open("w")
     service_logs.append(handle)
-    processes.append(subprocess.Popen([str(a) for a in args], cwd=root, stdout=handle, stderr=handle))
+    processes.append(subprocess.Popen([str(a) for a in args], cwd=root, env={**os.environ, "CODEX_HOME":str(root / ".codex"), "CODEX_SQLITE_HOME":str(root / "db")}, stdout=handle, stderr=handle))
 
 
 def port():
@@ -137,18 +159,16 @@ def port():
 
 try:
     repo = root / "repository"
-    if os.name == "nt":
-        repo.mkdir()
-        package_source = root / "adapter-source"
-        package_source.mkdir()
-        shutil.copy2(tool("agent-pulse-adapter-codex"), package_source / "adapter.exe")
-        manifest = json.loads((project / "adapters/codex/manifest.json").read_text(encoding="utf-8"))
-        manifest.update(platform="windows/amd64", entry="adapter.exe")
-        (root / "manifest.json").write_text(json.dumps(manifest),encoding="utf-8")
-        subprocess.run([str(tool("agent-pulse-adapters")), "pack", "--source", str(package_source), "--manifest", str(root / "manifest.json"), "--repository", str(repo), "--out", str(repo / "codex.json")],check=True)
-        (repo / "index-input.json").write_text(json.dumps({"sequence":1,"packages":[json.loads((repo / "codex.json").read_text())]}))
-    else:
-        shutil.copytree(project / "dist/repository", repo)
+    repo.mkdir()
+    package_source = root / "adapter-source"
+    package_source.mkdir()
+    entry = "adapter.exe" if os.name == "nt" else "adapter"
+    shutil.copy2(tool("agent-pulse-adapter-codex"), package_source / entry)
+    manifest = json.loads((project / "adapters/codex/manifest.json").read_text(encoding="utf-8"))
+    manifest.update(platform="windows/amd64" if os.name == "nt" else "linux/amd64", entry=entry, control=entry)
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    subprocess.run([str(tool("agent-pulse-adapters")), "pack", "--source", str(package_source), "--manifest", str(root / "manifest.json"), "--repository", str(repo), "--out", str(repo / "codex.json")], check=True)
+    (repo / "index-input.json").write_text(json.dumps({"sequence":1,"packages":[json.loads((repo / "codex.json").read_text())]}))
     for command_args in [
         ["keygen", "--private", root / "publisher.key", "--public", root / "publisher.pub"],
         ["publish", "--repository", repo, "--private", root / "publisher.key", "--index", repo / "index-input.json"],
@@ -166,7 +186,6 @@ hub_url: "{hub_url}"
 adapters:
   directory: "{root.as_posix()}/adapters"
   public_key: "{(root / 'publisher.pub').read_text().strip()}"
-  poll_seconds: 5
   managed:
     codex: "{root.as_posix()}/.codex/hooks.json"
 ''')
@@ -189,7 +208,7 @@ adapters:
     if len(snapshot["sessions"]) != 1 or snapshot["sessions"][0]["title"] != completed["session_title"]:
         raise RuntimeError("名称更新必须定位同一后台会话")
     final_cases = []
-    for mode, expected in [("fatal", "run.failed"), ("retry", "turn.completed")]:
+    for mode, expected in [("fatal", "run.failed"), ("rate_limit", "run.failed"), ("tool_rate_limit", "run.failed"), ("tool_fatal", "run.failed"), ("retry", "turn.completed"), ("tool_retry", "turn.completed")]:
         scenario, scenario_attempts = mode, 0
         before_ids = {item["event_id"] for item in request(hub_url + "/api/v1/events")}
         case_log = (root / (mode + ".log")).open("w")
@@ -199,15 +218,24 @@ adapters:
         endings = [item for item in current if item["event_id"] not in before_ids and item["kind"] in ["run.failed", "turn.completed"]]
         if len(endings) != 1 or endings[0]["kind"] != expected:
             raise RuntimeError("模型请求失败或重复终态被采集：" + mode)
-        if mode == "fatal" and result.returncode == 0:
+        if not endings[0].get("valid") or endings[0].get("read"):
+            raise RuntimeError("最终结果未形成有效未读提醒：" + mode)
+        if expected == "run.failed" and result.returncode == 0:
             raise RuntimeError("没有取得宿主真实失败结束")
-        if mode == "retry" and (result.returncode != 0 or scenario_attempts < 2):
+        if mode.endswith("retry") and (result.returncode != 0 or scenario_attempts < (3 if mode.startswith("tool_") else 2)):
             raise RuntimeError("没有取得失败后重试成功")
+        current_hooks = [json.loads(line) for line in capture.read_text().splitlines()]
+        current_hooks = [hook for hook in current_hooks if hook["session_id"] == endings[0]["session_id"]]
+        if mode.startswith("tool_") and not any(hook["hook_event_name"] == "PostToolUse" and hook.get("turn_id") for hook in current_hooks):
+            raise RuntimeError("未取得带轮次的原生工具活动：" + mode)
+        if expected == "run.failed" and "rate_limit" in mode and "429" not in endings[0].get("body", ""):
+            raise RuntimeError("最终错误未携带429可见原因")
         final_cases.append({"case":mode,"final_kind":expected,"final_events":len(endings),"requests":scenario_attempts})
     snapshot = request(hub_url + "/api/v1/snapshot")
     if any(session["state"] == "running" for session in snapshot["sessions"]):
         raise RuntimeError("整轮结束后仍有运行任务")
-    evidence = {"finished":finished,"model":"本地 Responses 模拟，不调用在线服务", "title_source":"隔离索引替身，真实 hook 读取；不是交互 /rename 验收", "final_cases":final_cases,"local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
+    history = request(hub_url + "/api/v1/events")
+    evidence = {"finished":finished,"final_snapshot":snapshot,"model":"本地 Responses 模拟，不调用在线服务", "title_source":"隔离索引替身，真实 hook 读取；不是交互 /rename 验收", "final_cases":final_cases,"local_requests":requests_received,"hooks":events,"history":history,"adapter_runtime":runtime,"directory":str(root)}
     (root / "evidence.json").write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
     print(json.dumps(evidence,ensure_ascii=False,indent=2))
     if not finished or not {"SessionStart","Stop"}.issubset({e["hook_event_name"] for e in events}):

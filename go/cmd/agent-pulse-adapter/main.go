@@ -93,9 +93,9 @@ func run() error {
 				}
 			}()
 		}
-		emit := func(e protocol.Event) error { return json.NewEncoder(os.Stdout).Encode(e) }
+		emit := func(e protocol.LocalEvent) error { return json.NewEncoder(os.Stdout).Encode(e) }
 		if adapterID == "antigravity" {
-			return event.ObserveAntigravity(ctx, raw, *source, func(e protocol.LocalEvent) error { return json.NewEncoder(os.Stdout).Encode(e) })
+			return event.ObserveAntigravity(ctx, raw, *source, emit)
 		}
 		return event.ObserveCodex(ctx, raw, *source, emit)
 	}
@@ -147,6 +147,12 @@ func run() error {
 	output := protocol.AdapterResult{Event: result, Identity: identity, TurnID: turnID, Observation: observation, Reply: reply}
 	if adapterID == "codex" {
 		output.Observation = event.CodexObservation(*hook, raw)
+		var input struct {
+			TurnID string `json:"turn_id"`
+		}
+		if json.Unmarshal(raw, &input) == nil {
+			output.TurnID = input.TurnID
+		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(output)
 }

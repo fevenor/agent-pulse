@@ -137,7 +137,7 @@ func (b *Bridge) enqueueTurnLocked(e protocol.Event, turn string) (int, bool) {
 func (b *Bridge) enqueueTurnWithCollectorLocked(e protocol.Event, turn, collector string) (int, bool) {
 	key := e.Agent + "\x00" + e.SessionID
 	if turn == "" {
-		return b.enqueueWithCollectorLocked(e, collector)
+		return b.enqueueWithCollectorLocked(e, collector, turn)
 	}
 	if len(turn) > 256 {
 		return 409, false
@@ -145,7 +145,7 @@ func (b *Bridge) enqueueTurnWithCollectorLocked(e protocol.Event, turn, collecto
 	if done, ok := b.completedTurns[key]; ok && done.turn == turn {
 		return 202, true
 	}
-	status, duplicate := b.enqueueWithCollectorLocked(e, collector)
+	status, duplicate := b.enqueueWithCollectorLocked(e, collector, turn)
 	if status == 202 && (e.Kind == "turn.completed" || e.Kind == "run.failed" || e.Kind == "run.interrupted") {
 		if len(b.completedTurns) >= 128 {
 			var oldest string
@@ -164,9 +164,9 @@ func (b *Bridge) enqueueTurnWithCollectorLocked(e protocol.Event, turn, collecto
 }
 
 func (b *Bridge) enqueueLocked(e protocol.Event) (int, bool) {
-	return b.enqueueWithCollectorLocked(e, b.collectorID)
+	return b.enqueueWithCollectorLocked(e, b.collectorID, "")
 }
-func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector string) (int, bool) {
+func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector, turn string) (int, bool) {
 	e.OccurredAt = e.OccurredAt.UTC()
 	if previous := b.byID[e.EventID]; previous != nil {
 		e.CollectorID = previous.event.CollectorID
@@ -187,8 +187,13 @@ func (b *Bridge) enqueueWithCollectorLocked(e protocol.Event, collector string) 
 	// 明确关闭会话后给最终记录一个短交付窗口，再回收未结束的观察进程；不使用任务空闲超时。
 	if e.Kind != "session.closed" {
 		if current := b.observations[e.Agent+"\x00"+e.SessionID]; current != nil && !current.done {
-			current.cancel()
-			current.done = true
+			// 已知同轮的活动和等待不能取消整轮终态观察；最终模型错误可能没有Stop钩子。
+			// 无轮次活动仍取消旧观察，保留仅观察后台空闲的适配器原有边界。
+			sameTurnActivity := turn != "" && turn == current.turn && (e.State() == "running" || e.State() == "waiting")
+			if !sameTurnActivity {
+				current.cancel()
+				current.done = true
+			}
 		}
 	}
 	if e.Kind == "session.closed" {
