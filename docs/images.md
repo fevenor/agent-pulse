@@ -4,12 +4,12 @@
 
 ## 当前公开版本
 
-[v0.5.0-rc.4](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.4) 已公开为预发布候选，Hub 与 Relay 均提供 Linux amd64/arm64 镜像：
+[v0.6.1](https://github.com/fevenor/agent-pulse/releases/tag/v0.6.1) 已公开为稳定版，Hub 与 Relay 均提供 Linux amd64/arm64 镜像：
 
-- 完整 Hub：`ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.4`，包含官方签名仓库和公钥。
-- Relay：`ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.4`。
+- 完整 Hub：`ghcr.io/fevenor/agent-pulse-hub:v0.6.1`，含签名索引23和原发布公钥。
+- Relay：`ghcr.io/fevenor/agent-pulse-relay:v0.6.1`。
 
-两包均为公开包并关联本项目，支持匿名拉取。公开候选的标签和附件固定，不再沿用草稿滚动替换；后续变更应发布新版本。本版本不是稳定版，不推广稳定 `latest`。`candidate-manifest.json` 和 `trial-guide.md` 保留构建时快照，当前发布状态以 Release 页面为准。公开验证证据见[开发记录](development-status.md#2026-11-16-rc2-公开发布与完工检查)。
+两镜像可匿名拉取，Release 提供两架构 Linux Bridge、Windows Tray ZIP及校验清单；正式标签和附件保持不可变。Release 的 latest 指向0.6.1；部署镜像使用明确版本或摘要。
 
 ## 发布与签名规则
 
@@ -50,7 +50,7 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 
 只改客户端时可使用客户端候选工作流；0.6.0候选含Hub时间线及Bridge本机接口变更，使用完整候选构建。各组件按候选清单核验来源提交，Hub须在发布者附加同候选签名仓库后形成完整镜像。已有公开RC4的Hub/Relay镜像保持不可变。
 
-Release用户附件仅为两架构Linux Bridge、Windows Tray ZIP与SHA256SUMS，源码由GitHub标签归档提供。安装脚本统一从 `https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh` 读取；构建清单、中文验证资料、未签名包与Hub构建归档保存在CI Artifact，仅供发布维护使用。公开推荐为RC4；未公开的0.6.0候选不得作为匿名默认安装目标。
+Release用户附件仅为两架构Linux Bridge、Windows Tray ZIP与SHA256SUMS，源码由GitHub标签归档提供。安装脚本统一从 `https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh` 读取；构建清单、中文验证资料、未签名包与Hub构建归档保存在CI Artifact，仅供发布维护使用。公开推荐为0.6.1；历史未公开候选不得作为匿名默认安装目标。
 
 修订草稿必须先确认draft=true，更新候选标签及对应构建、校验清单与说明，删除旧草稿多余附件；公开RC2/RC3不可覆盖。命令型包内容变化必须递增包版本及正式签名索引，原公钥保留。实际部署与手机测试按使用者授权执行。
 

@@ -17,20 +17,20 @@
 
 ## 1. 部署 Hub
 
-当前公开版本为 [v0.5.0-rc.4](https://github.com/fevenor/agent-pulse/releases/tag/v0.5.0-rc.4)，属于预发布候选；目前没有最新稳定发布。以下命令显式选择该版本；安装其他版本时以对应发布说明为准。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
+当前公开版本为 [v0.6.1](https://github.com/fevenor/agent-pulse/releases/tag/v0.6.1)，为稳定版本。以下命令显式选择该版本；安装其他版本时以对应发布说明为准。Docker 容器自带默认配置、管理网页、适配包公钥与签名仓库；普通使用者不需要准备 Hub YAML 或适配仓库。
 
 ```sh
 docker volume create agent-pulse-hub-data
 docker run -d --name agent-pulse-hub --restart unless-stopped \
   -p 127.0.0.1:18700:18700 \
   -v agent-pulse-hub-data:/data \
-  ghcr.io/fevenor/agent-pulse-hub:v0.5.0-rc.4
+  ghcr.io/fevenor/agent-pulse-hub:v0.6.1
 ```
 
 访问 `http://服务器本机:18700/healthz` 应返回 `status: ok`，根路径应显示管理页面。默认只开放服务器本机访问；若同一可信内网其他设备需要访问，可将端口绑定地址从 `127.0.0.1` 改为服务器的可信内网 IP。可信个人内网可不设置共享令牌；公网入口必须使用访问控制与 TLS，不要直接暴露免鉴权服务。
 
 如 Hub 需要鉴权，先创建权限为 600 的环境文件 `hub.env` 并在其中设置 `AGENT_PULSE_TOKEN`；重建容器时用 `docker run --env-file hub.env ...` 传入，在 Bridge/Tray 配置同一令牌。若需 Relay，也在该文件中设置 `AGENT_PULSE_RELAY_URL` 和 `AGENT_PULSE_RELAY_TOKEN`，Bridge/Tray 会从 Hub 自动获取。手机推送与自定义 Push 渠道属于额外的 Hub 高级配置。也可使用 [默认 Compose 文件](../deploy/compose/hub.image.yaml)，填写镜像版本和端口绑定即可。不要在命令参数中直接输入真实令牌或将其提交到版本控制。
-## 适配仓库独立维护（0.6.0第四候选草稿，尚未公开）
+## 适配仓库独立维护（0.6.1）
 
 该功能首次上线需更新Hub和Bridge（Windows内置Bridge随Tray重新构建分发），将已有Bridge配置中的`poll_seconds`改为`min_check_seconds`，不保留旧字段解析；之后普通新增Agent及adapter/hook更新只需发布签名包，不再更新核心程序。Hub默认每天上海时间02:00检查独立适配发布，时间/时区可配置，也可关闭；管理员使用`--update-adapters`或`--import-adapters`手工更新，详见[仓库更新设计](adapter-repository-update-proposal.md)。
 
@@ -48,15 +48,15 @@ Bridge每次启动检查一次；setup/手工同步默认最小间隔300秒，`-
 
 用户安装始终下载已完成构建的 Linux Bridge，不在目标主机编译。安装器识别 `uname` 返回的系统与架构，下载 `agent-pulse-bridge-linux-amd64` 或 `agent-pulse-bridge-linux-arm64`，读取同一 Release 的 `SHA256SUMS.txt` 并核对二进制格式。源码/raw入口默认选择脚本标注的公开推荐版本；显式 `--version latest` 仅选择稳定版，`--version v版本` 可固定公开候选。历史Release附件保留原构建快照；当前用户入口统一使用raw脚本。
 
-安装当前公开 RC4 时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
+安装当前稳定版时，可在交互终端一条命令下载、安装、逐项设置并启动用户服务：
 
 ```sh
 set -o pipefail
 curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh \
-  | bash -s -- --version v0.5.0-rc.4
+  | bash -s -- --version v0.6.1
 ```
 
-安装脚本统一从上述 raw 入口读取，也可保存后执行；不再要求从 Release 下载安装脚本。无参数默认交互配置与启动，`--install-only` 只安装程序与服务定义，已有 Bridge YAML、服务自定义和固定公钥保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换并备份旧二进制。公开推荐为 RC4；试用未公开的0.6.0候选使用已下载、已校验的文件，不能匿名下载草稿。
+安装脚本统一从上述 raw 入口读取，也可保存后执行；不再要求从 Release 下载安装脚本。无参数默认交互配置与启动，`--install-only` 只安装程序与服务定义，已有 Bridge YAML、服务自定义和固定公钥保留。正在运行的旧 Bridge 需先确认队列清空并停止，安装器才允许替换并备份旧二进制。公开推荐为0.6.1；试用未公开候选使用已下载、已校验的文件，不能匿名下载草稿。
 
 其他候选若仍为草稿或附件缺失，安装明确失败，不回退到源码编译。仅本次测试或离线部署可由维护者提供已构建文件与核验摘要，显式使用：
 
@@ -108,7 +108,7 @@ curl --fail http://127.0.0.1:18702/healthz
 
 手工同步使用当前 shell 的 PATH；服务启动后还应在管理页检查适配状态，确认 service 的 PATH 同样可找到宿主。用户服务若要在退出登录后继续运行，需要系统管理员启用该用户的 linger。Bridge 必须保留回环监听；同机 Windows 与 WSL 作为不同观察环境分别运行 setup，生成不同的主机指纹。
 
-当前源码新增ZCode Server Linux接入，尚未包含在公开RC4适配仓库。获得已核验的Linux Bridge及对应签名包后，在Server所在主机、相同用户运行setup，向导读取当前Server安装并管理该用户`.zcode/cli/config.json`；已有配置沿用来源标识、公钥和目录。WSL与SSH使用同一Linux流程，Tray不管理远程Bridge；具体范围见[ZCode Server接入说明](adapters.md#zcode-server-的-linux-接入)。不为这个未发布包修改公开安装脚本的默认版本。
+0.6.1已包含ZCode Server Linux接入。获得已核验的Linux Bridge及对应签名包后，在Server所在主机、相同用户运行setup，向导读取当前Server安装并管理该用户`.zcode/cli/config.json`；已有配置沿用来源标识、公钥和目录。WSL与SSH使用同一Linux流程，Tray不管理远程Bridge；具体范围见[ZCode Server接入说明](adapters.md#zcode-server-的-linux-接入)。包选择仍遵循实际平台及宿主版本。
 
 若配置 token 或 Relay token，可以使用权限为 600、版本控制外的 Bridge YAML 保存。若使用 `${env:变量名}`，这些变量必须同时在 systemd 服务及各 Agent 的 hook 进程环境中存在；仅放在 systemd 的 EnvironmentFile 会导致交互式 Agent hook 加载配置失败。
 
@@ -125,7 +125,7 @@ Windows Tray 的便携包、`tray.yaml` 和内置 Bridge 管理见 [Windows 客�
 在公网服务器建立独立目录，复制 `deploy/compose/relay.image.yaml` 为 `compose.yaml`，复制 `relay.runtime.yaml` 到同一目录。创建权限为 600 的 `relay.env`：
 
 ```dotenv
-AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:v0.5.0-rc.4
+AGENT_PULSE_RELAY_IMAGE=ghcr.io/fevenor/agent-pulse-relay:v0.6.1
 AGENT_PULSE_RELAY_TOKEN=替换为生成的随机令牌
 ```
 
@@ -200,10 +200,10 @@ curl -fsS http://127.0.0.1:18702/healthz
 ```sh
 curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash
 # 固定公开候选
-curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash -s -- --version v0.5.0-rc.4
+curl -fsSL https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh | bash -s -- --version v0.6.1
 ```
 
-源码/raw入口默认推荐已公开RC4；历史Release附件脚本保持构建快照，当前只使用上述raw入口。显式latest只选择稳定版，当前没有稳定发布；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。
+源码/raw入口默认推荐已公开0.6.1；历史Release附件脚本保持构建快照，当前只使用上述raw入口。显式latest只选择稳定版，当前为0.6.1；草稿仍不作为匿名默认下载目标。已有正式渠道模板变更与测试发送另行授权，标题变量对应会话名，正文变量已含主机、事件和内容，不再另外拼标题。
 
 ## 整轮终态与失联修订RC4升级
 

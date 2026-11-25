@@ -1,6 +1,6 @@
 # 来源接入与独立适配包
 
-适配器负责产品事件到统一协议的转换，Bridge负责本机入口、转发与安装。当前源码的Linux接入包含OpenCode、Codex、Antigravity CLI/WSL桌面执行器、Qoder中国CLI、ZCode Server及DeepSeek Harness（DSH，源码未发布）；Windows接入Codex/ChatGPT本地任务、Antigravity和ZCode桌面。ZCode Server的Linux包尚未公开，不能从公开RC4安装得到。Windows、WSL和SSH目标按实际hook执行位置分别部署；不抓取界面或构建跨系统代理。实际宿主验证边界见开发记录，OpenCode平台包只承诺Linux宿主。
+适配器负责产品事件到统一协议的转换，Bridge负责本机入口、转发与安装。当前源码的Linux接入包含OpenCode、Codex、Antigravity CLI/WSL桌面执行器、Qoder中国CLI、ZCode Server及DeepSeek Harness（DSH）；Windows接入Codex/ChatGPT本地任务、Antigravity和ZCode桌面。ZCode Server与DSH的Linux包已随0.6.1公开。Windows、WSL和SSH目标按实际hook执行位置分别部署；不抓取界面或构建跨系统代理。实际宿主验证边界见开发记录，OpenCode平台包只承诺Linux宿主。
 
 ## 支持边界
 
@@ -57,7 +57,7 @@ ZIP 成员时间统一为固定值，同一文件内容及文件权限不因重�
 
 同一插件在不同平台重复打包时，pnpm 路径长度处理可能使 bundle 的来源注释不同；合并器不会忽略这些内容差异。公用索引应使用上述单次通用构建方式，不通过放宽摘要检查或覆盖同版本包规避冲突。
 
-Hub 未签名应用构建由工作流保存为发布者专用 OCI 归档 `hub-build.tar`，不单独公开第三个镜像，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的 OCI 内部构建生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像首次启动从`/repository`固定公钥并初始化`/data/adapters`，后续使用持久活动仓库，镜像种子不覆盖它；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载包含此能力的完整镜像后不需要挂载活动仓库或配置公钥；该源码功能尚未发布。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
+Hub 未签名应用构建由工作流保存为发布者专用 OCI 归档 `hub-build.tar`，不单独公开第三个镜像，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的 OCI 内部构建生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像首次启动从`/repository`固定公钥并初始化`/data/adapters`，后续使用持久活动仓库，镜像种子不覆盖它；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载包含此能力的完整镜像后不需要挂载活动仓库或配置公钥；该能力已随0.6.1发布。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
 
 **分发、安装与产品逻辑分离**：Hub 的 `Manifest.Validate` 只检查仓库结构与分发完整性，不解释宿主命令、hook 名、配置格式和 Agent 兼容版本。Bridge 在本机按既有宿主版本政策选包；带 `control` 的可信包自行提供探测与配置，不需要 Bridge 增加 `kind`/`config_style`/hook 名白名单。无控制入口的包仍须使用本机已有安装方式。签名、摘要、路径、不可变版本和安装恢复保持。新统一事件能力或新系统运行机制仍需相应核心实现；仅改变包内宿主逻辑不需要升级 Hub/Bridge。
 
@@ -110,7 +110,7 @@ Tray 启用内置 Bridge，并在 Bridge 配置的 `adapters.managed` 中增加 
 
 ## ZCode Server 的 Linux 接入
 
-ZCode Server 是远程主机上的 Linux 执行器，WSL 和 SSH 是桌面连接它的方式，不是两套适配来源。当前清单基线为 Server 3.18.2、Linux amd64，包尚未公开；Windows桌面版本、Server宿主版本和AgentPulse适配包版本分别记录。
+ZCode Server 是远程主机上的 Linux 执行器，WSL 和 SSH 是桌面连接它的方式，不是两套适配来源。当前清单基线为 Server 3.18.2、Linux amd64，包已随0.6.1发布；Windows桌面版本、Server宿主版本和AgentPulse适配包版本分别记录。
 
 在 Server 所在 Linux 主机、相同用户下运行独立 `agent-pulse-bridge`。安装向导读取该用户 `.zcode/server/current.json`，核对其中选中的版本目录、产物清单及运行文件；不启动Server、不依赖PATH或`WSL_DISTRO_NAME`，不扫描历史目录取最高版本，也不借用Windows程序版本。WSL与SSH复用相同Linux路径及事件转换，不由Tray代理远程hook或管理远程服务。
 
@@ -118,7 +118,7 @@ ZCode Server 是远程主机上的 Linux 执行器，WSL 和 SSH 是桌面连接
 
 会话标题和父身份只读查询所在Linux用户 `.zcode/cli/db/db.sqlite`，沿用Windows的字段与子会话过滤；缺库或锁竞争不阻断事件，不从完整对话补正文。Server采用自定义会话数据库位置时，当前默认路径查询不保证名称及父身份补充；事件中已有的明确子身份仍过滤。用户服务退出登录后的持续运行要求见[部署指南](deployment.md#2-在-linux-主机安装-bridge)。
 
-真实验收使用[Linux ZCode测试入口](../tests/e2e/README.md#zcode-server-linuxwslssh)，区分安装与运行回执、真实原生事件和提醒实收。WSL通过不代替SSH实际任务、arm64或异常退出验收；当前公开版本安装脚本仍不承诺这个未发布包。
+真实验收使用[Linux ZCode测试入口](../tests/e2e/README.md#zcode-server-linuxwslssh)，区分安装与运行回执、真实原生事件和提醒实收。WSL通过不代替SSH实际任务、arm64或异常退出验收；实际平台支持以签名清单为准。
 
 ## DeepSeek Harness 的 Linux 接入
 

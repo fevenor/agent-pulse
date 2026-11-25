@@ -11,8 +11,8 @@ usage() {
     '测试/离线：--version v版本 --file 预构建二进制 --sha256 已核验摘要。' \
     '缺少发布物时明确失败，不回退到用户本机编译；不覆盖已有 Bridge 配置。'
 }
-# 默认采用已公开的RC3；草稿不作为匿名安装目标。
-version=v0.5.0-rc.4 local_file='' checksum='' setup=1 dry_run=0
+# 默认采用已公开的0.6.1；草稿不作为匿名安装目标。
+version=v0.6.1 local_file='' checksum='' setup=1 dry_run=0
 while (($#)); do
   case "$1" in
     --version|--file|--sha256)
