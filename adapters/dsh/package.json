@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-pulse-adapter",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "将 DeepSeek Harness 会话、轮次、审批与提问事件递交到本机 AgentPulse Bridge 的 Host 插件",
   "type": "module",
@@ -9,15 +9,25 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "adapter.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": [
+    "index.js",
+    "adapter.js",
+    "delivery.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
   "engines": {
     "dsh": "^0.2.3-alpha.2"
   },
   "scripts": {
-    "check": "node --check index.js && node --check adapter.js",
+    "check": "node --check index.js && node --check adapter.js && node --check delivery.js",
     "test": "node --test 'test/*.test.js'"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

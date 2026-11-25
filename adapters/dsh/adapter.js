@@ -1,8 +1,7 @@
 // adapters/dsh/adapter.js —— DeepSeek Harness 原生事件到 AgentPulse 统一事件的纯转换，不依赖宿主 API。
 // 正文白名单、UTF-8 安全截断与本机 IPC 递交规则沿用 OpenCode 适配器（adapters/opencode/src/adapter.ts）；两个包独立发布。
-import { request } from "node:http";
 import { isAbsolute, normalize } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export const AGENT = "dsh";
 export const BODY_LIMIT = 32 << 10;
@@ -48,34 +47,6 @@ export function bridgeAddress(value) {
   }
   if (/^pipe:\\\\.\\pipe\\[A-Za-z0-9_.-]{1,200}$/.test(value)) return value.slice(5);
   throw new Error("Bridge必须为本机IPC地址");
-}
-
-export async function emit(address, event, signal) {
-  const timeout = AbortSignal.timeout(200);
-  await new Promise((resolve, reject) => {
-    const req = request({ socketPath: address, path: "/api/v1/events", method: "POST",
-      headers: { Host: "127.0.0.1:1", "Content-Type": "application/json" },
-      signal: signal ? AbortSignal.any([timeout, signal]) : timeout }, (response) => {
-      const chunks = [];
-      let bytes = 0;
-      response.on("data", (chunk) => {
-        bytes += chunk.length;
-        if (bytes > 65536) { response.destroy(new Error("Bridge回执超过上限")); return; }
-        chunks.push(chunk);
-      });
-      response.on("error", reject);
-      response.on("end", () => {
-        try {
-          const receipt = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          if (response.statusCode !== 202 || receipt.event_id !== event.event_id ||
-            (receipt.accepted !== "memory" && receipt.accepted !== "filtered")) throw new Error("Bridge未确认接收");
-          resolve();
-        } catch (error) { reject(error); }
-      });
-    });
-    req.on("error", reject);
-    req.end(JSON.stringify({ ...event, process_id: process.pid }));
-  });
 }
 
 // 只信任宿主会话头部的明确子代理标记；仅带 parentSession 的分叉会话仍是用户可见的主会话。
@@ -156,9 +127,9 @@ export function turnStart(source, session, event, kind, sessionTitle = "") {
   return buildEvent(source, String(session.id), session?.header?.cwd ?? "", kind, { seq: event.seq, time: event.time, sessionTitle });
 }
 
-// 等待结束后由触发它的持久事件定位，携带同一序号，便于 Hub 按会话内顺序处理。
+// 等待恢复由请求的真实结束触发；实时恢复有独立身份，同一递交重试保持原事件。
 export function resumed(source, session, event, sessionTitle = "") {
-  return buildEvent(source, String(session.id), session?.header?.cwd ?? "", "activity.observed", { seq: event.seq, time: event.time, sessionTitle, body: "等待已结束，继续处理" });
+  return buildEvent(source, String(session.id), session?.header?.cwd ?? "", "activity.observed", { seq: event.seq, time: event.time, salt: randomUUID(), sessionTitle, body: "等待已结束，继续处理" });
 }
 
 // 轮次内心跳：turn/start 是唯一的"进入运行"信号，长轮次里一旦丢失，Hub 会停在 idle 直到 turn/end。
@@ -189,7 +160,7 @@ export function renamed(source, session, event) {
 }
 
 export function archived(source, sessionId, cwd, sessionTitle = "", time = Date.now()) {
-  return buildEvent(source, String(sessionId), cwd ?? "", "session.closed", { time, sessionTitle });
+  return buildEvent(source, String(sessionId), cwd ?? "", "session.closed", { time, salt: randomUUID(), sessionTitle });
 }
 
 export function localized(text) {
@@ -246,7 +217,7 @@ export class SessionTracker {
   get(id) {
     let state = this.sessions.get(id);
     if (!state) {
-      state = { seen: false, waiting: false, title: "", turns: new Map(), tools: new Map(), pending: new Map() };
+      state = { seen: false, title: "", turns: new Map(), tools: new Map(), waits: new Map() };
       this.sessions.set(id, state);
       if (this.sessions.size > this.limit) this.sessions.delete(this.sessions.keys().next().value);
     }
@@ -262,12 +233,10 @@ export class SessionTracker {
       }
     } else if (event.type === "assistant/message" && !data.interrupted) {
       const text = textOf(data.message);
-      if (text) {
-        const current = state.turns.get(data.turn);
-        // 只保留本轮最高步骤的助手文本，即本轮最后一条可见回答。
-        if (!current || data.step >= current.step) state.turns.set(data.turn, { step: data.step, text });
-        if (state.turns.size > 16) state.turns.delete(state.turns.keys().next().value);
-      }
+      const current = state.turns.get(data.turn);
+      // 最后一步即使没有可见文本也覆盖中间说明，完成时由空正文提示明确说明。
+      if (!current || data.step >= current.step) state.turns.set(data.turn, { step: data.step, text });
+      if (state.turns.size > 16) state.turns.delete(state.turns.keys().next().value);
     }
   }
   finalText(id, turn) {
@@ -278,15 +247,5 @@ export class SessionTracker {
   }
   toolName(id, callId) {
     return callId ? this.get(id).tools.get(String(callId)) ?? "" : "";
-  }
-  // 同一等待可能经 approval/request 与 user-questions/request 两条通路到达；短时间内按 callId 或主题去重。
-  claim(id, key, now = Date.now()) {
-    if (!key) return true;
-    const pending = this.get(id).pending;
-    const last = pending.get(key);
-    if (last !== undefined && now - last < 5000) return false;
-    pending.set(key, now);
-    if (pending.size > 32) pending.delete(pending.keys().next().value);
-    return true;
   }
 }

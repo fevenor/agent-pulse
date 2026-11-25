@@ -1,7 +1,21 @@
-name: 构建 RC 试运行草稿
+name: 构建与发布完整版本
 
 on:
+  push:
+    tags: ['v*', '!v*-rc.*']
   workflow_dispatch:
+    inputs:
+      publish_existing:
+        description: '公开已构建草稿（须先完成本机签名和完整 Hub 镜像发布）'
+        type: boolean
+        default: false
+      adapter_release:
+        description: '公开草稿时提供匹配的 adapters-序号 发布'
+        type: string
+      relay_version:
+        description: 'RC 可选择复用的 Relay 标签；正式版始终构建同版本'
+        type: string
+        default: 'v0.6.0-rc.2'
 
 permissions:
   contents: read
@@ -9,26 +23,28 @@ permissions:
   packages: write
 
 concurrency:
-  group: rc-draft-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
-      - name: 核对候选标签
+      - name: 核对发布标签
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          [[ "$REF_TYPE" == tag && "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || { echo "只能从 RC 标签生成试运行草稿" >&2; exit 1; }
+          [[ "$REF_TYPE" == tag && "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || { echo '必须从版本标签发布' >&2; exit 1; }
   linux:
     needs: validate
+    if: ${{ inputs.publish_existing != true }}
     uses: ./.github/workflows/images.yml
     with:
-      publish_relay: false
+      publish_relay: ${{ !contains(github.ref_name, '-rc.') }}
   windows:
     needs: validate
+    if: ${{ inputs.publish_existing != true }}
     uses: ./.github/workflows/windows.yml
   draft:
     needs: [linux, windows]
@@ -47,20 +63,51 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
-      - name: 合并候选产物并创建草稿
+      - name: 合并同次 Workflow 产物并创建版本草稿
         env:
           GH_TOKEN: ${{ github.token }}
           GOTOOLCHAIN: local
           GOPROXY: https://proxy.golang.org
-          RELAY_VERSION: ${{ inputs.relay_version || 'v0.6.0-rc.2' }}
+          RELAY_VERSION: ${{ contains(github.ref_name, '-rc.') && (inputs.relay_version || 'v0.6.0-rc.2') || github.ref_name }}
         run: |
           uv run --offline --no-project python scripts/check/test_rc_draft.py
           uv run --offline --no-project python scripts/release/create_rc_draft.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --output dist/rc-draft --replace-draft --relay-version "$RELAY_VERSION"
       - uses: actions/upload-artifact@v7
         with:
-          name: RC 草稿发布结果
+          name: 版本草稿发布结果
           path: |
             dist/rc-draft/release-result.json
             dist/rc-draft/maintenance/*
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: validate
+    if: ${{ inputs.publish_existing == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: go/go.sum
+      - uses: docker/setup-buildx-action@v4
+      - name: 核验签名仓库、镜像和附件后公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ADAPTER_RELEASE: ${{ inputs.adapter_release }}
+          GOTOOLCHAIN: local
+        run: |
+          mkdir -p bin
+          (cd go && go build -trimpath -buildvcs=false -o ../bin/agent-pulse-adapters ./cmd/agent-pulse-adapters)
+          python scripts/release/finalize_release.py --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --adapter-release "$ADAPTER_RELEASE" --tool ./bin/agent-pulse-adapters --output dist/final-release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: 正式发布核验结果
+          path: dist/final-release/release-result.json
           if-no-files-found: error
           retention-days: 14

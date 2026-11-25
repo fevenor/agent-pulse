@@ -328,18 +328,7 @@ func setupAgentCatalog(home, platform string) []setupAgent {
 		{ID: "qoderclicn", Name: "Qoder 中国版 CLI", Command: "qoderclicn", ConfigPath: filepath.Join(home, ".qoder-cn", "settings.json"), Manifest: Manifest{ID: "qoderclicn", Command: "qoderclicn"}},
 		{ID: "opencode", Name: "OpenCode", Command: "opencode", ConfigPath: defaultOpenCodeConfigPath(home), Manifest: Manifest{ID: "opencode", Command: "opencode"}},
 		{ID: "zcode", Name: "ZCode Server（Linux / WSL / SSH）", Command: "zcode", ConfigPath: filepath.Join(home, ".zcode", "cli", "config.json"), Manifest: Manifest{ID: "zcode", Command: "zcode"}},
-		{ID: "dsh", Name: "DeepSeek Harness", Command: "dsh", ConfigPath: dshProfilePatchPath(home), Manifest: Manifest{ID: "dsh", Command: "dsh"}},
 	}
-}
-
-// dshProfilePatchPath 是 DSH web profile 的用户 patch 默认位置；DSH_HOME 可重定位 DSH 数据目录。
-// 其他 profile（tui、desktop 等）由用户在向导中改成对应路径。
-func dshProfilePatchPath(home string) string {
-	root := os.Getenv("DSH_HOME")
-	if root == "" {
-		root = filepath.Join(home, ".dsh")
-	}
-	return filepath.Join(root, "profiles", "web", "cordis.patch.yml")
 }
 
 func scanSetupAgents(ctx context.Context) []setupAgent {

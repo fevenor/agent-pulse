@@ -36,9 +36,6 @@ func updateHookConfigWithExecutable(c config.Bridge, configPath string, p Packag
 	if p.Kind == "opencode-plugin" {
 		return updateOpenCodeJSONC(c, p, raw, enable)
 	}
-	if p.Kind == "dsh-plugin" {
-		return updateDSHProfilePatch(c, p, raw, enable)
-	}
 	root := map[string]any{}
 	if len(raw) > 0 {
 		if json.Unmarshal(raw, &root) != nil || root == nil {
@@ -236,12 +233,6 @@ export default { ...plugin, setup(ctx) {
 }};
 `, root, id, statePath)
 		if err = AtomicFile(filepath.Join(c.Adapters.Directory, "loaders", p.ID, "index.ts"), []byte(loader), 0600); err != nil {
-			return err
-		}
-	}
-	if p.Kind == "dsh-plugin" {
-		// DSH 插件行指向固定 loader；包升级只改 state.json，不触碰用户 profile。
-		if err = writeDSHLoader(c, p); err != nil {
 			return err
 		}
 	}

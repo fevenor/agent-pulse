@@ -4,7 +4,6 @@ on:
   pull_request:
   push:
     branches: [main, master]
-    tags: ['v*', '!v*-rc.*']
   workflow_dispatch:
   workflow_call:
     inputs:

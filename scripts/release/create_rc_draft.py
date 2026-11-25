@@ -1,4 +1,4 @@
-"""合并同一工作流的候选产物并创建 GitHub RC 草稿；不签名、不转正。"""
+"""合并同一工作流的候选产物并创建 GitHub 版本草稿；不签名、不转正。"""
 import argparse
 import hashlib
 import json
@@ -15,7 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_SCOPE = {("codex", "linux/amd64"), ("antigravity", "linux/amd64"),
                   ("qoderclicn", "linux/amd64"), ("opencode", "linux/amd64"), ("opencode", "linux/arm64"), ("zcode", "windows/amd64"),
-                  ("zcode", "linux/amd64"),
+                  ("zcode", "linux/amd64"), ("dsh", "linux/amd64"), ("dsh", "linux/arm64"),
                   ("codex", "windows/amd64"), ("antigravity", "windows/amd64")}
 
 
@@ -27,18 +27,18 @@ def command(*args, allow_failure=False):
 
 
 def validate_tag(tag, version):
-    if not re.fullmatch(r"v" + re.escape(version) + r"-rc\.[1-9][0-9]*", tag):
-        raise ValueError("候选标签必须与工程版本一致，形如 v0.6.0-rc.1")
+    if not re.fullmatch(r"v" + re.escape(version) + r"(?:-rc\.[1-9][0-9]*)?", tag):
+        raise ValueError("标签必须与工程版本一致，使用 v版本 或 v版本-rc.序号")
 
 
 def validate_scope(packages):
     actual = {(p["id"], p["platform"]) for p in packages}
     if actual != EXPECTED_SCOPE or len(packages) != len(EXPECTED_SCOPE):
-        raise ValueError("候选适配包范围不符：Windows 为三类来源，Linux 为含 ZCode Server 的五类来源，OpenCode 控制入口按两架构分包")
+        raise ValueError("候选适配包范围不符：Windows 为三类来源，Linux 为含 ZCode Server、DSH 的六类来源，OpenCode 与 DSH 控制入口按两架构分包")
 
 
 def require_draft(release, tag, commit):
-    if not release.get("isDraft") or not release.get("isPrerelease"):
+    if not release.get("isDraft") or release.get("isPrerelease") != ("-rc." in tag):
         raise ValueError("已有 Release 已被人工发布或修改，不自动覆盖")
     if release.get("tagName") != tag or release.get("targetCommitish") != commit:
         raise ValueError("已有草稿不是当前候选提交，不自动覆盖")
@@ -151,42 +151,39 @@ def main():
         raise RuntimeError("发布工具构建失败：" + result.stderr)
     image_root = "ghcr.io/" + args.repository.lower()
     manifest = {"tag": args.tag, "commit": args.commit, "workflow_run_id": args.run_id,
-                "draft": True, "prerelease": True, "packages": index["packages"],
+                "draft": True, "prerelease": "-rc." in args.tag, "packages": index["packages"],
                 "hub": image_root + "-hub:" + args.tag,
                 "hub_build": {"asset": "hub-build.tar", "sha256": hub_hash, "publisher_only": True},
                 "relay": image_root + "-relay:" + (args.relay_version or args.tag),
                 "signed_repository": False, "index_sequence_is_placeholder": True,
                 "bridge_assets": [{key: value for key, value in artifact.items() if key != "path"} for artifact in bridge_files]}
     (assets / "candidate-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    notes = f"""# AgentPulse {args.tag} 试运行草稿
+    notes = f"""# AgentPulse {args.tag}
 
-**保持草稿与预发布状态，不公开、不推广latest。** 本候选更新Hub、Linux Bridge和Windows Tray内置Bridge；Relay沿用已验证标签，与本候选使用相同网络协议。公开推荐仍为RC4。
+本版本包含 Hub、Relay、Linux Bridge 和 Windows Tray；用户附件由同一次 Workflow 检查和构建。草稿仅在签名仓库与完整 Hub 镜像准备并核验后公开。
 
-## 本次能力
+## 本次改进
 
-- Hub默认每日02:00（Asia/Shanghai）获取独立签名adapter发布，时间、时区可配置或关闭；支持管理员手工检查和离线目录/ZIP导入。所有平台包就绪后才推广索引，旧包供在途下载，失败保持旧仓库。
-- 镜像仓库只作首次种子，活动仓库存入持久数据目录；固定公钥及不可变包规则保持，回滚必须使用更高签名序号。
-- Bridge每次启动检查一次；setup/手工检查默认最小间隔300秒，--force-sync绕过时间节流。运行中与重连不检查；离线使用可信包副本，缺包或实际接入失败明确报告未完成。
-- Adapter自带名称、探测及hook配置生成的固定本机控制接口，普通新增来源、映射和配置格式无需更新Hub/Bridge。包与hook联动提交，保留用户其他配置、关闭开关及恢复日志，短提交不暴露半完成选版。
-- 新增ZCode Server Linux接入，WSL和SSH共用相同Server用户路径、原生process/argv和事件转换，不由Tray代理远程hook。OpenCode按amd64/arm64携带Go控制入口，不要求目标新增运行时。
-- 延续会话继续运行时清除此前未读、对象增量、正文缓存、原生身份与既有通知规则。不迁移或清空数据库，不自动终止Agent。
+- DSH 0.1.3 修复并行工具误清等待、递交乱序、重复归档/心跳身份及空最终正文问题；有界后台重试保持事件身份。
+- DSH 探测与 profile 配置由随包控制入口负责，宿主直接引用不可变包，消除安装窗口缓存旧版本的问题。
+- Hub 只校验适配仓库的分发结构；Bridge 允许控制入口接管未知插件形态。保留原签名公钥、摘要与安装恢复。
+- 包含 Codex 工具活动后的最终模型错误采集修复及 Windows 中文会话显示修复。
+- Hub 独立更新适配仓库；Bridge 在启动、setup 或显式同步时应用，运行和重连不检查。保留现有数据库与配置，不重放历史提醒。
 
-## 升级与产物
+## 安装和升级
 
-用户草稿附件为两架构Linux Bridge、Windows便携ZIP和SHA256SUMS。按本提交校验后使用；完整平台adapter仓库由发布者本机签名，并另行提供独立adapter草稿及离线ZIP，草稿不是匿名在线安装来源。
+完整 Hub：`{manifest['hub']}`；Relay：`{manifest['relay']}`。
 
-Hub成品为`{manifest['hub']}`，由发布者附加同提交签名仓库；Relay使用`{manifest['relay']}`。首次上线先升级核心与Bridge配置，将adapters.poll_seconds改为min_check_seconds，再导入较高序号adapter仓库。保留原公钥、来源身份、私人配置、数据卷和现行已读；停止Bridge前确认队列为空。共享Codex hook仍由WSL管理，Windows不能争抢写入。
+用户附件为两架构 Linux Bridge、Windows Tray 便携 ZIP 和 SHA256SUMS.txt。安装入口为 https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh ，使用 `--version {args.tag}` 显式选择本版本，不在目标机器编译。
 
-用户安装入口仍为https://raw.githubusercontent.com/fevenor/agent-pulse/main/scripts/install/bridge.sh，默认公开版本不变；草稿使用核验后的本地附件，不要求目标编译。
+已有实例先核对 Bridge 队列为零、备份配置和数据，再替换程序并同步签名适配包；保留主机身份、公钥、手机模板和用户数据。插件写入配置后仍须按宿主规则重新加载，installed 不能代替 running 和实际提醒验收。发布维护资料保存在 Workflow Artifact，不混入用户附件。
 
-后续普通adapter升级不需要重建Hub镜像或部署Bridge。实际安装和最近运行回执分别验收；hook写入不代表宿主热加载，按其规则重新加载。
+## 验证范围
 
-## 验证边界
-
-全模块Go竞态/静态检查、签名仓库安全、未知Agent动态接入及离线修复、平台构建和样例控制入口有回归证据。ZCode的WSL/SSH真实流程曾验证开始、继续、完成、提问和子身份过滤；新控制包在目标上的真实事件、Tray弹卡和手机实收需部署后分别确认。既有Windows PowerShell命令字符串hook在本机返回空stdout的用例未被宣称通过，不关闭防护或跳过断言。ARM模拟构建不代替ARM宿主实测，长期网络流量验收仍独立保留。
+Workflow 执行 Linux/Windows 检查、Go race/vet、前端和插件测试、两架构容器验证及产物摘要核对。ARM 模拟/交叉构建不代替真机运行。DSH ACP 暂未纳入支持验收；手机和 Tray 实收仍按实际目标确认。
 
 构建提交：{args.commit}
-[完整候选构建与检查](https://github.com/{args.repository}/actions/runs/{args.run_id})
+[Workflow 检查与构建](https://github.com/{args.repository}/actions/runs/{args.run_id})
 """
     (assets / "trial-guide.md").write_text(notes, encoding="utf-8")
     maintenance = output / "maintenance"
@@ -207,8 +204,8 @@ Hub成品为`{manifest['hub']}`，由发布者附加同提交签名仓库；Rela
             require_draft(previous, args.tag, args.commit)
     else:
         command("gh", "release", "create", args.tag, "--repo", args.repository,
-                "--target", args.commit, "--draft", "--prerelease",
-                "--title", "AgentPulse " + args.tag + "（试运行草稿）", "--notes-file", maintenance / "trial-guide.md")
+                "--target", args.commit, "--draft", *(["--prerelease"] if manifest["prerelease"] else []),
+                "--title", "AgentPulse " + args.tag + "（待发布草稿）", "--notes-file", maintenance / "trial-guide.md")
     command("gh", "release", "edit", args.tag, "--repo", args.repository,
             "--notes-file", maintenance / "trial-guide.md")
     # 仅已确认仍为草稿时清理旧草稿多余附件；公开版本始终由require_draft拒绝。
@@ -226,7 +223,7 @@ Hub成品为`{manifest['hub']}`，由发布者附加同提交签名仓库；Rela
     (output / "release-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if os.getenv("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-            summary.write(f"## RC 草稿已创建\n\n[{args.tag}]({release['url']})\n\n保持草稿及预发布状态；等待人工试运行后决定转正。\n\n提交：{args.commit}\n")
+            summary.write(f"## 版本草稿已创建\n\n[{args.tag}]({release['url']})\n\n草稿已准备；完成本机签名与完整镜像核验后，使用发布工作流公开。\n\n提交：{args.commit}\n")
     print(json.dumps(result, ensure_ascii=True))
 
 

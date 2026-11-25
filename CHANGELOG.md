@@ -2,6 +2,16 @@
 
 本文件维护需求、设计和工程调整历史。功能实现和验证状态见 [开发记录](docs/development-status.md)；设计调整不表示功能已经交付。
 
+## 0.6.1：DSH 可靠性修复与适配边界收敛
+
+- DSH 等待按 waterfall 请求生命周期跟踪：无关并行工具、追加用户消息和步骤不再提前清除批准/提问；取消、异常及多路嵌套请求按真实结束恢复，终态后的迟到回调不重新开启会话。
+- 本机递交改为会话级后台串行队列，短暂 503/断连/超时最多三次尝试并保持原 ID/时间/正文；保留 200ms 单次超时、明确容量和卸载边界。修复等待恢复与步骤心跳的重复 ID、重复归档冲突，以及最后一步空文本误用中间说明。
+- DSH 候选包版本 0.1.3，随包 Go 控制入口负责 probe/configure/verify；移除 Bridge 内置 DSH 目录和 loader 生成，profile 直接指向不可变包入口，运行回执由插件记录。安装和恢复窗口不再让新 URL 缓存旧包或失败。
+- Hub 不再解释宿主命令、hook 名和宿主兼容范围；Bridge 允许带控制入口的包自行实现未知 kind/config_style。签名、摘要、包路径、不可变发布与安装恢复保持。OpenCode 固定 loader 和无控制入口包的历史内置实现仍保留，不宣称全部历史耦合已消除。
+- 构建与 RC 范围纳入 Linux amd64/arm64 DSH 控制包；未签名、未推广共享索引、未部署或发布。DSH ACP 按本轮范围暂不处理。
+
+- 产品版本定为0.6.1；完整Workflow支持正式版与RC草稿，完成本机签名和镜像核验后由Workflow公开。Go控制程序随包更新，Antigravity0.3.9、Codex0.2.16、Qoder0.2.15、OpenCode0.3.8、ZCode0.1.13使用新包版本，不覆盖已有签名包。
+
 ## 未发布：DeepSeek Harness 接入
 
 - 新增 `dsh-agent-pulse-adapter`：DeepSeek Harness 的 Host 插件，由 DSH 自身的 Node 运行时加载，监听 `session/event`、`approval/request`、`user-questions/request` 与 `workspace/session-archived`，转换为本项目统一事件后经本机 IPC 递交 Bridge；不修改审批决定、不采集用户输入、思考或历史，子代理按会话头部 `origin: subagent`/`delegationDepth` 过滤。

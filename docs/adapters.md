@@ -7,7 +7,7 @@
 | 来源 | 接入形态 | 事件及限制 |
 | --- | --- | --- |
 | OpenCode | TypeScript 原生插件、固定 loader | 原生会话/执行/表单/权限事件；查询会话 `parentID` 排除子代理；插件更新后需要宿主重新加载 |
-| DeepSeek Harness | DSH Host 插件、固定 loader | 持久会话日志的轮次开始/终态、工具失败、改名，`approval/request` 与 `user-questions/request` 的等待，以及归档；按会话头部 `origin: subagent`/`delegationDepth` 过滤子代理；事件名随 DSH 版本变化，`x.y` 变化需重新适配 |
+| DeepSeek Harness | DSH Host 插件、随包控制入口 | 持久会话日志的轮次开始/终态、工具失败、改名，`approval/request` 与 `user-questions/request` 的等待，以及归档；按会话头部 `origin: subagent`/`delegationDepth` 过滤子代理；事件名随 DSH 版本变化，`x.y` 变化需重新适配 |
 | ZCode | Windows 桌面及 Linux Server 原生 process 钩子 | SessionStart、UserPromptSubmit、正常 Stop、提问工具的 PreToolUse、工具结果/失败和 PermissionRequest；过滤明确子代理及数据库中的父会话；工具失败不等于主任务失败，取消与非正常退出不推断 |
 | Codex | 命令 hook | 会话开始/恢复/关闭、用户提交、本轮结束、用户中断；不接收 SubagentStart/Stop。没有可靠归属信息的工具权限/输入 hook 暂不转换，不能据此宣称已覆盖等待状态 |
 | qoderclicn | 命令 hook | 会话、轮次结束、StopFailure、权限请求、问答工具和 MCP 输入提示；包含子代理 ID/type 的事件忽略；工具错误不等于主任务失败 |
@@ -34,7 +34,7 @@ bash scripts/build/package-adapters.sh ./dist/repository 1
 ./bin/agent-pulse-adapters publish --repository ./dist/repository --private /安全目录/publisher.key --index ./dist/repository/index-input.json
 ```
 
-`package-adapters.sh` 构建 Linux amd64 的 Codex、Antigravity、Qoder、ZCode 命令包、带控制入口的两架构 OpenCode 插件包和平台 `any` 的 DSH 插件包；ZCode 使用 `adapters/zcode/manifest-linux.json`。`package-adapters.ps1` 构建Windows amd64的ZCode、Codex与Antigravity包，内部调用仅Go构建入口。候选统一使用当前格式，不设置旧接收器版本门槛。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode包携带平台Go控制入口及所需SDK，目标安装时不执行包管理器或任意安装脚本；DSH 包为纯 ESM JavaScript，不需要构建步骤或平台二进制。
+`package-adapters.sh` 构建 Linux amd64 的 Codex、Antigravity、Qoder、ZCode 命令包、带控制入口的两架构 OpenCode 与 DSH 插件包；ZCode 使用 `adapters/zcode/manifest-linux.json`。`package-adapters.ps1` 构建Windows amd64的ZCode、Codex与Antigravity包，内部调用仅Go构建入口。候选统一使用当前格式，不设置旧接收器版本门槛。其他架构需交叉编译适配器并同时修改清单中的 `platform`，不能仅修改清单冒充对应二进制。Go 产品适配器共用编译入口 `go/cmd/agent-pulse-adapter`，构建时注入来源 ID；每个包独立于 Bridge 发布。OpenCode包携带平台Go控制入口及所需SDK，目标安装时不执行包管理器或任意安装脚本；DSH 事件插件为 ESM JavaScript，包内 Go 控制入口负责探测与 profile 配置，按 Linux amd64/arm64 分包。
 
 ZCode 使用 `process-hooks` 配置格式；当前候选的 Bridge 已实现该格式。结构变更按同一现行构建更新，不提供旧接收器兼容。
 
@@ -42,7 +42,7 @@ ZCode 使用 `process-hooks` 配置格式；当前候选的 Bridge 已实现该�
 
 同时分发 Linux 和 Windows 包时，将两侧构建仓库放到发布者本机后合并，再用同一个发布私钥签名：
 
-Windows侧执行 `./scripts/build/package-adapters.ps1`，生成三类Windows原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。OpenCode插件统一采用Linux仓库中的一次JS构建，Go控制入口按linux/amd64和linux/arm64分包，当前支持 Linux 宿主。Windows Workflow按三包清单验收，Linux Workflow提供五类来源及两架构OpenCode插件包，合并Windows三包为九包。
+Windows侧执行 `./scripts/build/package-adapters.ps1`，生成三类Windows原生包；`-NativeOnly` 保留为既有命令的兼容参数，不再额外生成 OpenCode 包。OpenCode插件统一采用Linux仓库中的一次JS构建，Go控制入口按linux/amd64和linux/arm64分包，当前支持 Linux 宿主。Windows Workflow按三包清单验收，Linux Workflow提供六类来源，OpenCode与DSH控制入口各按两架构分包，合并Windows三包为十一包。
 
 ```sh
 uv run --offline --no-project python scripts/release/merge_adapter_repositories.py \
@@ -59,7 +59,7 @@ ZIP 成员时间统一为固定值，同一文件内容及文件权限不因重�
 
 Hub 未签名应用构建由工作流保存为发布者专用 OCI 归档 `hub-build.tar`，不单独公开第三个镜像，普通用户 RC 镜像须附带该 RC 的已签名仓库和公钥。完成签名后，按[镜像发布说明](images.md#准备普通用户-hub-rc-镜像)运行 `scripts/release/prepare-hub-release.py`，使用匹配的 OCI 内部构建生成新的 Docker 构建目录并构建正式 Hub 镜像。准备脚本复用客户端验签规则，拒绝无效签名、丢失或摘要不符的包，复制时排除私钥及未签名索引。正式镜像首次启动从`/repository`固定公钥并初始化`/data/adapters`，后续使用持久活动仓库，镜像种子不覆盖它；管理员显式配置 `adapter_public_key` 时仍以显式配置为准。普通使用者下载包含此能力的完整镜像后不需要挂载活动仓库或配置公钥；该源码功能尚未发布。发布能力仍为本地命令，Web 不提供可执行包上传或目标修改接口。
 
-**签名校验与运行方式解耦**：`Manifest.Validate` 只做签名索引的结构校验（标识、版本、路径、摘要、大小），Hub 与 Bridge 共用，不判断 `kind` 是否受支持；`kind`/`config_style` 白名单由 `ValidateRuntime` 在 Bridge 的下载、探测、安装与发布者打包时判定。因此新增一种适配包形态只需升级支持它的 Bridge，Hub 作为分发仓库接受任何合法签名索引，不因新增 kind 要求升级。2026-11-24 之前构建的 Hub 仍含旧白名单，这是本次解耦需要同步升级 Hub 的唯一原因；此后不再有该耦合。
+**分发、安装与产品逻辑分离**：Hub 的 `Manifest.Validate` 只检查仓库结构与分发完整性，不解释宿主命令、hook 名、配置格式和 Agent 兼容版本。Bridge 在本机按既有宿主版本政策选包；带 `control` 的可信包自行提供探测与配置，不需要 Bridge 增加 `kind`/`config_style`/hook 名白名单。无控制入口的包仍须使用本机已有安装方式。签名、摘要、路径、不可变版本和安装恢复保持。新统一事件能力或新系统运行机制仍需相应核心实现；仅改变包内宿主逻辑不需要升级 Hub/Bridge。
 
 ## Hub：独立在线发布与离线更新
 
@@ -126,17 +126,19 @@ DSH 没有外部命令 hook；接入形态是 Host 插件 [`dsh-agent-pulse-adap
 
 在运行 DSH 的 Linux 主机、相同用户下运行独立 `agent-pulse-bridge setup`，选择 DeepSeek Harness 并确认 profile 的 `cordis.patch.yml` 路径（默认 `$DSH_HOME/profiles/web/cordis.patch.yml`，未设置 `DSH_HOME` 时为 `~/.dsh/profiles/web/`；`tui`、`desktop` 等其他 profile 需改成对应路径）。向导探测 `dsh --version`，按 `x.y.z` 版本线选择兼容包，预发布后缀只给出提示；随后在 Bridge 的 `adapters.managed` 中登记 `dsh` → 该 patch 的绝对路径。
 
-受管理安装不调用 `dsh plugin add`、不依赖 pnpm 或 profile 的 `node_modules`：Bridge 在适配目录写入固定 loader（`loaders/dsh/`，含 locale 与图标供 Plugins 页显示），并在用户 patch 末尾维护一条 `id: agent-pulse` 的 `insert` 行，`name` 为 loader 的 `file:` URL（带 `?v=<包摘要>` 查询串），`config` 为 `source_id` 与 `bridge_address`。其他条目、注释和 `!!js` 标签保留，但文件由 YAML 库重新序列化，缩进统一为两空格，不保证字节一致；禁用只移除本软件的行，整条 `insert` 为空时连同条目移除。包升级只改 `state.json` 与该行的查询串，不触碰 profile 其他内容；Node 按 URL 缓存 ESM 模块，查询串随包摘要变化，DSH 在下次 profile 重组时即加载新 loader 与新插件，已运行的 DSH **无需重启**。同一 loader 路径的受管理行无论查询串为何都归本安装器所有，升级可直接接管旧版行。loader 被加载时写 `runtime/dsh.json` 回执，只说明已加载，不说明事件已采集。
+受管理安装不调用 `dsh plugin add`、不依赖 pnpm 或 profile 的 `node_modules`。随包控制入口生成 `id: agent-pulse` 的 `insert` 行，`name` 直接指向不可变 `packages/dsh/<version>/<sha256>/index.js` 的 `file:` URL，`config` 包含 `source_id`、`bridge_address` 和本机运行回执路径。Bridge 只提交授权文件与安装状态，不生成 DSH loader，也不解释 DSH YAML。
 
-以下情况 Bridge 拒绝写入并保留原文件：profile 的 `package.json` 已登记 `dsh-agent-pulse-adapter` bundle（手动安装，二者不能并存）；patch 中已有 `name` 不同的 `agent-pulse` 行；存在 `id: agent-pulse` 的配置覆盖行。手动安装请在 DSH 的 Plugins 页添加 `adapters/dsh` 目录，并在 profile patch 中覆盖该行 `config`；该方式不写运行回执。
+其他条目、注释和 `!!js` 标签保留；YAML 序列化不保证字节一致。升级切换该行的包路径，恢复切回旧配置；插件无需读取安装状态与恢复日志，不存在新 URL 缓存旧选择的问题。已有固定 loader 行可由同一安装目录接管。插件在实际注册后写 `runtime/dsh.json`，只说明加载，不能代替采集实收。文件改动本身不会触发 DSH 重组，须由宿主重新加载后核对 running 与真实事件。
 
-当前候选只在 Linux 验收。Windows 向导继续跳过无控制入口的非命令包，DSH 的 Windows 接入未实现；`workspace/session-archived` 以外的会话关闭（如宿主退出）不报告 `session.closed`，避免每次重启把全部会话标为关闭。
+以下情况 Bridge 拒绝写入并保留原文件：profile 的 `package.json` 已登记 `dsh-agent-pulse-adapter` bundle（手动安装，二者不能并存）；patch 中已有其他安装目录的 `agent-pulse` 行；存在 `id: agent-pulse` 的配置覆盖行。手动安装请在 DSH 的 Plugins 页添加 `adapters/dsh` 目录，并在 profile patch 中覆盖该行 `config`；该方式不写运行回执。
+
+当前 DSH 包只提供 Linux amd64/arm64，Windows 接入与 DSH ACP 暂不纳入验收；`workspace/session-archived` 以外的会话关闭（如宿主退出）不报告 `session.closed`，避免每次重启把全部会话标为关闭。
 
 ## 正常启动与派生运行过滤
 
 安装 hook 后，各 Agent 保持原来的正常启动方式。例如直接运行 `agy` 或 `agy --print '你的任务'`，不经 Bridge 启动，不创建主会话绑定文件，不要求换命令。
 
-ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）启动在本项目中视为子代理运行，不向用户推送。例如 `agy acp --stdio --process-per-session` 的事件会被过滤。实现位置不是需求约束：本项目在 Bridge 的共用本机入口检查已安装 Agent 的启动来源，命令 hook 和 OpenCode 插件共用同一检查，新来源使用现有清单的 `command` 即可接入。
+ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）启动在本项目中视为子代理运行，不向用户推送。例如 `agy acp --stdio --process-per-session` 的事件会被过滤。实现位置不是需求约束：本项目在 Bridge 的共用本机入口检查已安装 Agent 的启动来源，命令 hook 和 OpenCode 插件共用同一检查，新来源可复用现有清单的 `command`，仍须验证其实际启动形式；解释器启动的 DSH ACP 暂未覆盖。
 
 启动进程信息只在本机判断运行方式，不进入 Hub/Relay 的事件、存储或界面。程序识别启动子命令/开关，不因提示词里出现 acp 文本而过滤。Linux 和 Windows 均查询本机进程祖先；Windows 对应系统 API 及共用入口已原生执行进程测试。该机制测试不等于各宿主完整 ACP 任务已经实测。
 
@@ -144,7 +146,7 @@ ACP（Agent Client Protocol，其他程序通过协议调用 Agent 的方式）�
 
 DSH 的子代理身份在会话头部明确：`dsh-subagent` 与 `dsh-subagent-codex` 都写入 `origin: 'subagent'`、`parentSession` 与 `delegationDepth`，插件只按 `origin` 或大于 0 的 `delegationDepth` 过滤（实测根会话头部也带 `delegationDepth: 0`），不查询进程祖先；仅带 `parentSession` 的分叉会话仍是用户可见的主会话。`dsh headless`、定时任务与目标续跑都是顶层会话，按主会话采集。
 
-审批与提问事件是 waterfall：宿主自带的 answerer 一旦认领请求就不再调用 `next()`，后注册的监听器看不到它。插件把这两个观察者以 `prepend` 注册在所有 answerer 之前，只递交事件并把决定权原样交还；它们不能、也不修改审批或回答。
+审批与提问事件是 waterfall：宿主自带的 answerer 一旦认领请求就不再调用 `next()`，后注册的监听器看不到它。插件把这两个观察者以 `prepend` 注册在所有 answerer 之前，只递交事件并把决定权原样交还；它们不能、也不修改审批或回答。DSH 按请求生命周期跟踪多个未决等待，仅在全部请求真正完成/取消后恢复运行；按会话在后台保序递交，短暂 IPC 故障最多三次尝试，内存队列与重启边界见适配器 README。
 
 ### 会话身份与名称来源
 

@@ -10,40 +10,48 @@ import (
 	"agent-pulse/protocol"
 )
 
-func TestObserverFailureReportsUnknownOnceAndCancellationRejectsNewWork(t *testing.T) {
+// 失败的观察可以由后续 hook 重新登记；每次失败只产生一个非通知的未知事件。
+// 等待真实工作结束后再断言，且不能在持锁时 Fatal，否则清理 stopObservations 会死锁。
+func TestObserverFailureReportsUnknownAndAllowsReregistration(t *testing.T) {
 	b := New(config.Bridge{SourceID: "test", QueueEvents: 10, QueueBytes: 1 << 20})
 	defer b.stopObservations()
 	req := protocol.LocalObservation{Adapter: "codex", Observation: protocol.Observation{SessionID: "main", TurnID: "turn", Cursor: []byte(`{}`)}}
-	if err := b.registerObservation(req); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		b.mu.Lock()
-		done := b.observations["codex\x00main"].done
-		b.mu.Unlock()
-		if done {
-			break
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := b.registerObservation(req); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(time.Millisecond)
+		// 未配置适配目录的 Observe 必定立即返回错误，不调用真实宿主。
+		b.observationWG.Wait()
+		b.mu.Lock()
+		count := len(b.queue)
+		valid := count == attempt && b.queue[count-1].event.Kind == "observation.lost" && !b.queue[count-1].event.Notifies()
+		b.mu.Unlock()
+		if !valid {
+			t.Fatalf("观察失败应每次报告一次未知：尝试=%d 事件=%d", attempt, count)
+		}
 	}
-	b.mu.Lock()
-	if len(b.queue) != 1 || b.queue[0].event.Kind != "observation.lost" || b.queue[0].event.Notifies() {
-		t.Fatal("来源故障被当成任务失败或未降为未知")
-	}
-	b.mu.Unlock()
-	if err := b.registerObservation(req); err != nil {
-		t.Fatal(err)
-	}
-	b.mu.Lock()
-	if len(b.queue) != 1 {
-		t.Fatal("重复登记重复产生事件")
-	}
-	b.mu.Unlock()
 	b.stopObservations()
 	req.TurnID = "new"
 	if err := b.registerObservation(req); err == nil {
 		t.Fatal("停止后仍启动观察")
+	}
+}
+
+func TestActiveObservationRegistrationIsIdempotent(t *testing.T) {
+	b := New(config.Bridge{SourceID: "test", QueueEvents: 10, QueueBytes: 1 << 20})
+	defer b.stopObservations()
+	_, cancel := context.WithCancel(b.observationContext)
+	current := &observation{turn: "turn", cancel: cancel, at: time.Now()}
+	b.observations["codex\x00main"] = current
+	req := protocol.LocalObservation{Adapter: "codex", Observation: protocol.Observation{SessionID: "main", TurnID: "turn", Cursor: []byte(`{}`)}}
+	if err := b.registerObservation(req); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	unchanged := b.observations["codex\x00main"] == current && len(b.queue) == 0
+	b.mu.Unlock()
+	if !unchanged {
+		t.Fatal("同轮进行中的观察被重复启动")
 	}
 }
 

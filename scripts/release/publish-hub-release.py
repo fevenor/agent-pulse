@@ -16,8 +16,8 @@ def release_target(manifest):
     commit = manifest.get("commit", "")
     tag = manifest.get("tag", "")
     image = manifest.get("hub", "")
-    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*", tag):
-        raise ValueError("须提供已确认 RC 草稿的完整构建提交及标签")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?", tag):
+        raise ValueError("须提供已确认版本的完整构建提交及标签")
     if not re.fullmatch(r"ghcr\.io/[a-z0-9][a-z0-9_-]*/agent-pulse-hub:" + re.escape(tag), image):
         raise ValueError("只发布横杠命名的 agent-pulse-hub 成品，不发布 hub-base 或旧路径")
     if not manifest.get("hub_build", {}).get("publisher_only"):

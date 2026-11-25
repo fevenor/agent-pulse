@@ -30,6 +30,14 @@ GitHub Workflow 对 PR、默认分支、版本标签和手动触发执行检查�
 
 未签名 Hub 应用使用 `hub-build.tar` 保存在同一工作流的 `hub-build` Artifact 中，常规保留14天。OCI（开放容器镜像规范）归档能保存 amd64/arm64 的共同构建，不必额外推送第三个公开基础镜像；它是发布者内部材料，不是普通用户的安装目标。新的源码流程不会自动迁移或删除此前镜像标签，实际发布情况见开发记录。
 
+## 正式版本 Workflow
+
+工程版本与 `v<版本>` 标签一致。正式标签由 `release-draft.yml` 统一调用 Linux/Windows 检查与构建、发布同版本 Relay，再生成用户附件草稿；默认分支检查仍由独立工作流执行，标签不重复启动两套构建。
+
+发布者从同一 Workflow 下载维护 Artifact，沿用既有密钥签署新的适配索引，发布独立 `adapters-<序号>`，并用 `publish-hub-release.py` 将已核验 OCI 构建与签名仓库组成完整 Hub 镜像。私钥始终留在发布者本机。
+
+完成后在同一版本标签手动运行 `release-draft.yml`，设置 `publish_existing=true` 和匹配的 `adapter_release`。该阶段核验用户附件摘要、Hub/Relay 双架构与构建提交、Hub 内置签名及独立索引一致性，再公开 Release；无 RC 后缀的版本设为稳定 latest。已公开 Release 不被重跑覆盖。安装器推荐版本只在附件实际公开可用后更新，不能把尚未完成的构建写成可下载。
+
 ## RC 试运行草稿
 
 候选先创建 `v<工程版本>-rc.<序号>` 标签，再显式手动触发对应工作流；标签本身不再自动启动完整镜像发布。完整组件候选使用 `release-draft.yml`，仅 Bridge/Tray 修复候选使用 `release-clients.yml`，后者指定继续使用的公开 Hub/Relay 与适配包 Release。同一提交的 Linux 与 Windows 检查成功后创建草稿；已有公开 Release 不由重跑覆盖。

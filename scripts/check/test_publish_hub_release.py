@@ -15,6 +15,10 @@ class PublishTests(unittest.TestCase):
         for changes in ({"commit": "main"}, {"tag": "latest"}, {"hub": "ghcr.io/example/agent-pulse/hub:v0.5.0-rc.2"}, {"hub": "ghcr.io/example/agent-pulse-hub:v0.5.0-rc.1"}, {"hub_build": {}}):
             with self.assertRaises(ValueError): module.release_target({**value, **changes})
 
+    def test_stable_version_uses_same_signed_image_path(self):
+        value = {"commit": "a" * 40, "tag": "v0.6.1", "hub": "ghcr.io/example/agent-pulse-hub:v0.6.1", "hub_build": {"publisher_only": True}}
+        self.assertEqual(module.release_target(value)[0], value["hub"])
+
     def test_two_actual_platforms_required(self):
         platforms = [{"platform": {"os": "linux", "architecture": arch}} for arch in ["amd64", "arm64"]]
         module.verify_platforms({"manifests": platforms})

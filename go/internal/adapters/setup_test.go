@@ -163,7 +163,7 @@ func TestSetupAgentCatalogMatchesPlatformScope(t *testing.T) {
 		want     []string
 	}{
 		{"windows", []string{"zcode", "codex", "antigravity"}},
-		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode", "zcode", "dsh"}},
+		{"linux", []string{"codex", "antigravity", "qoderclicn", "opencode", "zcode"}},
 	} {
 		t.Run(tc.platform, func(t *testing.T) {
 			home := t.TempDir()

@@ -2,11 +2,15 @@
 // 未标记的监听器在根 ctx 上保持全局，可收到全部会话（含子代理）的事件；子代理只按会话头部标记过滤。
 // 审批与提问是 waterfall：宿主自带的 answerer 一旦认领请求就不再调用 next()，后注册的监听器看不到它。
 // 因此观察者必须以 prepend 排在所有 answerer 之前，只递交事件并把决定权原样交还 next()。
-import { approval, archived, bridgeAddress, emit, hasEarlierTurnStart, heartbeat, HEARTBEAT_INTERVAL_MS, isSubagent, questions, renamed, resumed, SessionTracker, toolFailed, turnEnd, turnStart } from "./adapter.js";
+import { approval, archived, bridgeAddress, hasEarlierTurnStart, heartbeat, HEARTBEAT_INTERVAL_MS, isSubagent, questions, renamed, resumed, SessionTracker, toolFailed, turnEnd, turnStart } from "./adapter.js";
+
+import { createSender } from "./delivery.js";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export const inject = [];
 
-const DURABLE_TYPES = new Set(["session/title", "tool/call", "tool/result", "assistant/message", "turn/start", "turn/end", "step/start", "user/message"]);
+const DURABLE_TYPES = new Set(["session/title", "tool/call", "tool/result", "assistant/message", "turn/start", "turn/end", "step/start"]);
 
 export function apply(ctx, config) {
   const source = config?.source_id;
@@ -29,11 +33,7 @@ export function apply(ctx, config) {
     }
   };
   const describe = (error) => `${error?.name ?? "Error"}:${error?.code ?? error?.message ?? "?"}@…${url.slice(-8)}`;
-  // 递交一律异步进行，不让通知故障阻塞宿主事件流。
-  const send = (event) => {
-    if (!event) return;
-    emit(url, event, controller.signal).catch((error) => { if (!controller.signal.aborted) warn(describe(error)); });
-  };
+  const send = createSender(url, controller.signal, (error) => warn(describe(error)));
   const currentTitle = (session, id) => {
     const state = tracker.get(id);
     if (state.title) return state.title;
@@ -42,14 +42,9 @@ export function apply(ctx, config) {
     if (typeof title === "string" && title) state.title = title;
     return state.title;
   };
-  // 等待中的会话再次出现持久活动时先恢复运行状态，使旧的等待提醒失效。
-  const settle = (session, id, state, event, title) => {
-    if (!state.waiting) return;
-    state.waiting = false;
-    send(resumed(source, session, event, title));
-  };
   // 轮次内心跳：每个步骤节流一条运行活动，使丢失 turn/start 的长轮次也能回到 running。
   const pulse = (session, id, state, event, title) => {
+    if (state.waits.size) return;
     const now = Date.now();
     if (now - (state.lastActivity ?? 0) < HEARTBEAT_INTERVAL_MS) return;
     state.lastActivity = now;
@@ -75,17 +70,11 @@ export function apply(ctx, config) {
           return;
         case "assistant/message":
           tracker.observe(id, event);
-          settle(session, id, state, event, title());
           return;
         case "step/start":
-          settle(session, id, state, event, title());
           pulse(session, id, state, event, title);
           return;
-        case "user/message":
-          settle(session, id, state, event, title());
-          return;
         case "tool/result": {
-          settle(session, id, state, event, title());
           // 实测 tool/result 同时携带 message.toolCallId 与 message.source.callId，二者皆可配对 tool/call。
           const callId = event.data?.message?.toolCallId ?? event.data?.message?.source?.callId;
           send(toolFailed(source, session, event, tracker.toolName(id, callId), title()));
@@ -96,7 +85,7 @@ export function apply(ctx, config) {
           // 后续每轮开始都是一次运行活动，使 Hub 的会话状态回到 running。
           const fresh = !hasEarlierTurnStart(session, event.seq);
           const kind = fresh ? "session.started" : state.seen ? "activity.observed" : "session.resumed";
-          state.waiting = false;
+          state.waits.clear();
           state.seen = true;
           // 新轮次已发进入运行信号，重置心跳计时，避免紧接着再发一条。
           state.lastActivity = Date.now();
@@ -104,7 +93,7 @@ export function apply(ctx, config) {
           return;
         }
         case "turn/end": {
-          state.waiting = false;
+          state.waits.clear();
           send(turnEnd(source, session, event, tracker.finalText(id, event.data?.turn), title()));
           return;
         }
@@ -112,37 +101,41 @@ export function apply(ctx, config) {
     } catch (error) { warn(`转换 ${error?.name ?? "Error"}:${error?.message ?? "?"}`); }
   });
 
-  ctx.on("approval/request", (req, next) => {
-    try {
-      const agent = req?.agent;
-      if (agent && !isSubagent(agent.session)) {
-        const id = String(agent.id);
-        const key = req.callId ? `call:${req.callId}` : `tool:${req.toolName ?? ""}`;
-        if (tracker.claim(id, key)) {
-          tracker.get(id).waiting = true;
-          send(approval(source, agent, req, currentTitle(agent.session, id)));
-        }
-      }
-    } catch (error) { warn(`转换 ${error?.name ?? "Error"}:${error?.message ?? "?"}`); }
-    return next();
-  }, { prepend: true });
-
-  ctx.on("user-questions/request", (request, next) => {
+  // 每次 waterfall 调用各持一个等待令牌；同 callId 的嵌套通路只提醒一次，全部结束才恢复。
+  // 请求结束由 next() 的结果或宿主取消信号确认，其他工具的结果不会解除等待。
+  async function observeWait(request, next, convert, callId) {
+    let finish = () => {};
     try {
       const agent = request?.agent;
-      if (agent && !isSubagent(agent.session)) {
-        const id = String(agent.id);
-        const items = Array.isArray(request.questions) ? request.questions : [];
-        const callId = request.wait?.callId ?? items.map((item) => item?.intent?.callId).find(Boolean);
-        const isApproval = items.some((item) => item?.intent?.kind === "approval");
-        const key = callId ? `call:${callId}` : isApproval ? `tool:${items[0]?.intent?.subject?.name ?? items[0]?.header ?? ""}` : "";
-        if (tracker.claim(id, key)) {
-          tracker.get(id).waiting = true;
-          send(questions(source, agent, request, currentTitle(agent.session, id)));
+      if (agent && !isSubagent(agent.session) && !request.signal?.aborted) {
+        const id = String(agent.id), state = tracker.get(id);
+        const token = Symbol(), key = callId ? `call:${callId}` : token;
+        const duplicate = [...state.waits.values()].includes(key);
+        const notification = duplicate ? undefined : convert(source, agent, request, currentTitle(agent.session, id));
+        if (duplicate || notification) {
+          state.cwd = agent.session?.header?.cwd ?? state.cwd ?? "";
+          state.waits.set(token, key);
+          send(notification);
+          finish = () => {
+            request.signal?.removeEventListener("abort", finish);
+            if (!state.waits.delete(token) || state.waits.size || controller.signal.aborted || tracker.sessions.get(id) !== state) return;
+            state.lastActivity = Date.now();
+            try { send(resumed(source, agent.session, {}, currentTitle(agent.session, id))); }
+            catch (error) { warn(`转换 ${error?.name ?? "Error"}:${error?.message ?? "?"}`); }
+          };
+          request.signal?.addEventListener("abort", finish, { once: true, signal: controller.signal });
         }
       }
     } catch (error) { warn(`转换 ${error?.name ?? "Error"}:${error?.message ?? "?"}`); }
-    return next();
+    try { return await next(); }
+    finally { finish(); }
+  }
+
+  ctx.on("approval/request", (req, next) => observeWait(req, next, approval, req?.callId), { prepend: true });
+  ctx.on("user-questions/request", (request, next) => {
+    const items = Array.isArray(request?.questions) ? request.questions : [];
+    const callId = request?.wait?.callId ?? items.map((item) => item?.intent?.callId).find(Boolean);
+    return observeWait(request, next, questions, callId);
   }, { prepend: true });
 
   ctx.on("workspace/session-archived", (request) => {
@@ -150,9 +143,20 @@ export function apply(ctx, config) {
       const id = request?.sessionId ? String(request.sessionId) : "";
       if (!id || !tracker.sessions.has(id)) return;
       const state = tracker.get(id);
+      state.waits.clear();
       send(archived(source, id, state.cwd, state.title));
     } catch (error) { warn(`转换 ${error?.name ?? "Error"}:${error?.message ?? "?"}`); }
   });
 
   ctx.effect(() => () => controller.abort());
+  // 回执由适配包自身记录；宿主配置直接引用不可变入口，不读取 Bridge 的状态或恢复日志。
+  if (config.runtime_receipt) {
+    try {
+      const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+      const target = config.runtime_receipt, temporary = `${target}.${process.pid}`;
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(temporary, JSON.stringify({ version, at: new Date().toISOString() }), { mode: 0o600 });
+      renameSync(temporary, target);
+    } catch (error) { warn(`运行回执 ${error?.code ?? error?.name ?? "Error"}`); }
+  }
 }

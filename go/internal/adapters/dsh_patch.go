@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -14,23 +14,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// 本文件只由适配包的 ExecuteControl 调用，Bridge 不解释 DSH profile。
+
 // dshRowID 是 DSH profile 中属于本安装器的插件行 id，与手动安装 bundle 时的行 id 相同，二者不能并存。
 const dshRowID = "agent-pulse"
 const dshBundleName = "dsh-agent-pulse-adapter"
 
-// dshLoaderURL 是 profile patch 中插件行的 name：指向适配目录内固定 loader 的绝对 file: URL。
-// Loader 以原生 ESM 导入它，不依赖 profile 的 node_modules 或 pnpm；Node 按 URL 缓存 ESM 模块，
-// 查询串随当前包摘要变化，包升级后的 profile 重组才会真正加载新 loader 与新插件，无需重启宿主。
-func dshLoaderURL(directory, id string, pkg *Package) string {
-	path := filepath.ToSlash(filepath.Join(directory, "loaders", id, "index.js"))
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+// dshEntryURL 直接引用已校验的不可变包；安装状态和恢复日志不参与宿主加载。
+func dshEntryURL(directory string, p Package) string {
+	return dshFileURL(filepath.Join(packageDir(directory, p), filepath.FromSlash(p.Entry)))
+}
+
+// file URL 的路径始终以 / 开头，Windows 盘符也是 /C:/...；所有权比较保持在 URL 层。
+func dshFileURL(filename string) string {
+	filename = filepath.ToSlash(filename)
+	if !strings.HasPrefix(filename, "/") {
+		filename = "/" + filename
 	}
-	u := &url.URL{Scheme: "file", Path: path}
-	if pkg != nil && pkg.SHA256 != "" {
-		u.RawQuery = "v=" + pkg.SHA256
+	return (&url.URL{Scheme: "file", Path: filename}).String()
+}
+
+// 识别本安装器所属的当前/历史包入口，以及已有安装使用的固定 loader，避免重复登记。
+func ownsDSHEntry(directory, id, name string) bool {
+	u, err := url.Parse(name)
+	if err != nil || u.Scheme != "file" || u.Host != "" {
+		return false
 	}
-	return u.String()
+	u.Path, u.RawPath, u.RawQuery, u.Fragment = path.Clean(u.Path), "", "", ""
+	fixed := dshFileURL(filepath.Join(directory, "loaders", id, "index.js"))
+	packages := dshFileURL(filepath.Join(directory, "packages", id)) + "/"
+	return u.String() == fixed || strings.HasPrefix(u.String(), packages)
 }
 
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
@@ -50,6 +63,7 @@ func dshConfigNode(c config.Bridge) *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
 		str("source_id"), str(c.SourceID),
 		str("bridge_address"), str(c.Listen),
+		str("runtime_receipt"), str(filepath.Join(c.Adapters.Directory, "runtime", "dsh.json")),
 	}}
 }
 
@@ -67,14 +81,6 @@ func dshPatchNode(loader string, c config.Bridge) *yaml.Node {
 		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "insert"},
 		{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{dshRowNode(loader, c)}},
 	}}
-}
-
-// loaderPath 取 loader file: URL 的路径部分，去掉版本查询串，用于识别本安装器自己的行。
-func loaderPath(loader string) string {
-	if i := strings.Index(loader, "?"); i >= 0 {
-		return loader[:i]
-	}
-	return loader
 }
 
 func dshOwnedRow(row *yaml.Node) bool {
@@ -96,7 +102,7 @@ func updateDSHProfilePatch(c config.Bridge, p Package, raw []byte, enable bool) 
 		return nil, errors.New("DSH 配置必须为 YAML 数组；不覆盖无效配置")
 	}
 	root := doc.Content[0]
-	loader := dshLoaderURL(c.Adapters.Directory, p.ID, &p)
+	loader := dshEntryURL(c.Adapters.Directory, p)
 	kept := []*yaml.Node{}
 	found := false
 	for _, item := range root.Content {
@@ -119,9 +125,7 @@ func updateDSHProfilePatch(c config.Bridge, p Package, raw []byte, enable bool) 
 				continue
 			}
 			name := mappingValue(row, "name")
-			// 同一 loader 路径的行都属于本安装器，不论查询串是旧版的空值还是历史版本的 ?v=摘要；
-			// 只有路径不同才是"其他来源"。
-			if name == nil || loaderPath(name.Value) != loaderPath(loader) {
+			if name == nil || !ownsDSHEntry(c.Adapters.Directory, p.ID, name.Value) {
 				return nil, errors.New("profile 中已有其他来源的 agent-pulse 行；请先手动移除再由 Bridge 管理")
 			}
 			if enable && !found {
@@ -183,56 +187,11 @@ func rejectManualDSHInstall(patchPath string, enable bool) error {
 	return nil
 }
 
-// writeDSHLoader 写入固定 loader：宿主每次加载当前版本包都经它导入，并写下运行回执。
-// 包升级只改 state.json，不触碰 profile；回执只说明已加载，不说明事件已采集。
-func writeDSHLoader(c config.Bridge, p Package) error {
-	dir := filepath.Join(c.Adapters.Directory, "loaders", p.ID)
-	manifest, err := json.MarshalIndent(map[string]any{
-		"name":        "@agent-pulse/dsh-loader-" + p.ID,
-		"version":     p.Version,
-		"private":     true,
-		"type":        "module",
-		"description": "AgentPulse 固定 loader：导入当前已安装的 DeepSeek Harness 适配包",
-		"exports":     map[string]string{".": "./index.js", "./locale/*.json": "./locale/*.json", "./icon": "./icon.svg"},
-	}, "", "  ")
-	if err != nil {
-		return err
+// dshProfilePatchPath 仅由随包控制程序提供默认路径；Bridge 不维护 DSH 产品目录。
+func dshProfilePatchPath(home string) string {
+	root := os.Getenv("DSH_HOME")
+	if root == "" {
+		root = filepath.Join(home, ".dsh")
 	}
-	source := packageDir(c.Adapters.Directory, p)
-	for _, name := range []string{"locale/en.json", "locale/zh.json", "icon.svg"} {
-		data, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(name)))
-		if err != nil {
-			continue
-		}
-		if err = AtomicFile(filepath.Join(dir, filepath.FromSlash(name)), data, 0600); err != nil {
-			return err
-		}
-	}
-	root, _ := json.Marshal(c.Adapters.Directory)
-	id, _ := json.Marshal(p.ID)
-	statePath, _ := json.Marshal(filepath.Join(c.Adapters.Directory, "state.json"))
-	loader := fmt.Sprintf(`import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-const root = %s, id = %s;
-let state = JSON.parse(readFileSync(%s, "utf8"));
-try { state = JSON.parse(readFileSync(join(root, "pending.json"), "utf8")).state; } catch (error) { if (error.code !== "ENOENT") throw error; }
-const p = state.installed[id].package;
-// Node 按 URL 缓存 ESM 模块：带版本查询串，包升级后的 profile 重组才会真正加载新版本。
-const plugin = await import(pathToFileURL(join(root, "packages", id, p.version, p.sha256, p.entry)).href + "?v=" + p.sha256);
-function receipt() {
-  try {
-    const dir = join(root, "runtime"); mkdirSync(dir, {recursive: true});
-    const target = join(dir, id + ".json"), tmp = target + "." + process.pid;
-    writeFileSync(tmp, JSON.stringify({version: p.version, at: new Date().toISOString()}), {mode: 0o600});
-    renameSync(tmp, target);
-  } catch {}
-}
-export const inject = plugin.inject;
-export function apply(ctx, config) { const dispose = plugin.apply(ctx, config); receipt(); return dispose; }
-`, root, id, statePath)
-	if err = AtomicFile(filepath.Join(dir, "index.js"), []byte(loader), 0600); err != nil {
-		return err
-	}
-	return AtomicFile(filepath.Join(dir, "package.json"), append(manifest, '\n'), 0600)
+	return filepath.Join(root, "profiles", "web", "cordis.patch.yml")
 }

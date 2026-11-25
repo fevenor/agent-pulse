@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "agent-pulse-tray"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",

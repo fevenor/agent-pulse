@@ -7,218 +7,171 @@ import { join } from "node:path";
 import { apply } from "../index.js";
 import { HEARTBEAT_INTERVAL_MS } from "../adapter.js";
 
-// 用本机 Unix 套接字模拟 Bridge 回执，验证监听器真实递交行为。
-const dir = mkdtempSync(join(tmpdir(), "agent-pulse-dsh-"));
-const socket = join(dir, "bridge.sock");
-const received = [];
+// 每个用例使用独立会话；Unix 套接字接收真实 HTTP 递交，不调用宿主或模型。
+const dir = mkdtempSync(join(tmpdir(), "pulse-dsh-"));
+const socket = join(dir, "bridge.sock"), received = [];
 const server = createServer((req, res) => {
   const chunks = [];
-  req.on("data", (c) => chunks.push(c));
+  req.on("data", (chunk) => chunks.push(chunk));
   req.on("end", () => {
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    received.push({ url: req.url, host: req.headers.host, body });
+    const body = JSON.parse(Buffer.concat(chunks));
+    received.push(body);
     res.writeHead(202, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ event_id: body.event_id, accepted: "memory" }));
   });
 });
 await new Promise((resolve) => server.listen(socket, resolve));
-after(() => { server.close(); rmSync(dir, { recursive: true, force: true }); });
+after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); rmSync(dir, { recursive: true, force: true }); });
 
-// 每个用例在独立游标上等待，避免并行用例共享同一收到列表。
-async function until(count, timeout = 3000, start = 0) {
-  const deadline = Date.now() + timeout;
-  while (received.length < start + count) {
-    if (Date.now() > deadline) throw new Error(`只收到 ${received.length - start}/${count} 条事件`);
-    await new Promise((r) => setTimeout(r, 5));
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(id, count) {
+  for (let i = 0; i < 400; i++) {
+    const events = received.filter((e) => e.session_id === id);
+    if (events.length >= count) return events;
+    await pause(5);
   }
-  return received.slice(start);
+  assert.fail(`会话 ${id} 未收到 ${count} 条事件`);
 }
-
-function fakeCtx(title) {
-  const listeners = new Map();
-  const effects = [];
+function pending() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function fakeCtx(title = "项目标题") {
+  const listeners = new Map(), effects = [];
   return {
     listeners, effects,
     on(name, fn, options) {
       if (!listeners.has(name)) listeners.set(name, []);
-      // 与 Cordis 一致：prepend 的监听器排在已有监听器之前。
       if (options?.prepend) listeners.get(name).unshift(fn); else listeners.get(name).push(fn);
     },
-    get(name) { return name === "sessionTitle" ? { get: () => (title ? { title } : undefined) } : undefined; },
-    effect(fn) { effects.push(fn); },
+    get: (name) => name === "sessionTitle" ? { get: () => ({ title }) } : undefined,
+    effect: (fn) => effects.push(fn()),
   };
 }
-
-const main = (id, events = []) => ({ id, header: { cwd: "/work/project" }, snapshotEvents: (from, to) => events.filter((e) => e.seq >= from && e.seq < to) });
-const ev = (type, seq, data, time = 1_700_000_000_000 + seq) => ({ type, seq, time, data });
+const main = (id, events = []) => ({ id, header: { cwd: "/work/project", delegationDepth: 0 }, snapshotEvents: (from, to) => events.filter((e) => e.seq >= from && e.seq < to) });
+const ev = (type, seq, data = {}) => ({ type, seq, time: 1700000000000 + seq, data });
 const config = { source_id: "host-a", bridge_address: `unix:${socket}` };
+function fixture(t, id) {
+  const ctx = fakeCtx(), session = main(id), agent = { id, session };
+  apply(ctx, config);
+  t.after(() => ctx.effects.forEach((dispose) => dispose()));
+  return { ctx, session, agent, on: (name) => ctx.listeners.get(name)[0] };
+}
 
-test("config 无效时保持未启用且不注册监听器", () => {
+test("config 无效时不注册监听器", () => {
   const ctx = fakeCtx();
-  apply(ctx, { source_id: "", bridge_address: `unix:${socket}` });
+  apply(ctx, { source_id: "", bridge_address: config.bridge_address });
   apply(ctx, { source_id: "host-a", bridge_address: "http://127.0.0.1:1" });
   assert.equal(ctx.listeners.size, 0);
 });
 
-test("waterfall 观察者以 prepend 注册，先于认领请求的 answerer 看到提问", async () => {
-  // 模拟 Cordis waterfall：先注册的 answerer 认领请求后不再调用 next()，后注册的监听器被否决。
-  const base = received.length;
-  const ctx = fakeCtx("项目标题");
-  ctx.on("user-questions/request", async (request) => ({ answers: [{ id: request.questions[0].id, selected: ["ok"] }] }));
-  ctx.on("approval/request", async () => "allowed-once");
-  apply(ctx, config);
+test("waterfall prepend 先观察，原样返回答案；真实结束后报告恢复", async (t) => {
+  const ctx = fakeCtx(), id = "waterfall", session = main(id);
+  ctx.on("user-questions/request", async () => ({ answers: [{ id: "q1", selected: ["ok"] }] }));
+  apply(ctx, config); t.after(() => ctx.effects.forEach((dispose) => dispose()));
   const chain = ctx.listeners.get("user-questions/request");
-  assert.equal(chain.length, 2);
-  assert.equal(chain[0].length <= 2, true, "观察者应是双参数监听器并排在首位");
-  // 真实分发：最外层监听器先运行；观察者递交后调用 next 进入 answerer。
-  const dispatch = (fns, req) => {
-    const run = (i) => (i >= fns.length ? undefined : fns[i](req, () => run(i + 1)));
-    return run(0);
-  };
-  const agent = { id: "s-wait", session: main("s-wait") };
-  const answer = await dispatch(chain, { agent, questions: [{ id: "q1", question: "继续吗？", options: [{ label: "ok" }] }] });
+  const dispatch = (i, req) => chain[i](req, () => dispatch(i + 1, req));
+  const answer = await dispatch(0, { agent: { id, session }, questions: [{ id: "q1", question: "继续吗？", options: [{ label: "ok" }] }] });
   assert.deepEqual(answer, { answers: [{ id: "q1", selected: ["ok"] }] });
-  const events = await until(1, 3000, base);
-  assert.equal(events[0].body.kind, "input.required");
-  assert.equal(events[0].body.body, "继续吗？\n1. ok");
-  const approvals = ctx.listeners.get("approval/request");
-  assert.equal(approvals.length, 2);
-  assert.equal(await dispatch(approvals, { agent, toolName: "bash", callId: "c1" }), "allowed-once");
-  assert.equal((await until(2, 3000, base))[1].body.kind, "approval.required");
+  const events = await until(id, 2);
+  assert.deepEqual(events.map((e) => e.kind), ["input.required", "activity.observed"]);
+  assert.equal(events[0].body, "继续吗？\n1. ok");
 });
 
-test("长轮次心跳：步骤活动按间隔节流发出运行活动，turn/start 重置计时", async (t) => {
-  // 心跳按 Date.now() 节流；用假时钟推进，不真实等待。
+test("多个未决等待：其他工具与用户输入不解除，最后一个请求完成才恢复", async (t) => {
+  const id = "parallel-waits", { agent, session, on } = fixture(t, id);
+  const first = pending(), second = pending();
+  const one = on("approval/request")({ agent, callId: "a", toolName: "read" }, () => first.promise);
+  const two = on("user-questions/request")({ agent, wait: { callId: "b" }, questions: [{ question: "选择？" }] }, () => second.promise);
+  await until(id, 2);
+  on("session/event")(session, ev("tool/result", 3, { message: { toolCallId: "unrelated", isError: false } }));
+  on("session/event")(session, ev("user/message", 4));
+  on("session/event")(session, ev("step/start", 5));
+  // 同会话的改名是递交队列屏障，确认前面的无关事件没有恢复或心跳。
+  on("session/event")(session, ev("session/title", 6, { title: "仍在等待" }));
+  let events = await until(id, 3);
+  assert.deepEqual(events.map((e) => e.kind), ["approval.required", "input.required", "session.renamed"]);
+  first.resolve("allowed-once"); assert.equal(await one, "allowed-once");
+  on("session/event")(session, ev("session/title", 7, { title: "还有一个等待" }));
+  events = await until(id, 4); assert.equal(events[3].kind, "session.renamed");
+  second.resolve({ answers: [] }); await two;
+  events = await until(id, 5);
+  assert.equal(events[4].kind, "activity.observed");
+  assert.equal(events[4].body, "等待已结束，继续处理");
+});
+
+test("同 callId 的嵌套批准与提问只提醒一次，不靠五秒窗口去重", async (t) => {
+  const id = "nested-waits", { agent, on } = fixture(t, id), answer = pending();
+  const result = on("approval/request")({ agent, callId: "c1", toolName: "bash" }, () =>
+    on("user-questions/request")({ agent, questions: [{ question: "允许？", intent: { kind: "approval", callId: "c1" } }] }, () => answer.promise));
+  assert.equal((await until(id, 1))[0].kind, "approval.required");
+  answer.resolve("allowed-once"); assert.equal(await result, "allowed-once");
+  assert.deepEqual((await until(id, 2)).map((e) => e.kind), ["approval.required", "activity.observed"]);
+});
+
+test("终态之后迟到的等待结果不会重新报告运行", async (t) => {
+  const id = "late-wait", { agent, session, on } = fixture(t, id), answer = pending();
+  const result = on("approval/request")({ agent, callId: "c1", toolName: "bash" }, () => answer.promise);
+  on("session/event")(session, ev("turn/end", 9, { turn: 1, reason: { kind: "aborted", reason: { kind: "user" } } }));
+  answer.resolve("cancelled"); await result;
+  on("session/event")(session, ev("session/title", 10, { title: "已结束" }));
+  assert.deepEqual((await until(id, 3)).map((e) => e.kind), ["approval.required", "run.interrupted", "session.renamed"]);
+});
+
+test("请求取消和异常保持宿主结果，等待恢复只发送一次", async (t) => {
+  const id = "cancel-wait", { agent, on } = fixture(t, id), answer = pending(), cancellation = new AbortController();
+  const result = on("user-questions/request")({ agent, signal: cancellation.signal, questions: [{ question: "选择？" }] }, () => answer.promise);
+  await until(id, 1); cancellation.abort();
+  await until(id, 2);
+  const failure = new Error("宿主取消");
+  const checked = assert.rejects(result, (error) => error === failure);
+  answer.reject(failure); await checked;
+  assert.equal(received.filter((e) => e.session_id === id && e.kind === "activity.observed").length, 1);
+});
+
+test("长等待恢复后紧接 step/start 不重复心跳，后续仍按间隔报告", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-  const base = received.length;
-  const ctx = fakeCtx("项目标题");
-  apply(ctx, config);
-  const [onEvent] = ctx.listeners.get("session/event");
-  const s = main("s-long", [ev("turn/start", 1, { turn: 1 })]);
-  // 进入轮次：一条 activity.observed（本进程首次看到该会话 → session.resumed），并重置心跳计时。
-  onEvent(s, ev("turn/start", 2, { turn: 2 }));
-  await until(1, 3000, base);
-  // 节流窗口内的多个步骤：不发心跳。
-  t.mock.timers.tick(HEARTBEAT_INTERVAL_MS - 1000);
-  onEvent(s, ev("step/start", 3, { turn: 2, step: 1 }));
-  onEvent(s, ev("step/start", 4, { turn: 2, step: 2 }));
-  await until(1, 200, base);
-  assert.equal(received.length - base, 1, "节流窗口内不应发心跳");
-  // 窗口过后：发一条带当前序号的运行活动。
+  const id = "heartbeat", { agent, session, on } = fixture(t, id);
+  on("session/event")(session, ev("turn/start", 1, { turn: 1 }));
+  on("session/event")(session, ev("step/start", 2));
+  const answer = pending();
+  const result = on("approval/request")({ agent, callId: "c1", toolName: "bash" }, () => answer.promise);
+  await until(id, 2);
+  t.mock.timers.tick(HEARTBEAT_INTERVAL_MS * 2);
+  answer.resolve("allowed-once"); await result;
+  on("session/event")(session, ev("step/start", 3));
+  on("session/event")(session, ev("session/title", 4, { title: "恢复" }));
+  const events = await until(id, 4);
+  assert.deepEqual(events.map((e) => e.kind), ["session.started", "approval.required", "activity.observed", "session.renamed"]);
   t.mock.timers.tick(HEARTBEAT_INTERVAL_MS);
-  onEvent(s, ev("step/start", 5, { turn: 2, step: 3 }));
-  const beat = await until(2, 3000, base);
-  const last = beat[1].body;
-  assert.equal(last.kind, "activity.observed");
-  assert.equal(last.sequence, 5);
-  assert.equal(last.body, "正在处理");
-  assert.equal(last.session_title, "项目标题");
-  // 新轮次重置计时：紧随 turn/start 的步骤不再发心跳。
-  t.mock.timers.tick(HEARTBEAT_INTERVAL_MS);
-  onEvent(s, ev("turn/start", 6, { turn: 3 }));
-  const after = await until(3, 3000, base);
-  assert.equal(after[2].body.kind, "activity.observed");
-  onEvent(s, ev("step/start", 7, { turn: 3, step: 1 }));
-  await until(3, 200, base);
-  assert.equal(received.length - base, 3, "turn/start 后应重置心跳计时");
-  t.mock.timers.reset();
+  on("session/event")(session, ev("step/start", 5));
+  const heartbeat = (await until(id, 5))[4];
+  assert.equal(heartbeat.sequence, 5); assert.equal(heartbeat.body, "正在处理");
+  assert.equal(new Set(received.filter((e) => e.session_id === id).map((e) => e.event_id)).size, 5);
 });
 
-test("监听器过滤子代理、按日志区分新会话、等待恢复与终态递交；waterfall 返回 next()", async () => {
-  const base = received.length;
-  const ctx = fakeCtx("项目标题");
-  apply(ctx, config);
-  assert.deepEqual([...ctx.listeners.keys()].sort(), ["approval/request", "session/event", "user-questions/request", "workspace/session-archived"]);
-  const [onEvent] = ctx.listeners.get("session/event");
-  const [onApproval] = ctx.listeners.get("approval/request");
-  const [onQuestions] = ctx.listeners.get("user-questions/request");
-  const [onArchived] = ctx.listeners.get("workspace/session-archived");
-
-  // 子代理事件全部忽略
-  const child = { id: "child", header: { cwd: "/w", origin: "subagent", parentSession: "s-main", delegationDepth: 1 } };
-  onEvent(child, ev("turn/start", 1, { turn: 1 }));
-  onEvent(child, ev("turn/end", 2, { turn: 1, reason: { kind: "completed" } }));
-  onApproval({ agent: { id: "child", session: child } }, () => {});
-  onQuestions({ agent: { id: "child", session: child }, questions: [{ question: "?" }] }, () => {});
-
-  // 新会话：首个 turn/start 之前无更早轮次
-  const log = [];
-  // 主会话头部带 delegationDepth: 0（实测），不能被当作子代理过滤。
-  const s = main("s-main", log);
-  s.header.delegationDepth = 0;
-  onEvent(s, ev("turn/start", 1, { turn: 1 }));
-  log.push(ev("turn/start", 1, { turn: 1 }));
-  onEvent(s, ev("tool/call", 2, { callId: "c1", name: "bash", arguments: "{}" }));
-  log.push(ev("tool/call", 2, { callId: "c1", name: "bash", arguments: "{}" }));
-  onEvent(s, ev("assistant/message", 3, { turn: 1, step: 1, message: { content: [{ type: "text", text: "先看" }, { type: "reasoning", text: "思考" }] } }));
-  log.push(ev("assistant/message", 3, { turn: 1, step: 1, message: { content: [] } }));
-  onEvent(s, ev("tool/result", 4, { turn: 1, step: 2, error: { name: "E", code: "1", reason: "exit 1" }, message: { isError: true, toolCallId: "c1", source: { kind: "tool", callId: "c1" } } }));
-  log.push(ev("tool/result", 4, { turn: 1, step: 2, message: {} }));
-  // 只带 source.callId 的旧形状也能配对。
-  onEvent(s, ev("tool/result", 5, { turn: 1, step: 2, error: { name: "E2", code: "2" }, message: { isError: true, source: { kind: "tool", callId: "c1" } } }));
-  log.push(ev("tool/result", 5, { turn: 1, step: 2, message: {} }));
-  onEvent(s, ev("assistant/message", 5, { turn: 1, step: 2, message: { content: [{ type: "text", text: "最终回答" }] } }));
-  log.push(ev("assistant/message", 5, { turn: 1, step: 2, message: { content: [] } }));
-  onEvent(s, ev("turn/end", 6, { turn: 1, reason: { kind: "completed" } }));
-
-  // 第二轮：已观察过的会话只报告活动
-  log.push(ev("turn/end", 6, { turn: 1, reason: { kind: "completed" } }));
-  onEvent(s, ev("turn/start", 7, { turn: 2 }));
-  log.push(ev("turn/start", 7, { turn: 2 }));
-  onEvent(s, ev("session/title", 8, { title: "新标题", source: { kind: "user" } }));
-
-  const events = await until(6, 3000, base);
-  const kinds = events.map((e) => e.body.kind);
-  assert.deepEqual(kinds, ["session.started", "tool.failed", "tool.failed", "turn.completed", "activity.observed", "session.renamed"]);
-  assert.equal(events[0].body.title, "会话已开始：项目标题");
-  assert.equal(events[0].body.sequence, 1);
-  assert.equal(events[0].body.project, "/work/project");
-  assert.equal(events[0].body.process_id, process.pid);
-  assert.equal(events[0].url, "/api/v1/events");
-  assert.equal(events[0].host, "127.0.0.1:1");
-  assert.equal(events[1].body.body, "工具 bash 失败：exit 1");
-  assert.equal(events[2].body.body, "工具 bash 失败：E2");
-  assert.equal(events[3].body.body, "最终回答");
-  assert.equal(events[4].body.sequence, 7);
-  assert.equal(events[4].body.body, "");
-  assert.equal(events[5].body.session_title, "新标题");
-  assert.equal(received.length - base, 6, "子代理与缓存事件不应递交");
-
-  // 审批：递交后把决定权交还；同一等待经两条通路到达时去重
-  const agent = { id: "s-main", session: s };
-  let delegated = 0;
-  const next = async () => { delegated++; return "allowed-once"; };
-  const outcome = await onApproval({ agent, toolName: "bash", callId: "c9", displayReason: { zh: "运行命令" } }, next);
-  assert.equal(outcome, "allowed-once");
-  assert.equal(delegated, 1);
-  await onQuestions({ agent, questions: [{ question: "继续吗？", intent: { kind: "approval", callId: "c9", subject: { name: "write" } } }] }, next);
-  await onQuestions({ agent, questions: [{ header: "确认", question: "继续吗？", options: [{ label: "是" }] }], wait: { callId: "c10" } }, next);
-  assert.equal(delegated, 3);
-  const waiting = await until(8, 3000, base);
-  assert.equal(waiting[6].body.kind, "approval.required");
-  assert.equal(waiting[6].body.body, "需要批准：bash\n运行命令");
-  assert.equal(waiting[6].body.session_title, "新标题");
-  assert.equal(waiting[7].body.kind, "input.required");
-  assert.equal(waiting[7].body.sequence, undefined);
-  assert.equal(waiting[7].body.session_title, "新标题");
-  assert.equal(waiting[7].body.event_id.length, 64);
-
-  // 等待中的会话再次出现持久活动时恢复运行，然后归档
-  onEvent(s, ev("step/start", 20, { turn: 2, step: 1 }));
-  const resumedEvents = await until(9, 3000, base);
-  assert.equal(resumedEvents[8].body.kind, "activity.observed");
-  assert.equal(resumedEvents[8].body.sequence, 20);
-  onArchived({ sessionId: "unknown" });
-  onArchived({ sessionId: "s-main" });
-  const closed = await until(10, 3000, base);
-  assert.equal(closed[9].body.kind, "session.closed");
-  assert.equal(closed[9].body.session_title, "新标题");
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal(received.length - base, 10, "未观察过的会话不报告归档");
-
-  // 卸载时中止在途递交
-  assert.equal(ctx.effects.length, 1);
-  const dispose = ctx.effects[0]();
-  assert.equal(typeof dispose, "function");
-  dispose();
+test("持久事件、最终正文、工具名、重复归档和子代理过滤", async (t) => {
+  const id = "lifecycle", { session, on } = fixture(t, id);
+  const child = { id: "ignored-child", header: { origin: "subagent", delegationDepth: 1 } };
+  on("session/event")(child, ev("turn/start", 1));
+  await on("approval/request")({ agent: { id: child.id, session: child } }, () => "allowed-once");
+  await on("user-questions/request")({ agent: { id: child.id, session: child }, questions: [{ question: "?" }] }, () => undefined);
+  on("session/event")(session, ev("turn/start", 1, { turn: 1 }));
+  on("session/event")(session, ev("tool/call", 2, { callId: "c1", name: "bash" }));
+  on("session/event")(session, ev("tool/result", 3, { error: { reason: "exit 1" }, message: { isError: true, toolCallId: "c1" } }));
+  on("session/event")(session, ev("assistant/message", 4, { turn: 1, step: 1, message: { content: [{ type: "text", text: "最终回答" }] } }));
+  on("session/event")(session, ev("turn/end", 5, { turn: 1, reason: { kind: "completed" } }));
+  on("workspace/session-archived")({ sessionId: id });
+  session.snapshotEvents = () => [ev("turn/start", 1)];
+  on("session/event")(session, ev("turn/start", 6, { turn: 2 }));
+  on("workspace/session-archived")({ sessionId: id });
+  on("workspace/session-archived")({ sessionId: "unknown" });
+  const events = await until(id, 6);
+  assert.deepEqual(events.map((e) => e.kind), ["session.started", "tool.failed", "turn.completed", "session.closed", "activity.observed", "session.closed"]);
+  assert.equal(events[0].source_id, config.source_id); assert.equal(events[0].process_id, process.pid);
+  assert.equal(events[0].project, "/work/project"); assert.equal(events[0].session_title, "项目标题");
+  assert.equal(events[1].body, "工具 bash 失败：exit 1"); assert.equal(events[2].body, "最终回答");
+  assert.notEqual(events[3].event_id, events[5].event_id);
+  assert.equal(received.some((e) => e.session_id === child.id || e.session_id === "unknown"), false);
 });

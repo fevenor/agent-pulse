@@ -323,7 +323,7 @@ Windows采用Tray内置Bridge接入ZCode、Codex/ChatGPT本地任务与Antigravi
 
 适配器清单至少包含：ID、不可变版本、包格式版本、当前事件协议版本、Agent 版本范围、运行平台/架构、入口、包大小与 SHA-256。产品清单和说明放 `adapters/<id>/`，Go 命令适配器共用 `go/cmd/agent-pulse-adapter` 构建入口，转换在 `go/internal/event`；发布物按版本独立构建，不使用 Go 动态链接插件或远程任意安装脚本。
 
-新Agent通过签名包的name/control元数据及固定--control接口提供目录、探测和配置生成，产品配置格式由包解析。Bridge只保存明确授权的文件，执行有界探测和配置计划，不执行任意安装后脚本；既有标准包目录只作离线基础维护入口。新系统权限或新宿主运行机制仍可能需要核心升级；普通新增来源与配置格式不需要。接口和按需更新规则见[适配仓库更新](adapter-repository-update-proposal.md)。
+新Agent通过签名包的name/control元数据及固定--control接口提供目录、探测和配置生成，产品配置格式由包解析。Bridge只保存明确授权的文件，执行有界探测和配置计划，不执行任意安装后脚本；既有标准包目录只作离线基础维护入口。新系统权限或新宿主运行机制仍可能需要核心升级；普通新增来源与配置格式不需要。Hub 仅校验分发结构；带control的包不受Bridge产品kind、配置格式及hook名白名单限制。DSH的配置直接引用不可变包入口，插件不读取Bridge状态或恢复日志；已有OpenCode固定loader与无control的内置目录仍是历史实现。接口和按需更新规则见[适配仓库更新](adapter-repository-update-proposal.md)。
 
 ### 9.2 发布与拉取
 

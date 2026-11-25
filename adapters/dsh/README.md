@@ -30,7 +30,7 @@
 
 **waterfall 观察者必须 `prepend`**：`approval/request` 与 `user-questions/request` 是 Cordis waterfall，宿主自带的 answerer（浏览器 UI、MCP consent 等）一旦认领请求就不再调用 `next()`，后注册的监听器永远看不到真实提问。两个观察者以 `{ prepend: true }` 注册，排在所有 answerer 之前，只递交事件并把决定权原样交还 `next()`。
 
-**字段来源**：`session_id = session.id`；`project = session.header.cwd`；持久事件携带 `sequence = event.seq`（会话日志序号，跨进程重启可比）；审批/提问等实时事件省略序号，`event_id` 由来源、会话与 `callId` 计算。同一等待经 `approval/request` 与 `user-questions/request` 两条通路到达时，5 秒内按 `callId` 或主题去重。
+**字段来源**：`session_id = session.id`；`project = session.header.cwd`；持久事件携带 `sequence = event.seq`（会话日志序号，跨进程重启可比）；审批/提问等实时事件省略序号，`event_id` 由来源、会话与 `callId` 计算；每次归档与实时恢复另有独立身份。同一等待经 `approval/request` 与 `user-questions/request` 两条通路到达时，在请求生命周期内按 `callId` 合并。每个 waterfall 调用独立跟踪，全部未决请求完成或取消后才恢复运行；其他工具结果、用户追加消息或步骤不会提前清除等待。终态会回收当前等待，迟到回调不能重新开启会话。
 
 ## 安装和开发
 
@@ -51,7 +51,11 @@
 
 ### 受管理安装
 
-Bridge `setup` 选择 DeepSeek Harness 后，`adapters.managed` 中登记该 profile 的 `cordis.patch.yml` 绝对路径；Bridge 在适配目录写入固定 loader，并在 profile patch 中维护一条 `id: agent-pulse` 的 `insert` 行（`name` 为 loader 的 `file:` URL，`config` 为上述两个字段），保留其他条目、注释和 `!!js` 标签。手动安装的 bundle 与受管理行不能同时存在；发现其他来源的同名行时停止并提示。
+Bridge `setup` 从签名包的控制入口取得名称、宿主版本和默认 profile 路径，选择启用后在 `adapters.managed` 登记 `cordis.patch.yml` 绝对路径。随包控制程序生成受管理的 `id: agent-pulse` 行，Bridge 只负责提交该授权文件与安装状态。`name` 直接指向 `packages/<id>/<version>/<sha256>/index.js` 的绝对 `file:` URL，`config` 包含上述连接字段与本机 `runtime_receipt` 路径。
+
+插件不读取 `state.json` 或 `pending.json`，同一入口始终对应同一包；升级/恢复通过配置中的不可变路径选版，已有包保留供在途宿主使用。`apply` 完成注册后写运行回执，不能把该回执当成事件实收。写配置本身不触发 DSH 重组，仍需在宿主重新加载配置后验收。
+
+原有固定 loader 行会按归属更新为包入口；其他条目、注释与 `!!js` 保留，手动安装 bundle 和其他来源的同名行继续报告冲突。
 
 ### 开发检查
 
@@ -60,8 +64,11 @@ pnpm test
 pnpm check
 ```
 
-插件为纯 ESM JavaScript，由 DSH 自身的 Node 运行时加载，无需构建步骤。
+事件插件为 ESM JavaScript，由 DSH 自身的 Node 运行时加载。受管理包另带预构建 Go 控制程序，按 Linux amd64/arm64 分包，使用既有 `scripts/build/package-adapters.sh` 构建；目标安装不运行编译器。
 
 ## 验证边界
 
-`test/adapter.test.js` 覆盖映射、子代理过滤、正文白名单与截断、有界缓存；`test/index.test.js` 用本机 Unix 套接字模拟 Bridge 回执，验证监听器行为与 waterfall 返回 `next()`。真实 DSH 会话的 `session/title` 投递、`askTimed` 提问载荷、`blocked`/`forked` 触发场景需按[开发记录](../../docs/development-status.md)实测，不以单元测试代替。
+`test/adapter.test.js` 覆盖映射、子代理过滤、正文白名单与截断、空最终回答和归档身份；`test/index.test.js` 用本机 Unix 套接字检查并行/嵌套等待、取消与异常、终态后的迟到回调和心跳；`test/delivery.test.js` 验证保序、503/断连/超时重试、永久拒绝、卸载和内存上限。真实 DSH 会话的 `session/title` 投递、`askTimed` 提问载荷、`blocked`/`forked` 触发场景需按[开发记录](../../docs/development-status.md)实测，不以单元测试代替。
+
+
+本机递交在后台按会话串行进行，单次 IPC 仍限 200ms；短暂断连、超时、429/5xx 最多尝试三次，间隔 50/100ms，同一次事件保持 ID、时间和正文。队列最多 256 条、2 MiB；永久拒绝、重试耗尽或容量满会诊断，宿主继续运行。队列只在内存，插件卸载会中止递交，不保证跨宿主重启或长时间故障补发；步骤心跳不能替代完成/失败/等待事件的交付。DSH ACP 本轮不纳入支持验收。

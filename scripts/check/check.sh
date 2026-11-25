@@ -8,6 +8,7 @@ uv run --offline --no-project python "$project_root/scripts/check/test_rc_draft.
 uv run --offline --no-project python "$project_root/scripts/check/test_adapter_repository_release.py"
 uv run --offline --no-project python "$project_root/scripts/check/test_zcode_linux_harness.py"
 uv run --offline --no-project python "$project_root/scripts/check/test_publish_hub_release.py"
+uv run --offline --no-project python "$project_root/scripts/check/test_finalize_release.py"
 cd "$project_root/go"
 GOTOOLCHAIN=local go test -race ./...
 GOTOOLCHAIN=local go vet ./...

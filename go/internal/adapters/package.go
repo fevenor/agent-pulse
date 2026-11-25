@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const BridgeVersion = "0.6.0"
+const BridgeVersion = "0.6.1"
 const MaxPackageBytes = 32 << 20
 
 var identifier = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -74,21 +74,46 @@ func (m Manifest) Validate() error {
 	if len(m.Name) > 256 || strings.ContainsAny(m.Name, "\r\n\x00") {
 		return errors.New("适配名称无效")
 	}
-	for _, value := range []string{m.Version, m.AgentMin, m.AgentMax} {
+	if _, ok := version(m.Version); !ok {
+		return errors.New("包版本必须为数字版本号")
+	}
+	if !fs.ValidPath(m.Entry) || m.Entry == "." || strings.Contains(m.Entry, "\\") || filepath.IsAbs(m.Entry) {
+		return errors.New("入口路径无效")
+	}
+	if m.Platform == "" || strings.TrimSpace(m.Kind) == "" {
+		return errors.New("适配包平台或运行方式缺失")
+	}
+	return nil
+}
+
+// ValidateRuntime 只在本机安装/打包时判断宿主兼容与控制方式。
+// 有 control 的可信包自行负责探测和配置，kind/config_style/hooks 不再由 Bridge 列产品白名单。
+func (m Manifest) ValidateRuntime() error {
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	for _, value := range []string{m.AgentMin, m.AgentMax} {
 		if value != "" {
 			if _, ok := version(value); !ok {
-				return errors.New("包与兼容版本必须为数字版本号")
+				return errors.New("宿主兼容版本必须为数字版本号")
 			}
 		}
 	}
 	if m.AgentMin != "" && m.AgentMax != "" && compare(m.AgentMin, m.AgentMax) > 0 {
 		return errors.New("宿主兼容版本下限不得高于上限")
 	}
-	if !fs.ValidPath(m.Entry) || m.Entry == "." || strings.Contains(m.Entry, "\\") || filepath.IsAbs(m.Entry) {
-		return errors.New("入口路径无效")
+	if m.Control != "" {
+		return nil
 	}
-	if m.Platform == "" || m.Command == "" || strings.ContainsAny(m.Command, "/\\ \t\n") {
-		return errors.New("适配包平台或探测命令缺失")
+	// 无控制入口的内置安装方式仍需本机实现；不据此拒绝含其他形态的整个仓库。
+	if m.Kind != "executable" && m.Kind != "opencode-plugin" {
+		return errors.New("适配包运行方式需要随包控制入口")
+	}
+	if m.Command == "" || strings.ContainsAny(m.Command, "/\\ \t\n") {
+		return errors.New("宿主探测命令无效")
+	}
+	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" {
+		return errors.New("不支持的宿主配置格式")
 	}
 	for event := range m.Hooks {
 		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,63}$`).MatchString(event) {
@@ -96,21 +121,6 @@ func (m Manifest) Validate() error {
 		}
 	}
 	return nil
-}
-
-// supportedKinds 是当前 Bridge 知道如何安装的运行方式；只有 Bridge 需要它。
-var supportedKinds = map[string]bool{"executable": true, "opencode-plugin": true, "dsh-plugin": true}
-
-// ValidateRuntime 判定本机 Bridge 是否支持该包的运行方式与宿主配置格式。
-// 未知 kind 的签名包仍可经 Hub 分发给支持它的 Bridge；本机不支持的只影响本机安装。
-func (m Manifest) ValidateRuntime() error {
-	if !supportedKinds[m.Kind] {
-		return errors.New("不支持的适配包运行方式")
-	}
-	if m.Kind == "executable" && m.ConfigStyle != "hooks" && m.ConfigStyle != "named-hooks" && m.ConfigStyle != "process-hooks" && m.Control == "" {
-		return errors.New("不支持的宿主配置格式")
-	}
-	return m.Validate()
 }
 
 func Verify(raw []byte, publicKey string) (Index, error) {
@@ -207,7 +217,7 @@ func GenerateKey(privatePath, publicPath string) error {
 
 func BuildPackage(source, repository string, m Manifest) (Package, error) {
 	p := Package{Manifest: m}
-	// 发布者侧仍要求本机工具链认识该运行方式，避免打出任何 Bridge 都装不了的包。
+	// 与 Bridge 共用控制契约检查；产品自带 control 时无需打包工具认识其 kind。
 	if err := m.ValidateRuntime(); err != nil {
 		return p, err
 	}

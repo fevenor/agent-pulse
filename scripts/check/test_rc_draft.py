@@ -41,15 +41,16 @@ class DraftTests(unittest.TestCase):
         self.assertIn('require_draft(previous, args.tag, previous["targetCommitish"])',text)
         self.assertIn('"delete-asset"',text)
         workflow=(Path(__file__).resolve().parents[2]/".github/workflows/release-draft.yml").read_text(encoding="utf-8")
-        self.assertIn("publish_relay: false",workflow)
+        self.assertIn("publish_relay: ${{ !contains(github.ref_name, '-rc.') }}",workflow)
         self.assertIn("inputs.relay_version || 'v0.6.0-rc.2'",workflow)
         self.assertIn('--relay-version',workflow)
         self.assertNotIn('--relay-version v0.5.0-rc.3',workflow)
 
-    def test_only_matching_rc_tag(self):
+    def test_only_matching_release_tag(self):
         module.validate_tag("v0.5.0-rc.1", "0.5.0")
         module.validate_tag("v0.6.0-rc.1", "0.6.0")
-        for tag in ("v0.5.0", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):
+        module.validate_tag("v0.6.1", "0.6.1")
+        for tag in ("v0.5.1", "v0.5.0-rc.0", "v0.6.0-rc.1", "main"):
             with self.assertRaises(ValueError):
                 module.validate_tag(tag, "0.5.0")
 
@@ -61,6 +62,8 @@ class DraftTests(unittest.TestCase):
                 module.require_draft({**release, key: False}, "v0.5.0-rc.1", "a" * 40)
         with self.assertRaises(ValueError):
             module.require_draft(release, "v0.5.0-rc.1", "b" * 40)
+        stable = {**release, "isPrerelease": False, "tagName": "v0.6.1"}
+        module.require_draft(stable, "v0.6.1", "a" * 40)
 
     def test_windows_scope_has_three_native_sources(self):
         packages = [{"id": i, "platform": p} for i, p in module.EXPECTED_SCOPE]
@@ -70,7 +73,9 @@ class DraftTests(unittest.TestCase):
 
     def test_linux_zcode_server_is_required_without_changing_windows_scope(self):
         packages = [{"id": i, "platform": p} for i, p in module.EXPECTED_SCOPE]
-        self.assertEqual(len(packages), 9)
+        self.assertEqual(len(packages), 11)
+        self.assertIn(("dsh", "linux/amd64"), module.EXPECTED_SCOPE)
+        self.assertIn(("dsh", "linux/arm64"), module.EXPECTED_SCOPE)
         self.assertIn(("opencode", "linux/arm64"), module.EXPECTED_SCOPE)
         self.assertIn(("zcode", "linux/amd64"), module.EXPECTED_SCOPE)
         self.assertEqual(sum(p["platform"] == "windows/amd64" for p in packages), 3)

@@ -2,6 +2,25 @@
 
 本页仅保存可复现的实现验证、相关版本和适用边界。现行安装与运行规则见[部署指南](deployment.md)，功能与正文能力见[事件覆盖表](event-coverage.md)，剩余工作见[开发计划](development-plan.md)，变更历史见[CHANGELOG](../CHANGELOG.md)。实例快照、临时交接清单、原始日志、截图、私人配置和机器目录不进入本页；公开验证结果不等同于所有使用场景均已验收。
 
+## 0.6.1 发布准备
+
+- 首次完整 Workflow 的 Windows 回归发现 file URL 的 `/C:/...` 被当作本机路径比较，导致 DSH 配置归属误判；改为统一在 URL 层比较，保留三项幂等/停用/升级回归，未跳过 Windows 检查。失败构建不作为正式交付，修正后重新构建全部版本产物。
+- 产品版本统一为 0.6.1，修订此前 DSH 可靠性与解耦提交；正式标签使用完整 Workflow 检查、构建并生成草稿，本机签署后再由 Workflow 核验镜像/签名/附件并公开。
+- Go 控制程序内容变化采用新适配包版本：Antigravity 0.3.9、Codex 0.2.16、Qoder 0.2.15、OpenCode 0.3.8、ZCode 0.1.13；DSH 保持未发布候选 0.1.3。不会覆盖任何已分发同版本包或复用已签序号。
+- 此节记录发布流程与源码范围，不作为远端已发布或实例已部署的证明；实际构建、发布及目标验收分别核对，私有实例记录留在运维目录。
+
+## 2026-11-25 DSH 可靠性修复与适配解耦（源码候选，未发布）
+
+- 对 `fbf191d` 的六项非 ACP 问题完成源码修复：并行工具误清等待、无序号等待晚到覆盖终态、安装窗口缓存旧包/加载错误、重复归档 ID 冲突、恢复等待与步骤心跳重复 ID、空最终步骤沿用中间说明。DSH ACP 按本轮范围暂不处理。
+- DSH `0.1.3`：请求生命周期替代 `waiting` 布尔值和五秒去重；同会话后台串行递交，短暂断连/超时/503 等最多三次，ID/时间/正文不变。取消、异常、嵌套请求和终态后的迟到回调有独立回归。归档与实时恢复有独立事件身份，最终步骤无文本时明确提示正文未取得。
+- DSH `probe/configure/verify` 使用已有随包控制契约，按 Linux amd64/arm64 构建 Go 控制入口。Bridge 移除 DSH 基础目录、YAML 配置分支和 loader 生成；受管理行直接引用 `packages/<id>/<version>/<sha256>/index.js`，插件自身写加载回执，不读取 Bridge 的安装状态或恢复日志。已有自有固定 loader 行可被更新，外来配置、注释与 `!!js` 保留。
+- 解耦验证：分发侧不解释宿主命令、hook 名、配置格式或兼容范围；本机有控制入口的包无需 kind 白名单。测试用未知来源、未知插件 kind、私有配置格式与 `session/event` hook 名完整执行打包、签名推广、离线安装、升级、停用，未增加对应 Bridge/Hub 产品分支。固定公钥、摘要、不可变包及安装事务仍保留。OpenCode 固定 loader 与无控制入口的内置目录属于尚存历史耦合，不能据此称全部产品代码均已解耦。
+- Go 1.27.4、Node 24.22.3、Linux amd64：`bash scripts/check/check.sh` 全部通过，包含全模块 `go test -race ./...`、`go vet ./...`、OpenCode TypeScript/测试、DSH 28 项检查与 Hub 网页测试/构建；另通过 Windows amd64 全模块 `go vet`。锁文件安装依赖未改变版本锁。
+- DSH Go 回归通过随包真实进程控制接口执行向导（宿主版本使用隔离命令），校验动态发现、配置幂等、既有行接管和停用；使用真实 Node 导入实际插件，在空安装/旧安装的 pending 状态及其删除后均加载 URL 指定版本并写正确回执。真实构建的 amd64 控制程序完成 probe/configure/verify 与本地打包；arm64 仅交叉构建，不作为真机运行验收。
+- 使用已安装官方 `@deepseek-ai/cordis` 4.2.0-alpha.1 在独立 Context/IPC 中验证原生插件注册、prepend waterfall、并行工具不解除等待、原样返回答案、请求结束恢复及卸载清理。它验证运行时契约，不是在线模型、真实 DSH 任务或手机/Tray 实收验收。构建的 Bridge 符号检查不含 DSH 配置函数及 ExecuteControl，产品实现只随适配包执行。
+- 全量检查暴露既有观察测试的竞态及持锁 Fatal 后清理死锁：改为等待工作结束，分开验证进行中登记幂等和失败后重新登记，每项失败只产生非强提醒的未知事件；未修改 Bridge 观察运行逻辑。
+- 本节记录源码候选与隔离验证；临时产物与原始日志在忽略目录，不提交实例数据。未读取签名私钥、未签署或推广共享索引、未变更正式服务，未发送真实通知。队列仅内存，宿主退出或长时间不可用仍不保证补发；仍需在获授权的实际目标上完成宿主加载与提醒实收验收。
+
 ## 2026-11-23 DeepSeek Harness 接入（未发布）
 
 - 接口依据：运行中的 DSH `0.2.3-alpha.2`（npm 安装，`@deepseek-ai/dsh` 0.2.3-alpha.2）经 `cordis_inspect` 读取的事件目录与类型：`session/event`（提交后追加流，`SessionEvent.seq/time`）、`approval/request` 与 `user-questions/request`（waterfall）、`workspace/session-archived`、`SessionHeader.origin/parentSession/delegationDepth/cwd`、`TurnEndReason`；`@deepseek-ai/dsh-scope` 规定未标记监听器保持全局；`dsh-subagent` 的 `child-agent.ts` 写入 `origin: 'subagent'` 与 `delegationDepth`；`@deepseek-ai/dsh-llm` 的 `MessageBase.content` 为 `ContentBlock[]`。事件名随 DSH 版本变化，`x.y` 变化需重新适配。

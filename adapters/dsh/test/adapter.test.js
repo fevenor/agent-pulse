@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { approval, archived, bridgeAddress, buildEvent, hasEarlierTurnStart, isSubagent, questions, renamed, resumed, SessionTracker, textOf, toolFailed, turnEnd, turnStart, visibleBody } from "../adapter.js";
 
 const source = "host-a";
-const session = { id: "s1", header: { cwd: "/work/project", origin: "subagent" } ? {} : { cwd: "/work/project" } };
 const durable = (type, seq, data, time = 1_700_000_000_000) => ({ type, seq, time, data });
 
 test("visibleBody 截断不拆开 UTF-8 字符并明确标注", () => {
@@ -135,7 +134,7 @@ test("questions 提取问题、说明与选项，审批意图按批准处理", (
   assert.equal(questions(source, agent, { questions: [] }), undefined);
 });
 
-test("SessionTracker 有界缓存最后助手文本、工具名与等待去重", () => {
+test("SessionTracker 有界缓存最后助手文本与工具名", () => {
   const t = new SessionTracker(2);
   t.observe("s1", durable("assistant/message", 1, { turn: 1, step: 1, message: { content: [{ type: "text", text: "先" }] } }));
   t.observe("s1", durable("assistant/message", 2, { turn: 1, step: 2, message: { content: [{ type: "text", text: "后" }] } }));
@@ -148,8 +147,22 @@ test("SessionTracker 有界缓存最后助手文本、工具名与等待去重",
   t.get("s2");
   t.get("s3");
   assert.equal(t.sessions.size, 2);
-  assert.equal(t.claim("s1", "call:c1", 1000), true);
-  assert.equal(t.claim("s1", "call:c1", 4000), false);
-  assert.equal(t.claim("s1", "call:c1", 7000), true);
-  assert.equal(t.claim("s1", ""), true);
+
+});
+
+
+test("最终步骤无文本时不把中间说明当作最终回答", () => {
+  const tracker = new SessionTracker();
+  tracker.observe("s1", durable("assistant/message", 1, { turn: 1, step: 1, message: { content: [{ type: "text", text: "我先检查一下" }] } }));
+  tracker.observe("s1", durable("assistant/message", 2, { turn: 1, step: 2, message: { content: [{ type: "reasoning", text: "不采集" }] } }));
+  const final = turnEnd(source, { id: "s1", header: {} }, durable("turn/end", 3, { turn: 1, reason: { kind: "completed" } }), tracker.finalText("s1", 1));
+  assert.equal(final.body, "本轮完成；原生正文未取得，请在 DSH 中查看。");
+});
+
+test("每次归档和实时等待恢复具有独立身份，同毫秒也不冲突", () => {
+  const one = archived(source, "s1", "/w", "名", 1700000000000);
+  const two = archived(source, "s1", "/w", "名", 1700000000000);
+  assert.notEqual(one.event_id, two.event_id);
+  const session = { id: "s1", header: {} };
+  assert.notEqual(resumed(source, session, {}).event_id, resumed(source, session, {}).event_id);
 });

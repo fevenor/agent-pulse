@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -46,7 +47,6 @@ func TestVerifyAcceptsUnknownKindButRejectsMalformed(t *testing.T) {
 	for name, bad := range map[string]Manifest{
 		"入口越界": func() Manifest { m := goodManifest("executable"); m.ConfigStyle = "hooks"; m.Entry = "../x"; return m }(),
 		"版本非法": func() Manifest { m := goodManifest("executable"); m.ConfigStyle = "hooks"; m.Version = "one"; return m }(),
-		"命令含空格": func() Manifest { m := goodManifest("executable"); m.ConfigStyle = "hooks"; m.Command = "x y"; return m }(),
 	} {
 		raw, key := signIndexForTest(t, Index{Sequence: 1, Packages: []Package{{Manifest: bad, SHA256: strings.Repeat("b", 64), Size: 10}}})
 		if _, err := Verify(raw, key); err == nil {
@@ -61,8 +61,13 @@ func TestVerifyAcceptsUnknownKindButRejectsMalformed(t *testing.T) {
 }
 
 func TestValidateRuntimeRejectsUnsupportedKindAndConfigStyle(t *testing.T) {
-	if err := goodManifest("dsh-plugin").ValidateRuntime(); err != nil {
-		t.Fatalf("dsh-plugin 应受支持：%v", err)
+	controlled := goodManifest("future-plugin-kind")
+	controlled.Control = "control"
+	controlled.Command = ""
+	controlled.ConfigStyle = "product-private"
+	controlled.Hooks = map[string]string{"session/event": "native"}
+	if err := controlled.ValidateRuntime(); err != nil {
+		t.Fatalf("有控制入口的包不应受产品 kind/config_style/hooks 白名单限制：%v", err)
 	}
 	if err := goodManifest("future-plugin-kind").ValidateRuntime(); err == nil || !strings.Contains(err.Error(), "运行方式") {
 		t.Fatalf("未知 kind 应在 Bridge 侧被拒绝：%v", err)
@@ -95,7 +100,7 @@ func TestBridgeRejectsUnknownKindBeforeDownloadOrDetect(t *testing.T) {
 	}
 }
 
-// 发布者侧仍只能打出当前工具链认识运行方式的包。
+// 缺少控制入口的未知形态不能由本机构建为可安装包。
 func TestBuildPackageRejectsUnknownKind(t *testing.T) {
 	source := t.TempDir()
 	write(t, filepath.Join(source, "index.js"), "export {}\n")
@@ -103,5 +108,101 @@ func TestBuildPackageRejectsUnknownKind(t *testing.T) {
 	_, err := BuildPackage(source, filepath.Join(t.TempDir(), "repo"), m)
 	if err == nil || !strings.Contains(err.Error(), "运行方式") {
 		t.Fatalf("BuildPackage 应拒绝未知 kind：%v", err)
+	}
+}
+
+// Hub 必须能推广不理解其宿主细节的签名包；运行方式检查只影响本机安装。
+func TestRepositoryAcceptsPackageOwnedRuntimeMetadata(t *testing.T) {
+	source, repository := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(source, "index.js"), "export {}\n")
+	write(t, filepath.Join(source, "control"), "测试控制入口，仅作为仓库字节\n")
+	m := goodManifest("new-host-plugin")
+	m.Control, m.Command, m.ConfigStyle = "control", "", "yaml-for-new-host"
+	m.Hooks = map[string]string{"session/event": "private"}
+	p, err := BuildPackage(source, repository, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 宿主兼容字段不由分发端解释；Bridge 仍会按当前版本政策拒绝无效本机范围。
+	p.AgentMin = "host-specific-version"
+	raw, key := signIndexForTest(t, Index{Sequence: 1, Packages: []Package{p}})
+	data, err := os.ReadFile(filepath.Join(repository, "packages", p.SHA256+".zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PromoteRepository(context.Background(), t.TempDir(), key, RepositorySource{Index: raw, Package: func(context.Context, Package) ([]byte, error) { return data, nil }}); err != nil {
+		t.Fatal("Hub 不应解释宿主字段", err)
+	}
+	if err := p.ValidateRuntime(); err == nil {
+		t.Fatal("本机仍需有效宿主版本范围")
+	}
+}
+
+// 控制接口负责安装未知插件形态，Bridge 不增加产品分支也能安装、升级和停用。
+func TestUnknownPluginKindInstallsThroughPackageControl(t *testing.T) {
+	root, repository := t.TempDir(), t.TempDir()
+	t.Setenv("AGENT_PULSE_CONTROL_FIXTURE", "1")
+	t.Setenv("AGENT_PULSE_CONTROL_ROOT", root)
+	own, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "source")
+	entry := "control"
+	if runtime.GOOS == "windows" {
+		entry += ".exe"
+	}
+	write(t, filepath.Join(source, entry), string(program))
+	write(t, filepath.Join(source, "plugin.txt"), "宿主自有的插件入口\n")
+	m := goodManifest("future-private-plugin")
+	m.ID, m.Control, m.Command, m.Entry = "new-source", entry, "", "plugin.txt"
+	m.AgentMin, m.AgentMax, m.ConfigStyle = "1.2.0", "1.2.9", "private-text"
+	c := config.Bridge{SourceID: "isolated", Adapters: config.AdapterUpdates{Directory: filepath.Join(root, "cache"), Managed: map[string]string{m.ID: filepath.Join(root, "agent.cfg")}}}
+	write(t, c.Adapters.Managed[m.ID], "theme=保留\n")
+	for i, v := range []string{"1.0.0", "1.0.1"} {
+		m.Version = v
+		m.Hooks = map[string]string{"session/event": v}
+		write(t, filepath.Join(source, "version.txt"), v)
+		p, err := BuildPackage(source, repository, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, key := signIndexForTest(t, Index{Sequence: uint64(i + 1), Packages: []Package{p}})
+		c.Adapters.PublicKey = key
+		if err := AtomicFile(filepath.Join(c.Adapters.Directory, "index.cached.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(repository, "packages", p.SHA256+".zip"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := AtomicFile(filepath.Join(c.Adapters.Directory, "downloads", p.SHA256+".zip"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ApplyCached(context.Background(), c, "bridge.yaml"); err != nil {
+			t.Fatal(err)
+		}
+		state, err := loadState(c.Adapters.Directory)
+		if err != nil || state.Installed[m.ID].Package.Version != v || state.Installed[m.ID].Error != "" {
+			t.Fatalf("未知形态安装失败：%v %+v", err, state.Installed[m.ID])
+		}
+		content, err := os.ReadFile(c.Adapters.Managed[m.ID])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), "theme=保留") || !strings.Contains(string(content), ";"+v) {
+			t.Fatal("产品配置未由控制入口生成", string(content))
+		}
+	}
+	if err := Disable(c, m.ID, "bridge.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	content, _ := os.ReadFile(c.Adapters.Managed[m.ID])
+	if string(content) != "theme=保留\n" {
+		t.Fatal("停用改写用户配置", string(content))
 	}
 }

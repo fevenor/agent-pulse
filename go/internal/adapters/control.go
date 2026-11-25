@@ -128,6 +128,9 @@ func ExecuteControl(request ControlRequest) (ControlReply, error) {
 				break
 			}
 		}
+		if request.Package.ID == "dsh" && reply.ConfigPath == "" {
+			reply.ConfigPath = dshProfilePatchPath(home)
+		}
 		if request.Package.ID == "codex" && windowsDefersCodex(reply.ConfigPath, runtime.GOOS) {
 			reply.Deferred = true
 			reply.Notice = "由WSL管理共享接入，保持现有钩子"
@@ -142,6 +145,10 @@ func ExecuteControl(request ControlRequest) (ControlReply, error) {
 		}
 		return reply, nil
 	case "configure", "verify":
+		if request.Package.ID == "dsh" {
+			data, err := updateDSHProfilePatch(c, request.Package, request.Current, request.Enable)
+			return ControlReply{Content: data, Enabled: request.Enable}, err
+		}
 		data, err := updateHookConfigWithExecutable(c, request.BridgeConfig, request.Package, request.Current, request.Enable, request.BridgeExecutable)
 		reply := ControlReply{Content: data, Enabled: true}
 		if request.Package.ConfigStyle == "process-hooks" {

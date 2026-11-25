@@ -30,9 +30,9 @@ func TestHostCompatibilityFollowsVersionPolicy(t *testing.T) {
 	}
 }
 
-func TestManifestRejectsReversedHostVersionRange(t *testing.T) {
+func TestRuntimeRejectsReversedHostVersionRange(t *testing.T) {
 	m := Manifest{ID: "sample", Version: "1.0.0", Format: 1, Protocol: 1, Platform: "any", Kind: "executable", Entry: "adapter", Command: "sample", ConfigStyle: "hooks", AgentMin: "2.0.0", AgentMax: "1.0.0"}
-	if err := m.Validate(); err == nil {
+	if err := m.ValidateRuntime(); err == nil {
 		t.Fatal("不应接受颠倒的宿主版本区间")
 	}
 }
